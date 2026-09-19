@@ -28,3 +28,10 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Week-1 pipeline: course inputs and generated run artifacts (large, local-only)
+data/
+runs/
+
+# uv lockfile is fine to commit, but keep local venvs out
+.uv-cache/

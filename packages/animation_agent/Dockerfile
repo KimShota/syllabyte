@@ -20,6 +20,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY src/ ./src/
+COPY animation_agent/ ./animation_agent/
 
-CMD ["python", "-m", "src.worker"]
+CMD ["python", "-m", "animation_agent.worker"]

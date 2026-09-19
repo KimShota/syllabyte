@@ -12,6 +12,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY src/ ./src/
+COPY ingestion_agent/ ./ingestion_agent/
 
-CMD ["python", "-m", "src.worker"]
+CMD ["python", "-m", "ingestion_agent.worker"]

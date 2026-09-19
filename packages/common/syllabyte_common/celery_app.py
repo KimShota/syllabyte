@@ -6,7 +6,7 @@ single Redis-backed queue coordinates the whole pipeline:
   ingest -> assess -> generate_script -> generate_animation -> assemble_video
 
 Run a worker for a given agent with, e.g.:
-    celery -A packages.common.src.celery_app worker -Q ingestion -l info
+    celery -A syllabyte_common.celery_app worker -Q ingestion -l info
 """
 
 import os
