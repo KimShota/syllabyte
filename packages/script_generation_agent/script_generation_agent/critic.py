@@ -11,11 +11,7 @@ a revision instruction, up to MAX_ROUNDS total attempts.
 from __future__ import annotations
 
 from script_generation_agent.prompts import CRITIQUE_SYSTEM_PROMPT, build_critique_prompt
-from script_generation_agent.script_writer import (
-    ScriptValidationError,
-    gather_source_material,
-    write_script,
-)
+from script_generation_agent.script_writer import gather_source_material, write_script
 from syllabyte_common.llm import DEFAULT_MODEL, structured, text_block
 from syllabyte_common.models import (
     CourseCorpus,
@@ -68,18 +64,9 @@ def write_script_with_critique(
     script: Script | None = None
 
     for round_num in range(1, MAX_ROUNDS + 1):
-        try:
-            script = write_script(
-                ku, corpus, model=model, manifest=manifest, extra_instruction=extra_instruction
-            )
-        except ScriptValidationError as e:
-            if round_num < MAX_ROUNDS:
-                extra_instruction = (
-                    f"The previous script failed automatic validation: {e}\n"
-                    "Fix these issues in the new script."
-                )
-                continue
-            raise
+        script = write_script(
+            ku, corpus, model=model, manifest=manifest, extra_instruction=extra_instruction
+        )
 
         if skip_critic:
             result.passed = True

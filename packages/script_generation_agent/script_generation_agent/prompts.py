@@ -12,8 +12,6 @@ from __future__ import annotations
 from syllabyte_common.models import KnowledgeUnit
 
 ALLOWED_VISUAL_KINDS = ["title", "bullets", "equation", "plot", "diagram", "code", "compare"]
-TEXT_ONLY_VISUAL_KINDS = ["title", "bullets"]
-MAX_TEXT_ONLY_SEGMENTS = 2
 
 SCRIPT_SYSTEM_PROMPT = f"""\
 You are the Script Generation Agent in SyllaByte. You write narration \
@@ -33,9 +31,7 @@ language — what will the viewer be able to do/understand after this video?
 content in two digestible chunks, each anchored to one specific idea and \
 one specific visual.
   4. END (phase="end"): a crisp recap of the one big idea, in a form that's \
-easy to remember — prefer visually echoing the strongest visual already used \
-in a DELIVER segment (a simplified version of its diagram/equation/compare) \
-over a plain bullet-point recap.
+easy to remember.
 
 Hard constraints (a script that violates these will be rejected by an \
 automatic checker before it even reaches a human):
@@ -45,15 +41,6 @@ fits naturally in 60-90 seconds at a natural speaking pace).
 material you were given — do not cite a slide that doesn't contain the \
 claim you're attributing to it.
   - Every segment's `visual.kind` must be one of: {", ".join(ALLOWED_VISUAL_KINDS)}.
-  - At most {MAX_TEXT_ONLY_SEGMENTS} of the 5 segments may use a text-only \
-`visual.kind` ({" or ".join(TEXT_ONLY_VISUAL_KINDS)}) — a script that's mostly \
-title cards and bullet lists reads as a voiceover-over-text-summary, not a \
-short-form educational video. For every other segment, prefer whichever kind \
-gives the viewer something genuinely spatial or visual to look at: `plot` \
-when the material has concrete numbers or a trend, `diagram` for a \
-process/relationship/structure, `compare` for a two-sided contrast, \
-`equation` for real notation. Bullets are a fallback for when nothing else \
-fits, never the default choice.
   - Use `equation` only for genuine mathematical notation (put it in \
 `equation_latex` as valid LaTeX math, no $ delimiters). Do not force an \
 equation into a segment that doesn't need one.

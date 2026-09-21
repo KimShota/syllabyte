@@ -15,9 +15,7 @@ from pathlib import Path
 
 from script_generation_agent.prompts import (
     ALLOWED_VISUAL_KINDS,
-    MAX_TEXT_ONLY_SEGMENTS,
     SCRIPT_SYSTEM_PROMPT,
-    TEXT_ONLY_VISUAL_KINDS,
     build_script_prompt,
 )
 from syllabyte_common.llm import DEFAULT_MODEL, image_block, structured, text_block
@@ -76,14 +74,6 @@ def validate_script(script: Script) -> list[str]:
             problems.append(f"segment {i} ({seg.phase}) has no source_refs")
         if seg.visual.kind not in ALLOWED_VISUAL_KINDS:
             problems.append(f"segment {i} has invalid visual.kind={seg.visual.kind!r}")
-
-    text_only_count = sum(1 for s in script.segments if s.visual.kind in TEXT_ONLY_VISUAL_KINDS)
-    if text_only_count > MAX_TEXT_ONLY_SEGMENTS:
-        kinds = [s.visual.kind for s in script.segments]
-        problems.append(
-            f"{text_only_count} of 5 segments use a text-only visual.kind "
-            f"({TEXT_ONLY_VISUAL_KINDS}), max allowed is {MAX_TEXT_ONLY_SEGMENTS}: {kinds}"
-        )
 
     return problems
 
