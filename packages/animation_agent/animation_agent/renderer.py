@@ -94,7 +94,7 @@ def render_segment(
     # --- First attempt -----------------------------------------------------
     try:
         code = generate_scene(segment, duration, class_name, model=model, manifest=manifest)
-    except UnsafeCodeError as e:
+    except (UnsafeCodeError, SyntaxError) as e:
         code, last_error = "", str(e)
     else:
         attempts += 1
@@ -109,7 +109,7 @@ def render_segment(
     for _ in range(MAX_TIER1_REPAIRS):
         try:
             code = repair_scene(code, last_error, duration, class_name, model=model, manifest=manifest)
-        except UnsafeCodeError as e:
+        except (UnsafeCodeError, SyntaxError) as e:
             last_error = str(e)
             continue
         attempts += 1
@@ -130,7 +130,7 @@ def render_segment(
                 segment_index=segment_index, tier="llm_regenerated", attempts=attempts,
                 render_seconds=time.monotonic() - start, video_path=str(mp4_path),
             )
-    except UnsafeCodeError as e:
+    except (UnsafeCodeError, SyntaxError) as e:
         last_error = str(e)
         attempts += 1
 
