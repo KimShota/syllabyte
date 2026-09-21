@@ -174,10 +174,10 @@ def run(args: argparse.Namespace) -> None:
         # Stage 6: assemble
         final_path = ku_dir / "final.mp4"
         if force_from <= stage_index("assemble") or not final_path.exists():
-            log(f"[6/6] assemble: syncing + concatenating + captioning")
+            log(f"[6/6] assemble: syncing + concatenating")
             diagnostics = assemble_ku_video(
                 ku_dir, render_results, segment_audios,
-                audio_dir / "narration.wav", audio_dir / "captions.srt",
+                audio_dir / "narration.wav",
             )
             (ku_dir / "assembly_diagnostics.json").write_text(json.dumps(diagnostics, indent=2))
             log(f"    -> {diagnostics['final_path']} (max drift {diagnostics['max_abs_drift_seconds']:.2f}s)")

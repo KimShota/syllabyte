@@ -5,12 +5,11 @@ Per segment: sync the rendered Manim clip's duration to its narration
 audio's duration (they should already match closely, since manim_prompt.py
 told Claude the exact target duration — this step corrects small drift with
 ffmpeg rather than trusting the LLM's arithmetic). Then concatenate all
-segments, mux in the full narration track, and burn in captions.
+segments and mux in the full narration track.
 
 Outputs, per KU directory:
-    final.mp4              — with burned-in captions (short-form convention)
-    final_nocaptions.mp4   — same video, no captions burned in
-    captions.srt           — sidecar subtitles (also embedded as burned text)
+    final.mp4       — concatenated segments with narration audio
+    captions.srt     — sidecar subtitles (not burned into the video)
 """
 
 from __future__ import annotations
@@ -91,27 +90,11 @@ def mux_audio(video_path: Path, audio_path: Path, out_path: Path) -> Path:
     return out_path
 
 
-def burn_captions(video_path: Path, srt_path: Path, out_path: Path) -> Path:
-    # force_style keeps captions legible on a phone screen: large font,
-    # bottom-center, with a margin clear of the frame edge.
-    style = "FontSize=18,Alignment=2,MarginV=80,Outline=2,BorderStyle=1"
-    subprocess.run(
-        [
-            "ffmpeg", "-y", "-i", str(video_path),
-            "-vf", f"subtitles={srt_path}:force_style='{style}'",
-            "-c:a", "copy", str(out_path),
-        ],
-        check=True, capture_output=True,
-    )
-    return out_path
-
-
 def assemble_ku_video(
     ku_dir: Path,
     render_results: list[RenderResult],
     segment_audios: list[SegmentAudio],
     narration_path: Path,
-    srt_path: Path,
 ) -> dict:
     """Runs the full assembly pipeline for one Knowledge Unit's video.
     Returns a small dict of diagnostics (per-segment drift, output paths)
@@ -135,17 +118,13 @@ def assemble_ku_video(
     concatenated = ku_dir / "concatenated.mp4"
     concat_videos(synced_paths, concatenated)
 
-    with_audio = ku_dir / "final_nocaptions.mp4"
-    mux_audio(concatenated, narration_path, with_audio)
-
     final = ku_dir / "final.mp4"
-    burn_captions(with_audio, srt_path, final)
+    mux_audio(concatenated, narration_path, final)
 
     concatenated.unlink(missing_ok=True)
 
     return {
         "final_path": str(final),
-        "final_nocaptions_path": str(with_audio),
         "per_segment_drift_seconds": drifts,
         "max_abs_drift_seconds": max((abs(d) for d in drifts), default=0.0),
     }

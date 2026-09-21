@@ -20,7 +20,6 @@ Layout:
                 seg_0.py, seg_0.mp4 ...
                 render_results.json  # list[RenderResult]
             final.mp4
-            final_nocaptions.mp4
 """
 
 from __future__ import annotations
