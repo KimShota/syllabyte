@@ -4,9 +4,9 @@ from animation_agent.layout import GridLayoutScene
 
 
 class ExampleBulletReveal(GridLayoutScene):
-    """Example: a title + up to 3 bullets, revealed one at a time
-    (visual.kind == 'bullets'). Grid placement keeps every element inside a
-    fixed anchor so the Critic can reason about (and fix) layout by cell."""
+    """Example: a title + up to 3 bullets, revealed one at a time. Grid
+    placement keeps every element inside a fixed anchor so the Critic can
+    reason about (and fix) layout by cell."""
 
     def construct(self):
         self.setup_grid()

@@ -4,9 +4,8 @@ from animation_agent.layout import GridLayoutScene
 
 
 class ExampleEquationAndPlot(GridLayoutScene):
-    """Example: an equation, then a small transform into an axes/plot
-    (visual.kind == 'equation' or 'plot'). Uses MathTex (requires LaTeX)
-    and a compact Axes scaled to the narrow frame."""
+    """Example: an equation, then a small transform into an axes/plot. Uses
+    MathTex (requires LaTeX) and a compact Axes scaled to the narrow frame."""
 
     def construct(self):
         self.setup_grid()

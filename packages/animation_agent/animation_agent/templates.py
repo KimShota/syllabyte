@@ -12,20 +12,7 @@ Built directly from a VisualSpec without any LLM call. Two roles:
 
 from __future__ import annotations
 
-from manim import (
-    BLUE,
-    DOWN,
-    UP,
-    WHITE,
-    YELLOW,
-    FadeIn,
-    FadeOut,
-    MathTex,
-    Scene,
-    Text,
-    VGroup,
-    Write,
-)
+from manim import DOWN, WHITE, YELLOW, FadeIn, Scene, Text, VGroup, Write
 
 from syllabyte_common.models import VisualSpec
 
@@ -41,44 +28,33 @@ def _fit(mobject, max_width: float = SAFE_WIDTH):
 
 
 def build_template_scene(visual: VisualSpec, duration: float, class_name: str) -> str:
-    """Returns Manim Python source (as text) for a deterministic scene
-    matching the given VisualSpec kind. Used both as a live fallback
-    (written to disk and rendered by renderer.py) and importable directly
-    for the smoke test below."""
-    kind = visual.kind
-
-    if kind == "equation" and visual.equation_latex:
-        body = f"""
-        eq = MathTex(r"{visual.equation_latex}", color=WHITE)
-        eq.scale_to_fit_width(min(eq.width, {SAFE_WIDTH:.2f}))
-        self.play(Write(eq), run_time=min(2.0, {duration:.2f} * 0.4))
-        self.wait({duration:.2f} - min(2.0, {duration:.2f} * 0.4))
-"""
-    elif kind == "bullets" and visual.bullets:
-        lines = "\n".join(f'            Text("{b}", font_size=40, color=WHITE),' for b in visual.bullets[:4])
-        title_line = f'Text("{visual.title}", font_size=48, color=YELLOW)' if visual.title else 'Text("", font_size=1)'
-        body = f"""
-        title = {title_line}
+    """Returns Manim Python source (as text) for a deterministic scene, used
+    as the final tier of the repair ladder when every LLM attempt fails.
+    Since VisualSpec has no "kind" to dispatch on (Code2Video-style: every
+    segment is just a title + free-text animation_steps), this can't
+    specialize per content type — it just shows the title plus up to 3
+    steps as plain text, guaranteeing *some* video instead of a hard
+    failure."""
+    title_run_time = 0.6 if visual.title else 0.0
+    steps_run_time = min(2.0, duration * 0.4)
+    title_block = ""
+    if visual.title:
+        title_block = f"""
+        title = Text("{visual.title}", font_size=44, color=YELLOW)
         title.scale_to_fit_width(min(title.width, {SAFE_WIDTH:.2f}))
-        title.to_edge(UP)
-        bullets = VGroup(
-{lines}
-        ).arrange(DOWN, buff=0.4)
-        bullets.scale_to_fit_width(min(bullets.width, {SAFE_WIDTH:.2f}))
-        bullets.next_to(title, DOWN, buff=0.8)
-        self.play(FadeIn(title), run_time=0.8)
-        self.play(Write(bullets), run_time=min(2.5, {duration:.2f} * 0.5))
-        self.wait(max(0.1, {duration:.2f} - 3.3))
+        self.play(FadeIn(title), run_time={title_run_time:.2f})
 """
-    else:
-        # Generic title/text card — safe fallback for any kind we don't
-        # have a dedicated template for (diagram, code, compare, plot).
-        title_text = visual.title or "..."
-        body = f"""
-        card = Text("{title_text}", font_size=44, color=WHITE)
-        card.scale_to_fit_width(min(card.width, {SAFE_WIDTH:.2f}))
-        self.play(FadeIn(card), run_time=0.8)
-        self.wait(max(0.1, {duration:.2f} - 0.8))
+    step_lines = "\n".join(
+        f'            Text("{step[:60]}", font_size=28, color=WHITE),'
+        for step in visual.animation_steps[:3]
+    )
+    body = title_block + f"""
+        steps = VGroup(
+{step_lines}
+        ).arrange(DOWN, buff=0.3)
+        steps.scale_to_fit_width(min(steps.width, {SAFE_WIDTH:.2f}))
+        self.play(Write(steps), run_time={steps_run_time:.2f})
+        self.wait(max(0.1, {duration:.2f} - {title_run_time:.2f} - {steps_run_time:.2f}))
 """
 
     return f"""from manim import *
@@ -112,7 +88,13 @@ if __name__ == "__main__":
 
     from animation_agent.manim_config import write_manim_cfg
 
-    spec = VisualSpec(kind="equation", equation_latex=r"O(n) = c \cdot n \text{ for } n \geq n_0")
+    spec = VisualSpec(
+        title="Smoke Test",
+        animation_steps=[
+            r"Write the equation O(n) = c \cdot n \text{ for } n \geq n_0",
+            "Fade out after a short pause",
+        ],
+    )
     code = build_template_scene(spec, duration=5.0, class_name="SmokeTest")
     scene_path = out_dir / "smoke_scene.py"
     scene_path.write_text(code)

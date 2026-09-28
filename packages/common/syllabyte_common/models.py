@@ -84,30 +84,18 @@ class KUList(BaseModel):
 # --------------------------------------------------------------------------
 
 Phase = Literal["prepare", "initiate", "deliver", "end"]
-VisualKind = Literal["title", "bullets", "equation", "plot", "diagram", "code", "compare"]
 
 
 class VisualSpec(BaseModel):
-    kind: VisualKind
-    # Free-form payload interpreted by animation_agent.manim_prompt /
-    # animation_agent.templates depending on `kind`. Kept loose here so the
-    # script-writing LLM call isn't constrained to a rigid per-kind schema;
-    # manim_codegen.py and templates.py validate the fields they need.
+    """Code2Video-style storyboard visual (github.com/showlab/Code2Video):
+    deliberately NO "kind" taxonomy — every segment, whatever its content
+    (title card, bullets, equation, plot, diagram, code, comparison...), is
+    described the same uniform way: a short on-screen title plus a numbered
+    list of concrete, literal drawing actions. manim_codegen.py renders
+    `animation_steps` directly with no per-kind branching, exactly like
+    Code2Video's Coder consumes its storyboard's `animations` list."""
     title: str | None = None
-    bullets: list[str] | None = None
-    equation_latex: str | None = None
-    plot_description: str | None = None
-    diagram_description: str | None = None
-    # Code2Video-style storyboard decomposition (github.com/showlab/Code2Video):
-    # required for kind in {"diagram", "compare", "code"} — a numbered list of
-    # concrete, literal drawing actions (shapes/arrows/labels only) the
-    # animation must render in order. Without this, manim_codegen.py has
-    # nothing but a one-line description to work from and tends to pattern-
-    # match onto an unrelated few-shot example instead of the actual content.
-    animation_steps: list[str] | None = None
-    code_snippet: str | None = None
-    compare_left: str | None = None
-    compare_right: str | None = None
+    animation_steps: list[str] = Field(min_length=2)
 
 
 class Segment(BaseModel):

@@ -4,7 +4,7 @@ from animation_agent.layout import GridLayoutScene
 
 
 class ExampleTitleCard(GridLayoutScene):
-    """Example: a simple title/hook card (visual.kind == 'title')."""
+    """Example: a simple title/hook card."""
 
     def construct(self):
         self.setup_grid()

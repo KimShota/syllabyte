@@ -5,7 +5,7 @@ Gathers the specific slides a Knowledge Unit cites (text + rendered PNG, if
 available) as the ONLY grounding material, then calls Claude for a
 structured Script. Hard, code-side checks run before the LLM critic ever
 sees the output — cheap, deterministic checks catch cheap, deterministic
-mistakes (wrong word count, missing refs, invalid visual kind) without
+mistakes (wrong word count, missing refs, too few animation steps) without
 spending an extra LLM call.
 """
 
@@ -13,11 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from script_generation_agent.prompts import (
-    ALLOWED_VISUAL_KINDS,
-    SCRIPT_SYSTEM_PROMPT,
-    build_script_prompt,
-)
+from script_generation_agent.prompts import SCRIPT_SYSTEM_PROMPT, build_script_prompt
 from syllabyte_common.llm import DEFAULT_MODEL, image_block, structured, text_block
 from syllabyte_common.models import CourseCorpus, KnowledgeUnit, RunManifest, Script, Slide
 
@@ -72,13 +68,8 @@ def validate_script(script: Script) -> list[str]:
     for i, seg in enumerate(script.segments):
         if not seg.source_refs:
             problems.append(f"segment {i} ({seg.phase}) has no source_refs")
-        if seg.visual.kind not in ALLOWED_VISUAL_KINDS:
-            problems.append(f"segment {i} has invalid visual.kind={seg.visual.kind!r}")
-        if seg.visual.kind in ("diagram", "compare", "code") and not seg.visual.animation_steps:
-            problems.append(
-                f"segment {i} has visual.kind={seg.visual.kind!r} but no "
-                "visual.animation_steps (required — see system prompt)"
-            )
+        # `visual.animation_steps` (>=2 entries) is already enforced by
+        # VisualSpec's Pydantic min_length — nothing further to check here.
 
     return problems
 
