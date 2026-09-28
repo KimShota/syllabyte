@@ -98,6 +98,13 @@ class VisualSpec(BaseModel):
     equation_latex: str | None = None
     plot_description: str | None = None
     diagram_description: str | None = None
+    # Code2Video-style storyboard decomposition (github.com/showlab/Code2Video):
+    # required for kind in {"diagram", "compare", "code"} — a numbered list of
+    # concrete, literal drawing actions (shapes/arrows/labels only) the
+    # animation must render in order. Without this, manim_codegen.py has
+    # nothing but a one-line description to work from and tends to pattern-
+    # match onto an unrelated few-shot example instead of the actual content.
+    animation_steps: list[str] | None = None
     code_snippet: str | None = None
     compare_left: str | None = None
     compare_right: str | None = None

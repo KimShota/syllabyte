@@ -50,6 +50,15 @@ no bullet-point phrasing, no "Slide 3 shows...".
 (a few words to a short phrase each) — NOT the narration text repeated. \
 On-screen text and spoken narration should complement each other, not \
 duplicate each other verbatim (per Mayer's multimedia learning principles).
+  - For `visual.kind` in "diagram", "compare", or "code": a one-line \
+`diagram_description` is NOT enough on its own. You MUST also fill \
+`visual.animation_steps` with a numbered list of 3-5 short, concrete, \
+literal drawing actions — e.g. "Draw 3 identical rectangles side by side, \
+labeled 'A', 'B', 'C'", "Draw an arrow from rectangle A to a new circle \
+labeled 'result'" — using only simple shapes, lines, arrows, and text \
+labels. Each step must directly depict the specific content of this KU, \
+never a generic stand-in (e.g. do not describe a function plot or \
+equation here unless the KU is literally about that function).
 """
 
 

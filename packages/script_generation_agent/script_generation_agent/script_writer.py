@@ -74,6 +74,11 @@ def validate_script(script: Script) -> list[str]:
             problems.append(f"segment {i} ({seg.phase}) has no source_refs")
         if seg.visual.kind not in ALLOWED_VISUAL_KINDS:
             problems.append(f"segment {i} has invalid visual.kind={seg.visual.kind!r}")
+        if seg.visual.kind in ("diagram", "compare", "code") and not seg.visual.animation_steps:
+            problems.append(
+                f"segment {i} has visual.kind={seg.visual.kind!r} but no "
+                "visual.animation_steps (required — see system prompt)"
+            )
 
     return problems
 

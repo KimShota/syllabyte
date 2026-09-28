@@ -123,6 +123,16 @@ theirs):
 
 {_FEW_SHOT_EXAMPLES}
 
+Content fidelity (CRITICAL): if the visual spec below includes \
+`animation_steps`, you MUST render each step literally, in order, using \
+only the allowed Mobjects — do not substitute a different concept (e.g. \
+do not draw a generic function plot/equation/graph unless a step \
+explicitly describes one). Immediately before the code implementing each \
+step, add a comment `# === Step N ===` (matching that step's number in \
+the spec) so every block of code traces back to the exact step it \
+renders. If there are no `animation_steps` (e.g. kind is title/bullets/\
+equation/plot), render the given fields directly instead.
+
 Timing (CRITICAL): the class MUST run for EXACTLY {duration:.2f} seconds \
 total, matching pre-recorded narration audio that will be muxed in \
 afterward — not shorter, not longer. Sum every self.play(..., run_time=X) \
@@ -146,6 +156,9 @@ def build_generation_prompt(segment: Segment, duration: float, class_name: str) 
         value = getattr(visual, field)
         if value:
             visual_desc += f"{field}: {value}\n"
+    if visual.animation_steps:
+        numbered = "\n".join(f"  {i}. {step}" for i, step in enumerate(visual.animation_steps, 1))
+        visual_desc += f"animation_steps (render each one literally, in order):\n{numbered}\n"
 
     system = _build_system_prompt(duration, class_name)
     user = f"""\
