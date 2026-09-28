@@ -41,9 +41,25 @@ FRAME_HEIGHT = 8.0
 SAFE_WIDTH = FRAME_WIDTH - 0.6  # ~0.3 margin each side
 SAFE_HEIGHT = FRAME_HEIGHT - 0.8  # ~0.4 margin top/bottom
 
+# Code2Video-style layout grid (github.com/showlab/Code2Video): discretizing
+# the canvas into named anchors turns "where does this go" into a token an
+# LLM/VLM can state unambiguously, instead of a continuous (x, y) neither
+# can reliably reason about. See layout.py for the runtime implementation.
+GRID_DIAGRAM = """\
+6x6 layout grid over the safe frame area (A1 = top-left, F6 = bottom-right):
+      1    2    3    4    5    6
+  A   A1   A2   A3   A4   A5   A6
+  B   B1   B2   B3   B4   B5   B6
+  C   C1   C2   C3   C4   C5   C6
+  D   D1   D2   D3   D4   D5   D6
+  E   E1   E2   E3   E4   E5   E6
+  F   F1   F2   F3   F4   F5   F6
+"""
+
 ALLOWED_API = """\
-Allowed imports: `from manim import *` only. Nothing else — no os, sys, \
-subprocess, requests, open(), eval(), exec(), or __import__.
+Allowed imports: `from manim import *` and \
+`from animation_agent.layout import GridLayoutScene` — nothing else. No os, \
+sys, subprocess, requests, open(), eval(), exec(), or __import__.
 
 Allowed Mobjects: Text, MarkupText, MathTex, Tex, Axes, NumberPlane, \
 NumberLine, Dot, Line, Arrow, Rectangle, Square, Circle, Polygon, VGroup, \
@@ -53,7 +69,9 @@ Allowed animations: Write, FadeIn, FadeOut, Create, Uncreate, Transform, \
 ReplacementTransform, Indicate, Circumscribe, GrowArrow, DrawBorderThenFill.
 
 Allowed scene methods: self.play(...), self.wait(...), self.add(...), \
-self.remove(...).
+self.remove(...), self.setup_grid(...), self.place_at_grid(...), \
+self.place_in_area(...) (the last three come from GridLayoutScene — see \
+Layout below).
 
 Forbidden: any external file/network access, any Manim plugin, custom \
 LaTeX preambles, ImageMobject (no image assets are available), \
@@ -77,13 +95,25 @@ default 16:9):
   - Keep all mobjects within x in [-{SAFE_WIDTH/2:.2f}, {SAFE_WIDTH/2:.2f}] \
 and y in [-{SAFE_HEIGHT/2:.2f}, {SAFE_HEIGHT/2:.2f}] — this is a NARROW \
 frame, so prefer stacking content vertically over spreading it horizontally.
-  - Every Text/MathTex/Tex object MUST be constrained to fit: call \
-`.scale_to_fit_width(min(obj.width, {SAFE_WIDTH:.2f}))` after creating it, \
-and never use font_size below 36.
+  - Every Text/MathTex/Tex object must render legibly: never use font_size \
+below 36, and pick a `scale_factor` on the grid call below that keeps the \
+object's rendered width comfortably inside its cell(s).
   - Use at most 2-3 mobjects on screen at once — this is a phone screen, \
 not a lecture hall projector. Clear old content (FadeOut) before adding new
 content when moving between distinct ideas within the segment.
 
+Layout (CRITICAL — do not use raw .move_to()/.to_edge() coordinates):
+  - The class MUST subclass `GridLayoutScene` (not `Scene` directly) and \
+call `self.setup_grid()` as the first line of `construct()`.
+  - Every mobject you place must be positioned with exactly one of:
+      `self.place_at_grid(obj, 'B2', scale_factor=0.8)` — point-level, for \
+small elements (short labels, single icons/symbols).
+      `self.place_in_area(obj, 'A1', 'C3', scale_factor=0.7)` — region-level, \
+for larger elements (paragraphs, equations, plots, VGroups).
+  - This is the same grid the Critic will later use to describe layout \
+fixes, so consistent use of it is what makes those fixes possible.
+
+{GRID_DIAGRAM}
 {ALLOWED_API}
 
 Here are 3 example scenes showing the expected style, API usage, and \
@@ -99,8 +129,10 @@ afterward — not shorter, not longer. Sum every self.play(..., run_time=X) \
 and self.wait(Y) call and make sure they total {duration:.2f} seconds. \
 Pad with self.wait() at the end if your animations finish early.
 
-Output format: a single Python class named `{class_name}(Scene)` with a \
-`construct(self)` method. No other top-level code.
+Output format: `from manim import *` and \
+`from animation_agent.layout import GridLayoutScene`, then a single Python \
+class named `{class_name}(GridLayoutScene)` with a `construct(self)` \
+method. No other top-level code.
 """
 
 

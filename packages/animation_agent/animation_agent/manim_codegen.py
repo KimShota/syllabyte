@@ -56,19 +56,26 @@ def _static_check(code: str) -> None:
                 if root != "manim":
                     raise UnsafeCodeError(f"forbidden import: {alias.name}")
         elif isinstance(node, ast.ImportFrom):
-            root = (node.module or "").split(".")[0]
-            if root != "manim":
-                raise UnsafeCodeError(f"forbidden import: {node.module}")
+            module = node.module or ""
+            root = module.split(".")[0]
+            if root != "manim" and module != "animation_agent.layout":
+                raise UnsafeCodeError(f"forbidden import: {module}")
         elif isinstance(node, ast.Name) and node.id in FORBIDDEN_NAMES:
             raise UnsafeCodeError(f"forbidden name used: {node.id}")
         elif isinstance(node, ast.Attribute) and node.attr in FORBIDDEN_NAMES:
             raise UnsafeCodeError(f"forbidden attribute access: .{node.attr}")
 
 
-def _validated(code: str) -> str:
+def validate_generated_code(code: str) -> str:
+    """Strips markdown code fences and runs the static safety check. Public
+    because visual_critic.py's repair path needs the identical validation
+    every other codegen path goes through."""
     code = _strip_code_fences(code)
     _static_check(code)
     return code
+
+
+_validated = validate_generated_code
 
 
 def generate_scene(

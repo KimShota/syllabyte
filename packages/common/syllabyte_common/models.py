@@ -167,6 +167,10 @@ class RenderResult(BaseModel):
     render_seconds: float
     video_path: str | None = None
     error: str | None = None
+    # Visual Critic (Code2Video-inspired grid-anchored layout pass, run once
+    # after any successful LLM-tier render — see animation_agent/visual_critic.py).
+    visual_repair_applied: bool = False
+    visual_issues_remaining: list[str] = Field(default_factory=list)
 
 
 # Thin list wrappers so scripts/generate_shorts.py can round-trip

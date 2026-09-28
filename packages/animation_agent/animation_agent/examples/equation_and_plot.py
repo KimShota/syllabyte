@@ -1,14 +1,17 @@
 from manim import *
 
+from animation_agent.layout import GridLayoutScene
 
-class ExampleEquationAndPlot(Scene):
+
+class ExampleEquationAndPlot(GridLayoutScene):
     """Example: an equation, then a small transform into an axes/plot
     (visual.kind == 'equation' or 'plot'). Uses MathTex (requires LaTeX)
     and a compact Axes scaled to the narrow frame."""
 
     def construct(self):
+        self.setup_grid()
         eq = MathTex(r"f(n) = O(n^2)", color=WHITE)
-        eq.scale_to_fit_width(min(eq.width, 3.5))
+        self.place_at_grid(eq, "A3", scale_factor=0.9)
         self.play(Write(eq), run_time=1.2)
         self.wait(0.6)
 
@@ -19,9 +22,8 @@ class ExampleEquationAndPlot(Scene):
         )
         graph = axes.plot(lambda x: x**2, color=BLUE, x_range=[0, 5])
         axes_group = VGroup(axes, graph)
-        axes_group.scale_to_fit_width(min(axes_group.width, 3.9))
+        self.place_in_area(axes_group, "C2", "E5", scale_factor=0.9)
 
-        self.play(Transform(eq, eq.copy().scale(0.6).to_edge(UP)), run_time=0.6)
-        axes_group.next_to(eq, DOWN, buff=0.6)
+        self.play(Transform(eq, eq.copy().scale(0.6).move_to(self.grid["A3"])), run_time=0.6)
         self.play(Create(axes), Create(graph), run_time=1.4)
         self.wait(1.0)

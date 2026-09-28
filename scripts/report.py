@@ -114,6 +114,9 @@ def render_report(run_dir: Path) -> str:
                 lines.append(
                     f"  - segment {rr.segment_index}: `{rr.tier}` "
                     f"({rr.attempts} attempt(s), {rr.render_seconds:.1f}s)"
+                    + (" — visual repair applied" if rr.visual_repair_applied else "")
+                    + (f" — unresolved layout issues: {'; '.join(rr.visual_issues_remaining)}"
+                       if rr.visual_issues_remaining else "")
                     + (f" — {rr.error}" if rr.error else "")
                 )
 
@@ -139,6 +142,10 @@ def render_report(run_dir: Path) -> str:
         lines.append(f"- Needed Tier-1 repair: {repaired}/{n}")
         lines.append(f"- Needed Tier-2 regeneration: {regenerated}/{n}")
         lines.append(f"- Fell back to a deterministic template: {fallback}/{n}")
+        visual_repaired = sum(1 for r in all_render_results if r.visual_repair_applied)
+        visual_unresolved = sum(1 for r in all_render_results if r.visual_issues_remaining)
+        lines.append(f"- Visual Critic applied a layout repair: {visual_repaired}/{n}")
+        lines.append(f"- Visual Critic found issues it could not resolve: {visual_unresolved}/{n}")
         lines.append("")
 
     total_cost = manifest.total_cost_usd(PRICE_PER_MTOK)

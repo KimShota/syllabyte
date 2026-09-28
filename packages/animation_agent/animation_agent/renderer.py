@@ -17,6 +17,14 @@ LLM+Manim paper's 38% render-failure finding):
   Tier 1 (llm_repaired):    feed the error back to Claude for a targeted fix, x2
   Tier 2 (llm_regenerated): regenerate the whole segment's code from scratch, x1
   Tier 3 (template_fallback): deterministic template (always renders)
+
+Once any LLM tier produces a rendering video, one Code2Video-inspired
+Visual Critic pass (visual_critic.py) checks its grid-anchored layout and,
+if it finds an issue, asks Claude for a targeted fix and re-renders. This
+never risks the tier's already-working video: if the repaired code fails to
+render, the original render is kept and the remaining issues are just
+logged on the RenderResult for the report. Template-fallback renders skip
+this pass — they're deterministic and don't use the LLM's grid placements.
 """
 
 from __future__ import annotations
@@ -30,6 +38,7 @@ from syllabyte_common.models import RenderResult, RunManifest, Segment
 from animation_agent.manim_codegen import UnsafeCodeError, generate_scene, repair_scene
 from animation_agent.manim_config import write_manim_cfg
 from animation_agent.templates import build_template_scene
+from animation_agent.visual_critic import apply_visual_repair, critique_render
 
 RENDER_TIMEOUT_SECONDS = 180
 MAX_TIER1_REPAIRS = 2
@@ -75,6 +84,44 @@ def _try_render(render_dir: Path, code: str, class_name: str, quality: str) -> t
     return True, "", mp4_path
 
 
+def _visual_critic_pass(
+    render_dir: Path,
+    code: str,
+    class_name: str,
+    duration: float,
+    quality: str,
+    mp4_path: Path,
+    *,
+    model: str,
+    manifest: RunManifest | None,
+) -> tuple[Path, bool, list[str]]:
+    """One critique + (at most one) repair round on an already-successful
+    LLM render. Returns (final_mp4_path, repair_applied, issues_remaining)."""
+    try:
+        critique = critique_render(mp4_path, code, model=model, manifest=manifest)
+    except Exception as e:  # critic is best-effort — never fail the segment over it
+        return mp4_path, False, [f"visual critic call failed: {e}"]
+
+    if critique is None:  # e.g. empty/unparseable structured-output response
+        return mp4_path, False, ["visual critic returned no result"]
+
+    if not critique.has_issues:
+        return mp4_path, False, []
+
+    issues = [f"{i.object_affected}: {i.problem}" for i in critique.improvements]
+    try:
+        repaired_code = apply_visual_repair(
+            code, critique, duration, class_name, model=model, manifest=manifest,
+        )
+    except (UnsafeCodeError, SyntaxError):
+        return mp4_path, False, issues
+
+    ok, _, repaired_mp4 = _try_render(render_dir, repaired_code, class_name, quality)
+    if ok:
+        return repaired_mp4, True, []
+    return mp4_path, False, issues
+
+
 def render_segment(
     segment: Segment,
     segment_index: int,
@@ -100,9 +147,13 @@ def render_segment(
         attempts += 1
         ok, last_error, mp4_path = _try_render(render_dir, code, class_name, quality)
         if ok:
+            mp4_path, repaired, issues = _visual_critic_pass(
+                render_dir, code, class_name, duration, quality, mp4_path, model=model, manifest=manifest,
+            )
             return RenderResult(
                 segment_index=segment_index, tier="llm_first_try", attempts=attempts,
                 render_seconds=time.monotonic() - start, video_path=str(mp4_path),
+                visual_repair_applied=repaired, visual_issues_remaining=issues,
             )
 
     # --- Tier 1: targeted repair, up to MAX_TIER1_REPAIRS times ------------
@@ -115,9 +166,13 @@ def render_segment(
         attempts += 1
         ok, last_error, mp4_path = _try_render(render_dir, code, class_name, quality)
         if ok:
+            mp4_path, repaired, issues = _visual_critic_pass(
+                render_dir, code, class_name, duration, quality, mp4_path, model=model, manifest=manifest,
+            )
             return RenderResult(
                 segment_index=segment_index, tier="llm_repaired", attempts=attempts,
                 render_seconds=time.monotonic() - start, video_path=str(mp4_path),
+                visual_repair_applied=repaired, visual_issues_remaining=issues,
             )
 
     # --- Tier 2: full regeneration from the original spec, once -----------
@@ -126,9 +181,13 @@ def render_segment(
         attempts += 1
         ok, last_error, mp4_path = _try_render(render_dir, code, class_name, quality)
         if ok:
+            mp4_path, repaired, issues = _visual_critic_pass(
+                render_dir, code, class_name, duration, quality, mp4_path, model=model, manifest=manifest,
+            )
             return RenderResult(
                 segment_index=segment_index, tier="llm_regenerated", attempts=attempts,
                 render_seconds=time.monotonic() - start, video_path=str(mp4_path),
+                visual_repair_applied=repaired, visual_issues_remaining=issues,
             )
     except (UnsafeCodeError, SyntaxError) as e:
         last_error = str(e)
