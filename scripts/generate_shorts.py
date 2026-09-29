@@ -106,6 +106,7 @@ def run(args: argparse.Namespace) -> None:
     )
 
     # -- Per-KU stages: script -> tts -> animate -> assemble ------------------
+    failed_kus: list[str] = []
     for ku in selected:
         log(f"--- KU: {ku.id} ({ku.title}) ---")
         ku_dir = run_dir.ku_dir(ku.id)
@@ -171,6 +172,20 @@ def run(args: argparse.Namespace) -> None:
                 render_results_path.read_text()
             ).items
 
+        # Fallback segments show narration captions instead of a real visual;
+        # don't ship a video containing one unless explicitly allowed.
+        fallback = [r.segment_index for r in render_results if r.tier == "template_fallback"]
+        if fallback and not args.allow_fallback:
+            log(
+                f"    !! {ku.id}: segment(s) {fallback} fell back to the caption template "
+                "(no real visual). Not assembling. Re-run with --from-stage animate to "
+                "retry, or pass --allow-fallback to ship it anyway."
+            )
+            failed_kus.append(ku.id)
+            continue
+        if fallback:
+            log(f"    !! {ku.id}: shipping with caption-fallback segment(s) {fallback} (--allow-fallback)")
+
         # Stage 6: assemble
         final_path = ku_dir / "final.mp4"
         if force_from <= stage_index("assemble") or not final_path.exists():
@@ -184,6 +199,9 @@ def run(args: argparse.Namespace) -> None:
         else:
             log(f"[6/6] assemble: {ku.id} already has final.mp4")
 
+    if failed_kus:
+        log(f"FAILED (no final.mp4 for): {failed_kus}. Run directory: {run_dir.root}")
+        raise SystemExit(1)
     log(f"Done. Run directory: {run_dir.root}")
     log(f"Next: uv run python scripts/report.py --run {run_dir.root}")
 
@@ -199,6 +217,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--quality", default="low", choices=["low", "high"])
     parser.add_argument("--from-stage", default=None, choices=STAGES, help="Force recomputation from this stage onward")
     parser.add_argument("--skip-critic", action="store_true", help="Skip the semantic critique round (faster iteration)")
+    parser.add_argument(
+        "--allow-fallback", action="store_true",
+        help="Assemble videos even if a segment fell back to the caption template",
+    )
     return parser.parse_args()
 
 

@@ -19,6 +19,7 @@ dependencies = [
     "redis>=5.0.8",
     "pymongo>=4.8.0",
     "boto3>=1.34.153",
+    "openai>=3.21.0",
 ]
 
 [project.optional-dependencies]

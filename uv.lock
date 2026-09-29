@@ -1317,6 +1317,23 @@ wheels = [
 ]
 
 [[package]]
+name = "openai"
+version = "3.21.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "httpx2" },
+    { name = "jiter" },
+    { name = "pydantic" },
+    { name = "sniffio" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ae/8d/52cfa8ed2edbe3ec14c0e9ca4f6258a234129b0846fa7e5779d8aba3d791/openai-3.21.0.tar.gz", hash = "sha256:b3da56a0693953fa1851d554579e8904d0166f524d004048b636c548e0b7ef8f", size = 1746642, upload-time = "2026-09-29T17:41:17.609Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0a/ad/1a1424ffc597cda66dabff0ca99da3f06c7218d679e3183a4bb55e8d0369/openai-3.21.0-py3-none-any.whl", hash = "sha256:28040df2ca1ffcb358c22d574aa3c339f37309650df972de0511fa1df8b09184", size = 2082977, upload-time = "2026-09-29T17:41:15.572Z" },
+]
+
+[[package]]
 name = "packaging"
 version = "26.3"
 source = { registry = "https://pypi.org/simple" }
@@ -2044,6 +2061,7 @@ dependencies = [
     { name = "celery" },
     { name = "kokoro" },
     { name = "manim" },
+    { name = "openai" },
     { name = "pydantic" },
     { name = "pymongo" },
     { name = "pymupdf" },
@@ -2067,6 +2085,7 @@ requires-dist = [
     { name = "elevenlabs", marker = "extra == 'elevenlabs'", specifier = ">=1.9" },
     { name = "kokoro", specifier = ">=0.9.4" },
     { name = "manim", specifier = ">=0.21" },
+    { name = "openai", specifier = ">=3.21.0" },
     { name = "pydantic", specifier = ">=2.8" },
     { name = "pymongo", specifier = ">=4.8.0" },
     { name = "pymupdf", specifier = ">=1.24.9" },

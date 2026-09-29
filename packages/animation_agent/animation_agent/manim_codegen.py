@@ -85,6 +85,18 @@ def check_beat_structure(code: str, n_beats: int) -> str | None:
     A missing beat would silently drop that sentence's visual (and leave
     the clip short of its audio), so this runs before every render."""
     tree = ast.parse(code)
+
+    # The sync lives in layout.GridLayoutScene.end_beat. A scene that
+    # defines its own end_beat (or isn't a GridLayoutScene) would pass every
+    # other check while bypassing the real audio sync.
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            bases = [b.id for b in node.bases if isinstance(b, ast.Name)]
+            if "GridLayoutScene" not in bases:
+                return "The scene class must subclass GridLayoutScene (not Scene)."
+            if any(isinstance(n, ast.FunctionDef) and n.name == "end_beat" for n in node.body):
+                return "Do not define end_beat: it is inherited from GridLayoutScene."
+
     calls = sorted(
         (
             node for node in ast.walk(tree)
@@ -135,13 +147,14 @@ def generate_scene(
 def repair_scene(
     code: str,
     traceback_text: str,
-    n_beats: int,
+    segment: Segment,
+    beat_durations: list[float],
     class_name: str,
     *,
     model: str = DEFAULT_MODEL,
     manifest: RunManifest | None = None,
 ) -> str:
-    prompt = build_repair_prompt(code, traceback_text, n_beats, class_name)
+    prompt = build_repair_prompt(code, traceback_text, segment, beat_durations, class_name)
     fixed = text(
         content=prompt, stage="manim_repair", model=model, max_tokens=6000, manifest=manifest,
     )

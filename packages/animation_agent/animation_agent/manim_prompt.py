@@ -205,15 +205,24 @@ Class name: {class_name}
     return system, user
 
 
-def build_repair_prompt(code: str, traceback_text: str, n_beats: int, class_name: str) -> str:
+def build_repair_prompt(
+    code: str, traceback_text: str, segment: Segment, beat_durations: list[float], class_name: str,
+) -> str:
+    n_beats = len(beat_durations)
     return f"""\
 The following Manim scene failed to render. Fix ONLY what's necessary to \
-make it render successfully, keeping the same visual intent and class name \
-`{class_name}`. It must keep exactly {n_beats} beats: each beat block ends \
-with `self.end_beat(N)` for N = 1..{n_beats} in order, and \
+make it render successfully. Keep every beat's visual as specified below \
+— never replace them with generic or placeholder content (no "Segment N" \
+titles, no filler shapes). Keep class `{class_name}(GridLayoutScene)` \
+(do NOT subclass Scene and do NOT define your own end_beat: it is inherited \
+and does the audio sync). It must keep exactly {n_beats} beats: each beat \
+block ends with `self.end_beat(N)` for N = 1..{n_beats} in order, and \
 `self.end_beat({n_beats})` is the last statement of construct(). If the \
 error says a beat overran, shorten that beat's run_time values. Output \
 ONLY the corrected Python source code, no explanation.
+
+The beats this scene must depict:
+{format_beats(segment, beat_durations)}
 
 --- CODE ---
 {code}

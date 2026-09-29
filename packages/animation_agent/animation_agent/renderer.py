@@ -210,7 +210,9 @@ def render_segment(
     # --- Tier 1: targeted repair, up to MAX_TIER1_REPAIRS times ------------
     for _ in range(MAX_TIER1_REPAIRS):
         try:
-            code = repair_scene(code, last_error, n_beats, class_name, model=model, manifest=manifest)
+            code = repair_scene(
+                code, last_error, segment, beat_durations, class_name, model=model, manifest=manifest,
+            )
         except (UnsafeCodeError, SyntaxError) as e:
             last_error = str(e)
             continue

@@ -41,11 +41,72 @@ PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
     "claude-opus-5": (5.00, 25.00),
     "claude-sonnet-5": (2.00, 10.00),
     "claude-haiku-4-5": (1.00, 5.00),
+    # OpenAI prices are not filled in: cost for gpt-* calls reports as $0.
+    # Add (input, output) $/Mtok here to include them in the report.
 }
 
 T = TypeVar("T", bound=BaseModel)
 
 _client: anthropic.Anthropic | None = None
+_openai_client = None
+
+
+def is_openai_model(model: str) -> bool:
+    """Models named gpt-* are routed to OpenAI by structured()/text();
+    everything else goes to Anthropic. Callers just pass model="gpt-5.5"."""
+    return model.startswith("gpt-")
+
+
+def get_openai_client():
+    global _openai_client
+    if _openai_client is None:
+        from openai import OpenAI  # imported lazily: only needed for gpt-* models
+
+        _openai_client = OpenAI()
+    return _openai_client
+
+
+def _to_openai_messages(content: str | list[dict], system: str | None) -> list[dict]:
+    """Translates our Anthropic-style content blocks (text / image) into
+    OpenAI chat messages. PDF `document` blocks aren't supported."""
+    messages: list[dict] = []
+    if system is not None:
+        messages.append({"role": "system", "content": system})
+    if isinstance(content, str):
+        messages.append({"role": "user", "content": content})
+        return messages
+    parts: list[dict] = []
+    for block in content:
+        if block["type"] == "text":
+            parts.append({"type": "text", "text": block["text"]})
+        elif block["type"] == "image":
+            src = block["source"]
+            parts.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{src['media_type']};base64,{src['data']}"},
+            })
+        else:
+            raise ValueError(f"OpenAI backend doesn't support {block['type']!r} content blocks")
+    messages.append({"role": "user", "content": parts})
+    return messages
+
+
+def _record_openai_usage(
+    manifest: RunManifest | None, *, stage: str, ku_id: str | None, model: str,
+    usage, wall_seconds: float,
+) -> None:
+    if manifest is None:
+        return
+    cached = getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", 0) or 0
+    manifest.llm_calls.append(
+        LLMCallRecord(
+            stage=stage, ku_id=ku_id, model=model,
+            input_tokens=usage.prompt_tokens - cached,
+            output_tokens=usage.completion_tokens,
+            cache_read_tokens=cached,
+            wall_seconds=wall_seconds,
+        )
+    )
 
 
 def get_client() -> anthropic.Anthropic:
@@ -138,6 +199,23 @@ def structured(
     Anthropic exceptions (retryable ones are already retried by the SDK's
     default max_retries) so the CLI can log which stage/KU failed.
     """
+    if is_openai_model(model):
+        start = time.monotonic()
+        response = get_openai_client().chat.completions.parse(
+            model=model,
+            messages=_to_openai_messages(content, system),
+            response_format=schema,
+            max_completion_tokens=max_tokens,
+        )
+        message = response.choices[0].message
+        if message.refusal:
+            raise RuntimeError(f"[{stage}] request refused by the model (ku={ku_id}): {message.refusal}")
+        _record_openai_usage(
+            manifest, stage=stage, ku_id=ku_id, model=model, usage=response.usage,
+            wall_seconds=time.monotonic() - start,
+        )
+        return message.parsed
+
     kwargs: dict = {
         "model": model,
         "max_tokens": max_tokens,
@@ -182,6 +260,19 @@ def text(
 ) -> str:
     """Call the model and return its plain text response (used for Manim
     code generation, where the output is Python source, not JSON)."""
+    if is_openai_model(model):
+        start = time.monotonic()
+        response = get_openai_client().chat.completions.create(
+            model=model,
+            messages=_to_openai_messages(content, system),
+            max_completion_tokens=max_tokens,
+        )
+        _record_openai_usage(
+            manifest, stage=stage, ku_id=ku_id, model=model, usage=response.usage,
+            wall_seconds=time.monotonic() - start,
+        )
+        return response.choices[0].message.content or ""
+
     kwargs: dict = {
         "model": model,
         "max_tokens": max_tokens,
