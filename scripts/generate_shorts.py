@@ -152,7 +152,7 @@ def run(args: argparse.Namespace) -> None:
             for i, (seg, audio) in enumerate(zip(script.segments, segment_audios)):
                 t0 = time.monotonic()
                 result = render_segment(
-                    seg, i, audio.duration_seconds, render_dir / f"seg_{i}",
+                    seg, i, audio.beat_durations, render_dir / f"seg_{i}",
                     quality=args.quality, manifest=manifest,
                 )
                 render_results.append(result)

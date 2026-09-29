@@ -40,23 +40,38 @@ material you were given — do not cite a slide that doesn't contain the \
 claim you're attributing to it.
   - Write narration as natural spoken language — contractions are fine, \
 no bullet-point phrasing, no "Slide 3 shows...".
-  - `visual.title` should be terse on-screen text (a few words to a short \
-phrase) — NOT the narration text repeated. On-screen text and spoken \
-narration should complement each other, not duplicate each other verbatim \
-(per Mayer's multimedia learning principles).
-  - There is no fixed catalog of visual "types" — every segment's visual is \
-described the same way: `visual.title` (optional short label) plus \
-`visual.animation_steps`, a numbered list of 2-5 short, concrete, literal \
-drawing actions, in the order they should happen. Whatever the segment \
-needs — a title card, a bullet list, an equation, a plot, a diagram, a \
-code snippet, a side-by-side comparison — express it as steps, e.g.:
-      "Write the equation f(n) = O(n^2) in the center"
-      "Draw 3 identical rectangles side by side, labeled 'A', 'B', 'C'"
-      "Fade in two columns: left labeled 'Bandit: reward only', right \
-labeled 'MDP: reward + next situation'"
-    Each step must directly depict the specific content of this KU, using \
-only simple shapes/lines/arrows/text/equations — never a generic stand-in \
-(e.g. do not describe an unrelated function plot unless the KU is \
+
+Beats — narration and visuals are written TOGETHER, one sentence at a time:
+  - Each segment is a list of `beats`. A beat is ONE spoken sentence \
+(`narration`, at most 25 words) plus the ONE visual action (`visual`) that \
+appears on screen while exactly that sentence is being spoken. Beat N's \
+visual must show what beat N's sentence says, at the moment it's said — \
+never something said in an earlier or later sentence.
+  - Beats per segment: prepare 1-2, initiate 1-2, each deliver 3-5, end 1-3.
+  - Never put two sentences in one beat. If a sentence needs two visual \
+actions, split it into two shorter sentences.
+
+Visuals must EXPLAIN, not caption (the viewer should understand the idea \
+from the picture alone, with the sound off):
+  - Show ideas with shapes, arrows, dots, bars, boxes, and MOTION: an \
+object moving along an arrow, a bar growing, a box changing color, a \
+shape transforming into another, a path lighting up, a highlight ring \
+around the part being discussed.
+  - On-screen text is limited to short labels attached to shapes (at most \
+3 words each, e.g. 'arm 2', 'reward', 'S1') and formulas. Never put a \
+sentence, a bullet list, a title card, or the narration itself on screen.
+  - Build one evolving diagram per segment: later beats move, recolor, \
+highlight, or extend objects created in earlier beats instead of clearing \
+the screen and starting over.
+  - Describe each visual concretely and literally, naming the objects and \
+what happens to them, e.g.:
+      GOOD: "A yellow dot slides from box 'S1' along the arrow into box 'S2'"
+      GOOD: "The 'reward' bar under arm 2 grows to twice the height of the others"
+      BAD:  "Show the text 'Actions change the state'"  (a caption, not a visual)
+      BAD:  "Illustrate the concept of delayed reward"  (not concrete)
+  - Each visual must directly depict this KU's specific content using only \
+simple shapes/lines/arrows/dots/short labels/equations — never a generic \
+stand-in (e.g. do not describe an unrelated function plot unless the KU is \
 literally about that function).
 """
 
@@ -81,7 +96,7 @@ Write the 5-segment CLT-bLM script for this Knowledge Unit now.
 CRITIQUE_SYSTEM_PROMPT = """\
 You are the Semantic Critique sub-agent in SyllaByte. You review a \
 generated video script against the source lecture material it claims to \
-be grounded in, and score it on three dimensions, each 0-10:
+be grounded in, and score it on four dimensions, each 0-10:
 
   - pedagogical_coherence: does the script follow the four CLT-bLM phases \
 in order (prepare -> initiate -> deliver -> end), with each phase doing \
@@ -93,9 +108,15 @@ find even one factual error not grounded in the source.
   - learner_appropriateness: is the language and complexity calibrated to \
 the stated Bloom's level? Is it free of unexplained jargon for a novice \
 concept?
+  - visual_alignment: does every beat's `visual` depict exactly what that \
+same beat's `narration` sentence says (not a neighbouring sentence)? Does \
+it explain with shapes and motion rather than on-screen text? Score <=4 if \
+any beat's visual is just text on screen (a caption, title card, bullet \
+list, or the narration repeated), or if any visual is too vague to draw \
+literally.
 
 List every concrete issue you find in `issues` (empty list if none). Be \
-specific — cite the segment (by phase) and what's wrong.
+specific — cite the segment (by phase), the beat number, and what's wrong.
 """
 
 

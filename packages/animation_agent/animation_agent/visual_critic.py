@@ -141,7 +141,7 @@ def critique_render(
 def apply_visual_repair(
     code: str,
     critique: LayoutCritique,
-    duration: float,
+    n_beats: int,
     class_name: str,
     *,
     model: str = DEFAULT_MODEL,
@@ -159,10 +159,10 @@ def apply_visual_repair(
     prompt = f"""\
 You are a Manim Community Edition developer fixing layout issues in an \
 existing scene. Apply ONLY the fixes listed below, each to the exact line \
-number given — do not touch any other line, do not change the total \
-runtime ({duration:.2f} seconds), class name (`{class_name}`), or any \
-narrative/animation content. Output ONLY the corrected Python source, no \
-explanation.
+number given — do not touch any other line, do not change any run_time, \
+the class name (`{class_name}`), any narrative/animation content, or the \
+{n_beats} `self.end_beat(N)` calls. Output the COMPLETE corrected Python \
+source (every line, not just the changed ones), no explanation.
 
 Fixes to apply:
 {todo}
@@ -171,6 +171,6 @@ Fixes to apply:
 {code}
 """
     fixed = text(
-        content=prompt, stage="visual_repair", model=model, max_tokens=4000, manifest=manifest,
+        content=prompt, stage="visual_repair", model=model, max_tokens=6000, manifest=manifest,
     )
     return validate_generated_code(fixed)

@@ -78,18 +78,56 @@ def validate_generated_code(code: str) -> str:
 _validated = validate_generated_code
 
 
+def check_beat_structure(code: str, n_beats: int) -> str | None:
+    """Returns a description of the problem, or None if construct() calls
+    self.end_beat(1), ..., self.end_beat(n_beats) exactly once each, in
+    order, with literal arguments, and ends on self.end_beat(n_beats).
+    A missing beat would silently drop that sentence's visual (and leave
+    the clip short of its audio), so this runs before every render."""
+    tree = ast.parse(code)
+    calls = sorted(
+        (
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "end_beat"
+        ),
+        key=lambda node: (node.lineno, node.col_offset),
+    )
+    args = [
+        node.args[0].value
+        if len(node.args) == 1 and isinstance(node.args[0], ast.Constant) else None
+        for node in calls
+    ]
+    expected = list(range(1, n_beats + 1))
+    if args != expected:
+        return (
+            f"The scene must call self.end_beat(N) with a literal N once per beat, "
+            f"in order: expected {expected}, found {args}."
+        )
+
+    construct = next(
+        (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "construct"),
+        None,
+    )
+    last = construct.body[-1] if construct and construct.body else None
+    if not (isinstance(last, ast.Expr) and last.value is calls[-1]):
+        return f"self.end_beat({n_beats}) must be the last statement of construct()."
+    return None
+
+
 def generate_scene(
     segment: Segment,
-    duration: float,
+    beat_durations: list[float],
     class_name: str,
     *,
     model: str = DEFAULT_MODEL,
     manifest: RunManifest | None = None,
 ) -> str:
-    system, user = build_generation_prompt(segment, duration, class_name)
+    system, user = build_generation_prompt(segment, beat_durations, class_name)
     code = text(
         content=user, system=system, stage="manim_codegen", model=model,
-        max_tokens=4000, manifest=manifest,
+        max_tokens=6000, manifest=manifest,
     )
     return _validated(code)
 
@@ -97,14 +135,14 @@ def generate_scene(
 def repair_scene(
     code: str,
     traceback_text: str,
-    duration: float,
+    n_beats: int,
     class_name: str,
     *,
     model: str = DEFAULT_MODEL,
     manifest: RunManifest | None = None,
 ) -> str:
-    prompt = build_repair_prompt(code, traceback_text, duration, class_name)
+    prompt = build_repair_prompt(code, traceback_text, n_beats, class_name)
     fixed = text(
-        content=prompt, stage="manim_repair", model=model, max_tokens=4000, manifest=manifest,
+        content=prompt, stage="manim_repair", model=model, max_tokens=6000, manifest=manifest,
     )
     return _validated(fixed)

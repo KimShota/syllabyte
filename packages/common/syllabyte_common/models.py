@@ -9,9 +9,9 @@ CLI can resume from any stage (see run_store.py).
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # --------------------------------------------------------------------------
 # Stage 1 — Ingestion (syllabus + slide decks -> CourseCorpus)
@@ -86,23 +86,37 @@ class KUList(BaseModel):
 Phase = Literal["prepare", "initiate", "deliver", "end"]
 
 
-class VisualSpec(BaseModel):
-    """Code2Video-style storyboard visual (github.com/showlab/Code2Video):
-    deliberately NO "kind" taxonomy — every segment, whatever its content
-    (title card, bullets, equation, plot, diagram, code, comparison...), is
-    described the same uniform way: a short on-screen title plus a numbered
-    list of concrete, literal drawing actions. manim_codegen.py renders
-    `animation_steps` directly with no per-kind branching, exactly like
-    Code2Video's Coder consumes its storyboard's `animations` list."""
-    title: str | None = None
-    animation_steps: list[str] = Field(min_length=2)
+class Beat(BaseModel):
+    """One spoken sentence paired with the one visual action shown while it
+    is spoken — Code2Video's lecture_lines[i] <-> animations[i] pairing
+    (github.com/showlab/Code2Video). Each beat is synthesized to its own
+    audio clip (tts.py), and the scene pads each beat's animations to that
+    clip's exact end time (layout.GridLayoutScene.end_beat), so visual N is
+    on screen while sentence N is being said."""
+    narration: str
+    visual: str
 
 
 class Segment(BaseModel):
     phase: Phase
-    narration: str
-    visual: VisualSpec
+    beats: list[Beat] = Field(min_length=1)
     source_refs: list[SlideRef] = Field(default_factory=list, min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _upgrade_legacy(cls, data: Any) -> Any:
+        """Loads pre-beat script.json files (one `narration` paragraph + a
+        `visual.animation_steps` list with no per-sentence pairing) as a
+        single beat, so old runs still load in report.py."""
+        if isinstance(data, dict) and "beats" not in data and "narration" in data:
+            data = dict(data)
+            steps = (data.pop("visual", None) or {}).get("animation_steps", [])
+            data["beats"] = [{"narration": data.pop("narration"), "visual": "; ".join(steps)}]
+        return data
+
+    @property
+    def narration(self) -> str:
+        return " ".join(beat.narration for beat in self.beats)
 
 
 class Script(BaseModel):
@@ -123,15 +137,20 @@ class CritiqueScore(BaseModel):
     pedagogical_coherence: int = Field(ge=0, le=10)
     conceptual_accuracy: int = Field(ge=0, le=10)
     learner_appropriateness: int = Field(ge=0, le=10)
+    # None only for critiques written before this dimension existed.
+    visual_alignment: int | None = Field(default=None, ge=0, le=10)
     issues: list[str] = Field(default_factory=list)
 
     @property
     def min_score(self) -> int:
-        return min(
+        scores = [
             self.pedagogical_coherence,
             self.conceptual_accuracy,
             self.learner_appropriateness,
-        )
+        ]
+        if self.visual_alignment is not None:
+            scores.append(self.visual_alignment)
+        return min(scores)
 
 
 class CritiqueResult(BaseModel):
@@ -153,6 +172,8 @@ class SegmentAudio(BaseModel):
     duration_seconds: float
     srt_start: float
     srt_end: float
+    # Per-beat durations (sum == duration_seconds); empty for pre-beat runs.
+    beat_durations: list[float] = Field(default_factory=list)
 
 
 class RenderResult(BaseModel):

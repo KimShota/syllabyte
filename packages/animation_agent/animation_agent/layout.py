@@ -19,21 +19,38 @@ the Critic's occupancy table and repair prompts reference — stay stable.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 from manim import Scene
 
-from animation_agent.manim_prompt import GRID_DIAGRAM, SAFE_HEIGHT, SAFE_WIDTH
+from animation_agent.manim_prompt import (
+    BEAT_OVERRUN_TOLERANCE_SECONDS,
+    GRID_DIAGRAM,
+    SAFE_HEIGHT,
+    SAFE_WIDTH,
+)
 
 GRID_ROWS = ["A", "B", "C", "D", "E", "F"]
 GRID_COLS = ["1", "2", "3", "4", "5", "6"]
 
+# Written by renderer.py into the render dir (manim's cwd) before every
+# render: the per-beat narration durations. Read here, by trusted code,
+# rather than baked into the LLM's source, so the model can't get the
+# numbers wrong — it only has to call end_beat(n) at the right places.
+BEATS_FILE = "beats.json"
+
 __all__ = [
     "GridLayoutScene", "GridCall", "parse_grid_calls", "format_occupancy_table",
-    "GRID_DIAGRAM", "GRID_ROWS", "GRID_COLS",
+    "GRID_DIAGRAM", "GRID_ROWS", "GRID_COLS", "BEATS_FILE", "BeatOverrunError",
 ]
+
+
+class BeatOverrunError(Exception):
+    pass
 
 
 class GridLayoutScene(Scene):
@@ -41,7 +58,8 @@ class GridLayoutScene(Scene):
     of the 36 cell names above to a fixed point in the safe frame area;
     `place_at_grid`/`place_in_area` are the only placement primitives the
     codegen prompt allows, so every mobject's position is always
-    expressible as a small set of named anchors."""
+    expressible as a small set of named anchors. `end_beat(n)` keeps each
+    beat's animations aligned with its narration sentence."""
 
     def setup_grid(self) -> None:
         self.grid: dict[str, np.ndarray] = {}
@@ -50,6 +68,30 @@ class GridLayoutScene(Scene):
                 x = -SAFE_WIDTH / 2 + (j + 0.5) * (SAFE_WIDTH / len(GRID_COLS))
                 y = SAFE_HEIGHT / 2 - (i + 0.5) * (SAFE_HEIGHT / len(GRID_ROWS))
                 self.grid[f"{row}{col}"] = np.array([x, y, 0.0])
+
+        beats_path = Path(BEATS_FILE)
+        self.beat_durations: list[float] = (
+            json.loads(beats_path.read_text()) if beats_path.exists() else []
+        )
+
+    def end_beat(self, n: int) -> None:
+        """Ends beat `n` (1-indexed): waits until the moment narration
+        sentence n finishes, so beat n+1's animations start exactly when
+        sentence n+1 does. Raises if beat n's animations ran noticeably
+        past its sentence (they'd push every later visual out of sync)."""
+        if not 1 <= n <= len(self.beat_durations):
+            raise ValueError(f"end_beat({n}) but this segment has {len(self.beat_durations)} beats")
+        beat_end = sum(self.beat_durations[:n])
+        remaining = beat_end - self.time
+        if remaining < -BEAT_OVERRUN_TOLERANCE_SECONDS:
+            raise BeatOverrunError(
+                f"Beat {n}'s animations end at {self.time:.2f}s, but its narration "
+                f"ends at {beat_end:.2f}s ({-remaining:.2f}s over). Shorten the "
+                f"run_time values in beat {n} so they total under "
+                f"{self.beat_durations[n - 1]:.2f}s."
+            )
+        if remaining > 0.01:
+            self.wait(remaining)
 
     def place_at_grid(self, mobject, grid_pos: str, scale_factor: float = 1.0):
         """Point-level placement — small elements (short labels, icons)."""

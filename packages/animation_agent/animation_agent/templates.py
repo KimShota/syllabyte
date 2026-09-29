@@ -1,7 +1,7 @@
 """
 Deterministic Manim scene templates — Component 4, Week-1 scope.
 
-Built directly from a VisualSpec without any LLM call. Two roles:
+Built directly from a Segment's beats without any LLM call. Two roles:
   1. The final tier of the repair ladder in renderer.py: if LLM-generated
      code fails after every repair attempt, a template guarantees the
      segment still produces *some* usable video instead of a hard failure.
@@ -12,58 +12,46 @@ Built directly from a VisualSpec without any LLM call. Two roles:
 
 from __future__ import annotations
 
-from manim import DOWN, WHITE, YELLOW, FadeIn, Scene, Text, VGroup, Write
+import textwrap
 
-from syllabyte_common.models import VisualSpec
+from syllabyte_common.models import Segment
 
 FRAME_WIDTH = 4.5
 FRAME_HEIGHT = 8.0
 SAFE_WIDTH = FRAME_WIDTH - 0.6
+SAFE_HEIGHT = FRAME_HEIGHT - 0.8
 
 
-def _fit(mobject, max_width: float = SAFE_WIDTH):
-    if mobject.width > max_width:
-        mobject.scale_to_fit_width(max_width)
-    return mobject
-
-
-def build_template_scene(visual: VisualSpec, duration: float, class_name: str) -> str:
+def build_template_scene(segment: Segment, class_name: str) -> str:
     """Returns Manim Python source (as text) for a deterministic scene, used
     as the final tier of the repair ladder when every LLM attempt fails.
-    Since VisualSpec has no "kind" to dispatch on (Code2Video-style: every
-    segment is just a title + free-text animation_steps), this can't
-    specialize per content type — it just shows the title plus up to 3
-    steps as plain text, guaranteeing *some* video instead of a hard
-    failure."""
-    title_run_time = 0.6 if visual.title else 0.0
-    steps_run_time = min(2.0, duration * 0.4)
-    title_block = ""
-    if visual.title:
-        title_block = f"""
-        title = Text("{visual.title}", font_size=44, color=YELLOW)
-        title.scale_to_fit_width(min(title.width, {SAFE_WIDTH:.2f}))
-        self.play(FadeIn(title), run_time={title_run_time:.2f})
-"""
-    step_lines = "\n".join(
-        f'            Text("{step[:60]}", font_size=28, color=WHITE),'
-        for step in visual.animation_steps[:3]
-    )
-    body = title_block + f"""
-        steps = VGroup(
-{step_lines}
-        ).arrange(DOWN, buff=0.3)
-        steps.scale_to_fit_width(min(steps.width, {SAFE_WIDTH:.2f}))
-        self.play(Write(steps), run_time={steps_run_time:.2f})
-        self.wait(max(0.1, {duration:.2f} - {title_run_time:.2f} - {steps_run_time:.2f}))
-"""
+    Beats' visuals are free text with no "kind" to dispatch on, so this
+    can't draw them — it shows each beat's sentence as a caption during
+    that beat (still synced via end_beat), guaranteeing *some* video
+    instead of a hard failure."""
+    blocks = []
+    for n, beat in enumerate(segment.beats, 1):
+        fade_previous = "self.play(FadeOut(line), run_time=0.3)\n        " if n > 1 else ""
+        blocks.append(f"""\
+        # === Beat {n} ===
+        {fade_previous}line = Text({textwrap.fill(beat.narration, 22)!r}, font_size=36, color=WHITE)
+        self.place_in_area(line, "B1", "E6")
+        line.scale_to_fit_width(min(line.width, {SAFE_WIDTH:.2f}))
+        line.scale_to_fit_height(min(line.height, {SAFE_HEIGHT * 0.6:.2f}))
+        self.play(FadeIn(line), run_time=0.4)
+        self.end_beat({n})
+""")
 
     return f"""from manim import *
 
+from animation_agent.layout import GridLayoutScene
 
-class {class_name}(Scene):
+
+class {class_name}(GridLayoutScene):
     def construct(self):
-{body}
-"""
+        self.setup_grid()
+
+{chr(10).join(blocks)}"""
 
 
 if __name__ == "__main__":
@@ -86,16 +74,22 @@ if __name__ == "__main__":
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    from animation_agent.manim_config import write_manim_cfg
+    import json
 
-    spec = VisualSpec(
-        title="Smoke Test",
-        animation_steps=[
-            r"Write the equation O(n) = c \cdot n \text{ for } n \geq n_0",
-            "Fade out after a short pause",
+    from animation_agent.layout import BEATS_FILE
+    from animation_agent.manim_config import write_manim_cfg
+    from syllabyte_common.models import Beat, SlideRef
+
+    segment = Segment(
+        phase="deliver",
+        beats=[
+            Beat(narration="This is a smoke test.", visual="-"),
+            Beat(narration="It checks that Manim, Cairo, and ffmpeg work.", visual="-"),
         ],
+        source_refs=[SlideRef(deck_name="smoke", slide_number=1)],
     )
-    code = build_template_scene(spec, duration=5.0, class_name="SmokeTest")
+    (out_dir / BEATS_FILE).write_text(json.dumps([2.0, 3.0]))
+    code = build_template_scene(segment, class_name="SmokeTest")
     scene_path = out_dir / "smoke_scene.py"
     scene_path.write_text(code)
     print(f"Wrote {scene_path}")

@@ -104,6 +104,7 @@ def render_report(run_dir: Path) -> str:
             lines.append(
                 f"  - round {i}: coherence={r.pedagogical_coherence} "
                 f"accuracy={r.conceptual_accuracy} appropriateness={r.learner_appropriateness}"
+                + (f" visual_alignment={r.visual_alignment}" if r.visual_alignment is not None else "")
                 + (f" — issues: {'; '.join(r.issues)}" if r.issues else "")
             )
 

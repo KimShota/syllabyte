@@ -29,19 +29,30 @@ this pass — they're deterministic and don't use the LLM's grid placements.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import time
 from pathlib import Path
 
 from syllabyte_common.models import RenderResult, RunManifest, Segment
 
-from animation_agent.manim_codegen import UnsafeCodeError, generate_scene, repair_scene
+from animation_agent.assemble import ffprobe_duration
+from animation_agent.layout import BEATS_FILE
+from animation_agent.manim_codegen import (
+    UnsafeCodeError,
+    check_beat_structure,
+    generate_scene,
+    repair_scene,
+)
 from animation_agent.manim_config import write_manim_cfg
 from animation_agent.templates import build_template_scene
 from animation_agent.visual_critic import apply_visual_repair, critique_render
 
 RENDER_TIMEOUT_SECONDS = 180
 MAX_TIER1_REPAIRS = 2
+# A render whose length is further than this from its narration audio is
+# treated as a failure (e.g. a beat's visuals were dropped), not padded over.
+MAX_DURATION_MISMATCH_SECONDS = 0.5
 
 
 def _run_manim(render_dir: Path, scene_file: Path, class_name: str) -> subprocess.CompletedProcess:
@@ -62,8 +73,19 @@ def _find_output_mp4(render_dir: Path, class_name: str) -> Path | None:
     return matches[0] if matches else None
 
 
-def _try_render(render_dir: Path, code: str, class_name: str, quality: str) -> tuple[bool, str, Path | None]:
-    """Writes code to disk and attempts a render. Returns (ok, error_text, mp4_path)."""
+def _try_render(
+    render_dir: Path, code: str, class_name: str, quality: str, n_beats: int, duration: float,
+) -> tuple[bool, str, Path | None]:
+    """Checks the beat structure, writes code to disk, and attempts a
+    render, rejecting one whose length doesn't match the narration.
+    Returns (ok, error_text, mp4_path)."""
+    try:
+        problem = check_beat_structure(code, n_beats)
+    except SyntaxError as e:
+        problem = f"SyntaxError: {e}"
+    if problem:
+        return False, problem, None
+
     scene_file = render_dir / f"{class_name}.py"
     scene_file.write_text(code)
     write_manim_cfg(render_dir, quality)
@@ -81,6 +103,14 @@ def _try_render(render_dir: Path, code: str, class_name: str, quality: str) -> t
     if mp4_path is None:
         return False, "manim exited 0 but no output .mp4 was found", None
 
+    video_duration = ffprobe_duration(mp4_path)
+    if abs(video_duration - duration) > MAX_DURATION_MISMATCH_SECONDS:
+        return False, (
+            f"The rendered scene is {video_duration:.2f}s long but its narration is "
+            f"{duration:.2f}s. Nothing may play or wait after the final "
+            f"self.end_beat({n_beats})."
+        ), None
+
     return True, "", mp4_path
 
 
@@ -88,6 +118,7 @@ def _visual_critic_pass(
     render_dir: Path,
     code: str,
     class_name: str,
+    n_beats: int,
     duration: float,
     quality: str,
     mp4_path: Path,
@@ -111,45 +142,65 @@ def _visual_critic_pass(
     issues = [f"{i.object_affected}: {i.problem}" for i in critique.improvements]
     try:
         repaired_code = apply_visual_repair(
-            code, critique, duration, class_name, model=model, manifest=manifest,
+            code, critique, n_beats, class_name, model=model, manifest=manifest,
         )
     except (UnsafeCodeError, SyntaxError):
         return mp4_path, False, issues
 
-    ok, _, repaired_mp4 = _try_render(render_dir, repaired_code, class_name, quality)
+    ok, _, repaired_mp4 = _try_render(
+        render_dir, repaired_code, class_name, quality, n_beats, duration,
+    )
     if ok:
         return repaired_mp4, True, []
+    # The failed re-render overwrote the scene file; restore the code that
+    # produced the kept video so the run dir stays consistent with it.
+    (render_dir / f"{class_name}.py").write_text(code)
     return mp4_path, False, issues
 
 
 def render_segment(
     segment: Segment,
     segment_index: int,
-    duration: float,
+    beat_durations: list[float],
     render_dir: Path,
     *,
     quality: str = "low",
     model: str = "claude-opus-5",
     manifest: RunManifest | None = None,
 ) -> RenderResult:
+    n_beats = len(segment.beats)
+    if len(beat_durations) != n_beats:
+        raise ValueError(
+            f"segment {segment_index} has {n_beats} beats but {len(beat_durations)} beat "
+            "durations — the audio predates this script; re-run with --from-stage tts"
+        )
+    duration = sum(beat_durations)
     render_dir.mkdir(parents=True, exist_ok=True)
+    (render_dir / BEATS_FILE).write_text(json.dumps(beat_durations))
     class_name = f"Seg{segment_index}"
     start = time.monotonic()
     attempts = 0
     last_error = ""
 
+    def try_render(code: str) -> tuple[bool, str, Path | None]:
+        return _try_render(render_dir, code, class_name, quality, n_beats, duration)
+
+    def critic_pass(code: str, mp4_path: Path) -> tuple[Path, bool, list[str]]:
+        return _visual_critic_pass(
+            render_dir, code, class_name, n_beats, duration, quality, mp4_path,
+            model=model, manifest=manifest,
+        )
+
     # --- First attempt -----------------------------------------------------
     try:
-        code = generate_scene(segment, duration, class_name, model=model, manifest=manifest)
+        code = generate_scene(segment, beat_durations, class_name, model=model, manifest=manifest)
     except (UnsafeCodeError, SyntaxError) as e:
         code, last_error = "", str(e)
     else:
         attempts += 1
-        ok, last_error, mp4_path = _try_render(render_dir, code, class_name, quality)
+        ok, last_error, mp4_path = try_render(code)
         if ok:
-            mp4_path, repaired, issues = _visual_critic_pass(
-                render_dir, code, class_name, duration, quality, mp4_path, model=model, manifest=manifest,
-            )
+            mp4_path, repaired, issues = critic_pass(code, mp4_path)
             return RenderResult(
                 segment_index=segment_index, tier="llm_first_try", attempts=attempts,
                 render_seconds=time.monotonic() - start, video_path=str(mp4_path),
@@ -159,16 +210,14 @@ def render_segment(
     # --- Tier 1: targeted repair, up to MAX_TIER1_REPAIRS times ------------
     for _ in range(MAX_TIER1_REPAIRS):
         try:
-            code = repair_scene(code, last_error, duration, class_name, model=model, manifest=manifest)
+            code = repair_scene(code, last_error, n_beats, class_name, model=model, manifest=manifest)
         except (UnsafeCodeError, SyntaxError) as e:
             last_error = str(e)
             continue
         attempts += 1
-        ok, last_error, mp4_path = _try_render(render_dir, code, class_name, quality)
+        ok, last_error, mp4_path = try_render(code)
         if ok:
-            mp4_path, repaired, issues = _visual_critic_pass(
-                render_dir, code, class_name, duration, quality, mp4_path, model=model, manifest=manifest,
-            )
+            mp4_path, repaired, issues = critic_pass(code, mp4_path)
             return RenderResult(
                 segment_index=segment_index, tier="llm_repaired", attempts=attempts,
                 render_seconds=time.monotonic() - start, video_path=str(mp4_path),
@@ -177,13 +226,11 @@ def render_segment(
 
     # --- Tier 2: full regeneration from the original spec, once -----------
     try:
-        code = generate_scene(segment, duration, class_name, model=model, manifest=manifest)
+        code = generate_scene(segment, beat_durations, class_name, model=model, manifest=manifest)
         attempts += 1
-        ok, last_error, mp4_path = _try_render(render_dir, code, class_name, quality)
+        ok, last_error, mp4_path = try_render(code)
         if ok:
-            mp4_path, repaired, issues = _visual_critic_pass(
-                render_dir, code, class_name, duration, quality, mp4_path, model=model, manifest=manifest,
-            )
+            mp4_path, repaired, issues = critic_pass(code, mp4_path)
             return RenderResult(
                 segment_index=segment_index, tier="llm_regenerated", attempts=attempts,
                 render_seconds=time.monotonic() - start, video_path=str(mp4_path),
@@ -194,8 +241,8 @@ def render_segment(
         attempts += 1
 
     # --- Tier 3: deterministic template fallback (always renders) ---------
-    template_code = build_template_scene(segment.visual, duration, class_name)
-    ok, template_error, mp4_path = _try_render(render_dir, template_code, class_name, quality)
+    template_code = build_template_scene(segment, class_name)
+    ok, template_error, mp4_path = try_render(template_code)
     attempts += 1
     if ok:
         return RenderResult(

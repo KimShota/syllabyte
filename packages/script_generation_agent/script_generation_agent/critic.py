@@ -1,9 +1,10 @@
 """
 Semantic Critique sub-agent — Component 3, Week-1 scope.
 
-Scores a generated script against the slides it's grounded in on three
+Scores a generated script against the slides it's grounded in on four
 dimensions (pedagogical coherence, conceptual accuracy, learner
-appropriateness). If any score falls below CRITIQUE_THRESHOLD, the caller
+appropriateness, visual alignment of each beat's visual with its sentence).
+If any score falls below CRITIQUE_THRESHOLD, the caller
 (write_script_with_critique) regenerates with the critique text appended as
 a revision instruction, up to MAX_ROUNDS total attempts.
 """
@@ -122,4 +123,4 @@ if __name__ == "__main__":
     print(f"Script for {ku.id}: {script.word_count} words, passed={result.passed}")
     for i, r in enumerate(result.rounds, 1):
         print(f"  round {i}: coherence={r.pedagogical_coherence} accuracy={r.conceptual_accuracy} "
-              f"appropriateness={r.learner_appropriateness}")
+              f"appropriateness={r.learner_appropriateness} visual_alignment={r.visual_alignment}")

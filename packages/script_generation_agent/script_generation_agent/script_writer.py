@@ -5,7 +5,7 @@ Gathers the specific slides a Knowledge Unit cites (text + rendered PNG, if
 available) as the ONLY grounding material, then calls Claude for a
 structured Script. Hard, code-side checks run before the LLM critic ever
 sees the output — cheap, deterministic checks catch cheap, deterministic
-mistakes (wrong word count, missing refs, too few animation steps) without
+mistakes (wrong word count, missing refs, overlong beats) without
 spending an extra LLM call.
 """
 
@@ -19,6 +19,9 @@ from syllabyte_common.models import CourseCorpus, KnowledgeUnit, RunManifest, Sc
 
 MIN_WORDS = 150
 MAX_WORDS = 220
+# The prompt asks for <=25; the slack avoids rejecting a whole script (and
+# crashing the run) over one slightly long sentence.
+MAX_BEAT_WORDS = 32
 
 
 class ScriptValidationError(Exception):
@@ -68,8 +71,17 @@ def validate_script(script: Script) -> list[str]:
     for i, seg in enumerate(script.segments):
         if not seg.source_refs:
             problems.append(f"segment {i} ({seg.phase}) has no source_refs")
-        # `visual.animation_steps` (>=2 entries) is already enforced by
-        # VisualSpec's Pydantic min_length — nothing further to check here.
+        # `beats` (>=1 entry) is already enforced by Segment's Pydantic
+        # min_length; check each beat is one short sentence with a visual.
+        for j, beat in enumerate(seg.beats, 1):
+            words = len(beat.narration.split())
+            if words > MAX_BEAT_WORDS:
+                problems.append(
+                    f"segment {i} ({seg.phase}) beat {j} has {words} words, "
+                    f"max {MAX_BEAT_WORDS} (one sentence per beat)"
+                )
+            if not beat.visual.strip():
+                problems.append(f"segment {i} ({seg.phase}) beat {j} has no visual")
 
     return problems
 

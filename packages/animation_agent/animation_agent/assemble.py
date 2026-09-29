@@ -22,7 +22,7 @@ from syllabyte_common.models import RenderResult, SegmentAudio
 DRIFT_TOLERANCE_SECONDS = 0.05
 
 
-def _ffprobe_duration(path: Path) -> float:
+def ffprobe_duration(path: Path) -> float:
     result = subprocess.run(
         [
             "ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -37,7 +37,7 @@ def sync_segment_to_audio(video_path: Path, target_duration: float, out_path: Pa
     """Pads (via tpad, cloning the last frame) or trims a rendered clip so
     its duration matches target_duration. Returns the drift (seconds,
     video - audio) BEFORE correction, for the report."""
-    video_duration = _ffprobe_duration(video_path)
+    video_duration = ffprobe_duration(video_path)
     drift = video_duration - target_duration
 
     if abs(drift) <= DRIFT_TOLERANCE_SECONDS:

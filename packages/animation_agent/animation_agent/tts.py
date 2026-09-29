@@ -10,9 +10,10 @@ Three interchangeable backends, selected with --tts on the CLI:
     `elevenlabs` extra (`uv sync --extra elevenlabs`).
 
 Each backend implements synthesize(text, out_wav_path) -> duration_seconds.
-Segment audio is synthesized BEFORE animation: the resulting duration is
-what Manim is told to fill (see manim_prompt.py), so audio/video sync is
-driven by narration length, not the other way around.
+Audio is synthesized BEFORE animation, one clip per beat (sentence): each
+beat's duration is what that beat's animations are padded to fill (see
+layout.GridLayoutScene.end_beat), so audio/video sync is driven by
+narration length, sentence by sentence, not the other way around.
 """
 
 from __future__ import annotations
@@ -29,6 +30,9 @@ from syllabyte_common.models import Script, Segment, SegmentAudio
 
 KOKORO_SAMPLE_RATE = 24000
 DEFAULT_KOKORO_VOICE = "af_heart"
+# Silence between beats (sentences) within a segment: a natural pause, and
+# a moment for the viewer to take in the visual before the next one starts.
+BEAT_GAP_SECONDS = 0.25
 
 _kokoro_pipeline = None  # lazy singleton — loading the model takes a few seconds
 
@@ -129,6 +133,29 @@ def get_backend(name: str) -> TTSBackend:
 # --------------------------------------------------------------------------
 
 
+def _synthesize_beats(backend: TTSBackend, seg: Segment, wav_path: Path) -> list[float]:
+    """Synthesizes each beat's sentence as its own clip, then joins them
+    (with BEAT_GAP_SECONDS of silence between beats) into one segment WAV.
+    Returns each beat's duration, gap included, so the scene can end beat
+    N's animations exactly when sentence N finishes."""
+    import numpy as np
+
+    chunks, durations = [], []
+    sample_rate = None
+    for j, beat in enumerate(seg.beats):
+        beat_path = wav_path.with_name(f"{wav_path.stem}_beat_{j}.wav")
+        backend.synthesize(beat.narration, beat_path)
+        audio, sample_rate = sf.read(str(beat_path), dtype="float32")
+        beat_path.unlink(missing_ok=True)
+        if j < len(seg.beats) - 1:
+            gap = np.zeros((int(BEAT_GAP_SECONDS * sample_rate), *audio.shape[1:]), dtype="float32")
+            audio = np.concatenate([audio, gap])
+        chunks.append(audio)
+        durations.append(len(audio) / sample_rate)
+    sf.write(str(wav_path), np.concatenate(chunks), sample_rate)
+    return durations
+
+
 def synthesize_segments(
     script: Script, audio_dir: Path, backend_name: str = "kokoro"
 ) -> list[SegmentAudio]:
@@ -137,7 +164,8 @@ def synthesize_segments(
     t = 0.0
     for i, seg in enumerate(script.segments):
         wav_path = audio_dir / f"seg_{i}.wav"
-        duration = backend.synthesize(seg.narration, wav_path)
+        beat_durations = _synthesize_beats(backend, seg, wav_path)
+        duration = sum(beat_durations)
         results.append(
             SegmentAudio(
                 segment_index=i,
@@ -145,6 +173,7 @@ def synthesize_segments(
                 duration_seconds=duration,
                 srt_start=t,
                 srt_end=t + duration,
+                beat_durations=beat_durations,
             )
         )
         t += duration
@@ -210,7 +239,15 @@ def build_srt(script: Script, segment_audios: list[SegmentAudio], out_path: Path
     lines = []
     cue_num = 1
     for seg, sa in zip(script.segments, segment_audios):
-        for start, end, text in _split_into_cues(seg.narration, sa.srt_start, sa.srt_end):
+        if len(sa.beat_durations) == len(seg.beats):
+            # Exact per-sentence timing from the per-beat clips.
+            cues, t = [], sa.srt_start
+            for beat, duration in zip(seg.beats, sa.beat_durations):
+                cues += _split_into_cues(beat.narration, t, t + duration)
+                t += duration
+        else:
+            cues = _split_into_cues(seg.narration, sa.srt_start, sa.srt_end)
+        for start, end, text in cues:
             lines.append(str(cue_num))
             lines.append(f"{_fmt_srt_time(start)} --> {_fmt_srt_time(end)}")
             lines.append(text)
