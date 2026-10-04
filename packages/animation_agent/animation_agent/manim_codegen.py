@@ -139,7 +139,7 @@ def generate_scene(
     system, user = build_generation_prompt(segment, beat_durations, class_name)
     code = text(
         content=user, system=system, stage="manim_codegen", model=model,
-        max_tokens=6000, manifest=manifest,
+        max_tokens=20000, manifest=manifest,
     )
     return _validated(code)
 
@@ -156,6 +156,6 @@ def repair_scene(
 ) -> str:
     prompt = build_repair_prompt(code, traceback_text, segment, beat_durations, class_name)
     fixed = text(
-        content=prompt, stage="manim_repair", model=model, max_tokens=6000, manifest=manifest,
+        content=prompt, stage="manim_repair", model=model, max_tokens=20000, manifest=manifest,
     )
     return _validated(fixed)

@@ -130,7 +130,7 @@ def critique_render(
             system=SYSTEM_PROMPT,
             stage="visual_critic",
             model=model,
-            max_tokens=1500,
+            max_tokens=8000,
             manifest=manifest,
         )
     finally:
@@ -171,6 +171,6 @@ Fixes to apply:
 {code}
 """
     fixed = text(
-        content=prompt, stage="visual_repair", model=model, max_tokens=6000, manifest=manifest,
+        content=prompt, stage="visual_repair", model=model, max_tokens=20000, manifest=manifest,
     )
     return validate_generated_code(fixed)
