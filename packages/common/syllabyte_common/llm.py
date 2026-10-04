@@ -21,6 +21,7 @@ Sonnet"). Callers may pass model="claude-sonnet-5" for cheaper/faster calls
 from __future__ import annotations
 
 import base64
+import os
 import time
 from pathlib import Path
 from typing import TypeVar
@@ -51,17 +52,53 @@ _client: anthropic.Anthropic | None = None
 _openai_client = None
 
 
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+_gemini_client = None
+
+# local-* models are served by a vLLM server (OpenAI-compatible API), e.g. the
+# lab's DGX Spark reached through `ssh -N -L 8000:localhost:8000 ...`.
+# "local-qwen3.8-27b" -> the server's --served-model-name "qwen3.8-27b".
+LOCAL_PREFIX = "local-"
+_local_client = None
+
+
 def is_openai_model(model: str) -> bool:
-    """Models named gpt-* are routed to OpenAI by structured()/text();
-    everything else goes to Anthropic. Callers just pass model="gpt-5.5"."""
-    return model.startswith("gpt-")
+    """Models named gpt-* go to OpenAI, gemini-* to Google (through its
+    OpenAI-compatible endpoint) and local-* to a local vLLM server, all via the
+    OpenAI SDK; everything else goes to Anthropic. Callers just pass
+    model="gpt-5.5" / "gemini-3.8-flash" / "local-qwen3.8-27b"."""
+    return model.startswith(("gpt-", "gemini-", LOCAL_PREFIX))
 
 
-def get_openai_client():
-    global _openai_client
+def _openai_request_kwargs(model: str) -> dict:
+    """Model name (and extras) to send for an OpenAI-SDK backend. Local Qwen
+    runs with thinking off: its reasoning would otherwise land in `content`
+    (no reasoning parser is configured) and break JSON / code extraction."""
+    if model.startswith(LOCAL_PREFIX):
+        return {
+            "model": model[len(LOCAL_PREFIX):],
+            "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+        }
+    return {"model": model}
+
+
+def get_openai_client(model: str = "gpt-"):
+    global _openai_client, _gemini_client, _local_client
+    from openai import OpenAI  # imported lazily: only needed for gpt-*/gemini-*/local-* models
+
+    if model.startswith(LOCAL_PREFIX):
+        if _local_client is None:
+            _local_client = OpenAI(
+                api_key=os.environ.get("LOCAL_LLM_API_KEY", "local-secret"),
+                base_url=os.environ.get("LOCAL_LLM_BASE_URL", "http://localhost:8000/v1"),
+                timeout=1800,  # a 27B model on one Spark generates slowly
+            )
+        return _local_client
+    if model.startswith("gemini-"):
+        if _gemini_client is None:
+            _gemini_client = OpenAI(api_key=os.environ["GEMINI_API_KEY"], base_url=GEMINI_BASE_URL, max_retries=10)
+        return _gemini_client
     if _openai_client is None:
-        from openai import OpenAI  # imported lazily: only needed for gpt-* models
-
         _openai_client = OpenAI()
     return _openai_client
 
@@ -201,8 +238,8 @@ def structured(
     """
     if is_openai_model(model):
         start = time.monotonic()
-        response = get_openai_client().chat.completions.parse(
-            model=model,
+        response = get_openai_client(model).chat.completions.parse(
+            **_openai_request_kwargs(model),
             messages=_to_openai_messages(content, system),
             response_format=schema,
             max_completion_tokens=max_tokens,
@@ -262,8 +299,8 @@ def text(
     code generation, where the output is Python source, not JSON)."""
     if is_openai_model(model):
         start = time.monotonic()
-        response = get_openai_client().chat.completions.create(
-            model=model,
+        response = get_openai_client(model).chat.completions.create(
+            **_openai_request_kwargs(model),
             messages=_to_openai_messages(content, system),
             max_completion_tokens=max_tokens,
         )
@@ -294,6 +331,11 @@ def text(
     )
 
     parts = [block.text for block in response.content if block.type == "text"]
+    if not parts:
+        raise RuntimeError(
+            f"[{stage}] model returned no text (stop_reason={response.stop_reason}); "
+            "max_tokens was likely used up by thinking — raise it"
+        )
     return "\n".join(parts)
 
 
