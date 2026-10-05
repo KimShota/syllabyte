@@ -134,6 +134,34 @@ beats.
   - This is the same grid the Critic will later use to describe layout \
 fixes, so consistent use of it is what makes those fixes possible.
 
+Legibility (CRITICAL — an automated check measures the scene after every animation and \
+rejects the scene if any of these fail):
+  - Size the diagram for the frame before placing it: the whole group must \
+be at most {SAFE_WIDTH:.1f} units wide and {SAFE_HEIGHT:.1f} tall at the \
+scale_factor you give. That fits at most two boxes side by side; put \
+anything more in a column. Oversized groups are shrunk to fit \
+automatically, which shrinks their labels too.
+  - Every label must render at font size 28 or more after all scaling. Make \
+shapes fit their labels (e.g. `box = SurroundingRectangle(label, buff=0.2)`, \
+or a width of label.width + 0.4) rather than squeezing a label with \
+scale_to_fit_width to fit a small shape.
+  - Nothing may touch or cross a label: no arrow, line, shape border, dot, \
+or other label. Put labels beside arrows and lines with \
+`.next_to(arrow, LEFT, buff=0.15)` (on the side away from other lines), and \
+a label inside a shape must sit fully inside it with a margin.
+  - Shapes must not partly overlap: space them with `.arrange(..., buff=0.2)` \
+or `.next_to(..., buff=0.2)`. A shape inside another, a dot riding on a \
+line or sitting in a box, and arrows touching boxes are fine.
+  - Every object stays fully inside the frame for the whole scene, \
+including after it moves, grows, or is stretched. (Moving something \
+completely off screen to make it leave is fine.)
+  - Use bright colors on the black background: WHITE, YELLOW, GOLD, \
+ORANGE, RED, PINK, PURPLE, GREEN, TEAL, BLUE and their _A/_B/_C shades, or \
+GRAY_A/GRAY_B. Never use _D/_E shades, DARK_GRAY, DARK_BROWN, BLACK or \
+GRAY_D/GRAY_E for text or outlines. Text on a filled shape needs strong \
+contrast: keep fill_opacity at or below 0.3, or use BLACK text on a bright \
+fill.
+
 {GRID_DIAGRAM}
 {ALLOWED_API}
 
@@ -229,4 +257,41 @@ The beats this scene must depict:
 
 --- ERROR ---
 {traceback_text}
+"""
+
+
+def build_layout_repair_prompt(
+    code: str, problems: str, segment: Segment, beat_durations: list[float], class_name: str,
+) -> str:
+    n_beats = len(beat_durations)
+    return f"""\
+The following Manim scene renders, but an automated legibility check \
+found the problems below: on a phone screen they make the animation hard \
+to see. Fix every one of them. Rearrange, resize, or recolor objects as \
+needed (e.g. stack a row vertically, make boxes fit their labels, move \
+labels beside arrows), but keep every beat's visual as specified below, \
+keep every run_time, keep class `{class_name}(GridLayoutScene)`, and keep \
+exactly {n_beats} beats, each ending with `self.end_beat(N)` for N = \
+1..{n_beats} in order, with `self.end_beat({n_beats})` as the last \
+statement of construct(). Make sure each fix doesn't create a new overlap \
+somewhere else. The rules being checked:
+  - The whole diagram fits the frame: at most {SAFE_WIDTH:.1f} units wide \
+and {SAFE_HEIGHT:.1f} tall (x within ±{SAFE_WIDTH / 2:.2f}, y within \
+±{SAFE_HEIGHT / 2:.2f}), at every moment.
+  - Every label renders at font size 28 or more after all scaling.
+  - No arrow, line, shape border, dot, or other label touches or crosses a \
+label; labels inside shapes sit fully inside them.
+  - Filled shapes don't partly overlap each other.
+  - Text has at least 4.5:1 contrast with what's behind it; shapes at least \
+3:1 against the black background (no dark _D/_E shades).
+Output ONLY the corrected Python source code, no explanation.
+
+The beats this scene must depict:
+{format_beats(segment, beat_durations)}
+
+--- CODE ---
+{code}
+
+--- PROBLEMS FOUND (each names the beat and the code line where it was measured) ---
+{problems}
 """

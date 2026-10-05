@@ -3,7 +3,9 @@ Manim code generation + static safety check — Component 4, Week-1 scope.
 
 generate_scene() gets a first attempt from Claude; repair_scene() is Tier 1
 of the ScopeRefine-inspired repair ladder (feed the traceback back for a
-targeted fix); regenerate_scene() is Tier 3 (start over from the segment
+targeted fix), and repair_layout() is its counterpart for a scene that
+renders but fails the legibility check (layout_audit.py);
+regenerate_scene() is Tier 3 (start over from the segment
 spec, ignoring the broken code). renderer.py orchestrates the full ladder,
 falling back to templates.py if every LLM tier still fails to render.
 
@@ -20,10 +22,14 @@ from __future__ import annotations
 import ast
 import re
 
-from syllabyte_common.llm import DEFAULT_MODEL, text
+from syllabyte_common.llm import DEFAULT_MODEL, is_openai_model, text
 from syllabyte_common.models import RunManifest, Segment
 
-from animation_agent.manim_prompt import build_generation_prompt, build_repair_prompt
+from animation_agent.manim_prompt import (
+    build_generation_prompt,
+    build_layout_repair_prompt,
+    build_repair_prompt,
+)
 
 FORBIDDEN_NAMES = {
     "os", "sys", "subprocess", "shutil", "socket", "requests", "urllib",
@@ -31,6 +37,14 @@ FORBIDDEN_NAMES = {
 }
 
 CODE_FENCE_RE = re.compile(r"^```(?:python)?\n|\n```$", re.MULTILINE)
+
+
+def codegen_max_tokens(model: str) -> int:
+    """Output budget for a Manim codegen/repair call. On Anthropic models
+    thinking counts against max_tokens, and with the legibility rules the
+    model can think past 20k before writing any code (text() streams, so a
+    large budget is safe). Other backends keep 20k."""
+    return 20000 if is_openai_model(model) else 64000
 
 
 class UnsafeCodeError(Exception):
@@ -139,7 +153,7 @@ def generate_scene(
     system, user = build_generation_prompt(segment, beat_durations, class_name)
     code = text(
         content=user, system=system, stage="manim_codegen", model=model,
-        max_tokens=20000, manifest=manifest,
+        max_tokens=codegen_max_tokens(model), manifest=manifest,
     )
     return _validated(code)
 
@@ -156,6 +170,25 @@ def repair_scene(
 ) -> str:
     prompt = build_repair_prompt(code, traceback_text, segment, beat_durations, class_name)
     fixed = text(
-        content=prompt, stage="manim_repair", model=model, max_tokens=20000, manifest=manifest,
+        content=prompt, stage="manim_repair", model=model, max_tokens=codegen_max_tokens(model), manifest=manifest,
+    )
+    return _validated(fixed)
+
+
+def repair_layout(
+    code: str,
+    problems: str,
+    segment: Segment,
+    beat_durations: list[float],
+    class_name: str,
+    *,
+    model: str = DEFAULT_MODEL,
+    manifest: RunManifest | None = None,
+) -> str:
+    """Fixes a scene that renders but fails the layout audit. `problems` is
+    LayoutReport.format_for_prompt()."""
+    prompt = build_layout_repair_prompt(code, problems, segment, beat_durations, class_name)
+    fixed = text(
+        content=prompt, stage="manim_layout_repair", model=model, max_tokens=codegen_max_tokens(model), manifest=manifest,
     )
     return _validated(fixed)

@@ -18,30 +18,42 @@ LLM+Manim paper's 38% render-failure finding):
   Tier 2 (llm_regenerated): regenerate the whole segment's code from scratch, x1
   Tier 3 (template_fallback): deterministic template (always renders)
 
-Once any LLM tier produces a rendering video, one Code2Video-inspired
-Visual Critic pass (visual_critic.py) checks its grid-anchored layout and,
-if it finds an issue, asks Claude for a targeted fix and re-renders. This
-never risks the tier's already-working video: if the repaired code fails to
-render, the original render is kept and the remaining issues are just
-logged on the RenderResult for the report. Template-fallback renders skip
-this pass — they're deterministic and don't use the LLM's grid placements.
+A render only counts as a success if it also passes the layout audit
+(layout_audit.py, run inside the scene by GridLayoutScene): nothing off
+screen, overlapping, too small to read, or too low in contrast. A render
+that fails it goes up the same ladder, with the audit's findings as the
+"error". If every LLM tier still has findings, the render with the fewest
+is kept (its findings are logged) rather than dropping to the template,
+which shows no visuals at all.
+
+Once an LLM tier produces a video, one Code2Video-inspired Visual Critic
+pass (visual_critic.py) checks one frame per beat and, if it finds an
+issue, asks Claude for a targeted fix and re-renders. This never risks the
+tier's already-working video: if the repaired code fails to render, or
+adds layout findings, the original render is kept and the remaining
+issues are just logged on the RenderResult for the report. Template-
+fallback renders skip this pass — they're deterministic and don't use the
+LLM's grid placements.
 """
 
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
-from syllabyte_common.models import RenderResult, RunManifest, Segment
+from syllabyte_common.models import RenderResult, RenderTier, RunManifest, Segment
 
 from animation_agent.assemble import ffprobe_duration
-from animation_agent.layout import BEATS_FILE
+from animation_agent.layout import BEATS_FILE, LAYOUT_REPORT_FILE, LayoutReport
 from animation_agent.manim_codegen import (
     UnsafeCodeError,
     check_beat_structure,
     generate_scene,
+    repair_layout,
     repair_scene,
 )
 from animation_agent.manim_config import write_manim_cfg
@@ -75,33 +87,36 @@ def _find_output_mp4(render_dir: Path, class_name: str) -> Path | None:
 
 def _try_render(
     render_dir: Path, code: str, class_name: str, quality: str, n_beats: int, duration: float,
-) -> tuple[bool, str, Path | None]:
+) -> tuple[bool, str, Path | None, LayoutReport]:
     """Checks the beat structure, writes code to disk, and attempts a
     render, rejecting one whose length doesn't match the narration.
-    Returns (ok, error_text, mp4_path)."""
+    Returns (ok, error_text, mp4_path, layout_report); the layout report is
+    only meaningful when ok."""
+    no_report = LayoutReport([], [])
     try:
         problem = check_beat_structure(code, n_beats)
     except SyntaxError as e:
         problem = f"SyntaxError: {e}"
     if problem:
-        return False, problem, None
+        return False, problem, None, no_report
 
     scene_file = render_dir / f"{class_name}.py"
     scene_file.write_text(code)
     write_manim_cfg(render_dir, quality)
+    (render_dir / LAYOUT_REPORT_FILE).unlink(missing_ok=True)
 
     try:
         result = _run_manim(render_dir, scene_file, class_name)
     except subprocess.TimeoutExpired:
-        return False, f"render timed out after {RENDER_TIMEOUT_SECONDS}s", None
+        return False, f"render timed out after {RENDER_TIMEOUT_SECONDS}s", None, no_report
 
     if result.returncode != 0:
         # Manim's Rich-formatted traceback is on stderr; keep it bounded.
-        return False, result.stderr[-4000:], None
+        return False, result.stderr[-4000:], None, no_report
 
     mp4_path = _find_output_mp4(render_dir, class_name)
     if mp4_path is None:
-        return False, "manim exited 0 but no output .mp4 was found", None
+        return False, "manim exited 0 but no output .mp4 was found", None, no_report
 
     video_duration = ffprobe_duration(mp4_path)
     if abs(video_duration - duration) > MAX_DURATION_MISMATCH_SECONDS:
@@ -109,37 +124,39 @@ def _try_render(
             f"The rendered scene is {video_duration:.2f}s long but its narration is "
             f"{duration:.2f}s. Nothing may play or wait after the final "
             f"self.end_beat({n_beats})."
-        ), None
+        ), None, no_report
 
-    return True, "", mp4_path
+    return True, "", mp4_path, LayoutReport.read(render_dir)
 
 
 def _visual_critic_pass(
     render_dir: Path,
     code: str,
     class_name: str,
-    n_beats: int,
-    duration: float,
+    beat_durations: list[float],
     quality: str,
     mp4_path: Path,
+    layout: LayoutReport,
     *,
     model: str,
     manifest: RunManifest | None,
 ) -> tuple[Path, bool, list[str]]:
     """One critique + (at most one) repair round on an already-successful
-    LLM render. Returns (final_mp4_path, repair_applied, issues_remaining)."""
+    LLM render. The repair is kept only if it renders and doesn't add
+    layout findings. Returns (final_mp4_path, repair_applied, issues_remaining)."""
+    n_beats, duration = len(beat_durations), sum(beat_durations)
     try:
-        critique = critique_render(mp4_path, code, model=model, manifest=manifest)
+        critique = critique_render(mp4_path, code, beat_durations, model=model, manifest=manifest)
     except Exception as e:  # critic is best-effort — never fail the segment over it
-        return mp4_path, False, [f"visual critic call failed: {e}"]
+        return mp4_path, False, layout.issues() + [f"visual critic call failed: {e}"]
 
     if critique is None:  # e.g. empty/unparseable structured-output response
-        return mp4_path, False, ["visual critic returned no result"]
+        return mp4_path, False, layout.issues() + ["visual critic returned no result"]
 
     if not critique.has_issues:
-        return mp4_path, False, []
+        return mp4_path, False, layout.issues()
 
-    issues = [f"{i.object_affected}: {i.problem}" for i in critique.improvements]
+    issues = layout.issues() + [f"{i.object_affected}: {i.problem}" for i in critique.improvements]
     try:
         repaired_code = apply_visual_repair(
             code, critique, n_beats, class_name, model=model, manifest=manifest,
@@ -147,15 +164,37 @@ def _visual_critic_pass(
     except (UnsafeCodeError, SyntaxError):
         return mp4_path, False, issues
 
-    ok, _, repaired_mp4 = _try_render(
+    # The re-render overwrites the kept video, so set it aside first.
+    kept = mp4_path.with_name(f"{mp4_path.stem}_before_critic.mp4")
+    shutil.copy(mp4_path, kept)
+    ok, _, repaired_mp4, repaired_layout = _try_render(
         render_dir, repaired_code, class_name, quality, n_beats, duration,
     )
-    if ok:
-        return repaired_mp4, True, []
-    # The failed re-render overwrote the scene file; restore the code that
-    # produced the kept video so the run dir stays consistent with it.
+    if ok and len(repaired_layout.findings) <= len(layout.findings):
+        kept.unlink()
+        return repaired_mp4, True, repaired_layout.issues()
+    # Restore the code, video and layout report that the kept render produced.
     (render_dir / f"{class_name}.py").write_text(code)
+    shutil.move(kept, mp4_path)
+    _write_layout_report(render_dir, layout)
     return mp4_path, False, issues
+
+
+def _write_layout_report(render_dir: Path, layout: LayoutReport) -> None:
+    (render_dir / LAYOUT_REPORT_FILE).write_text(json.dumps(
+        {"findings": layout.findings, "autofits": layout.autofits}, indent=2,
+    ))
+
+
+@dataclass
+class _Candidate:
+    """An LLM render that works but still has layout findings."""
+
+    tier: RenderTier
+    code: str
+    mp4_path: Path  # where manim wrote it (later renders overwrite this)
+    stash: Path  # a copy that survives later attempts
+    layout: LayoutReport
 
 
 def render_segment(
@@ -181,15 +220,42 @@ def render_segment(
     start = time.monotonic()
     attempts = 0
     last_error = ""
+    # Set when the latest code rendered but failed the layout audit; the
+    # next repair then fixes layout instead of a crash.
+    last_layout: LayoutReport | None = None
+    best: _Candidate | None = None
 
-    def try_render(code: str) -> tuple[bool, str, Path | None]:
-        return _try_render(render_dir, code, class_name, quality, n_beats, duration)
-
-    def critic_pass(code: str, mp4_path: Path) -> tuple[Path, bool, list[str]]:
-        return _visual_critic_pass(
-            render_dir, code, class_name, n_beats, duration, quality, mp4_path,
+    def finish(tier: RenderTier, code: str, mp4_path: Path, layout: LayoutReport) -> RenderResult:
+        mp4_path, repaired, issues = _visual_critic_pass(
+            render_dir, code, class_name, beat_durations, quality, mp4_path, layout,
             model=model, manifest=manifest,
         )
+        return RenderResult(
+            segment_index=segment_index, tier=tier, attempts=attempts,
+            render_seconds=time.monotonic() - start, video_path=str(mp4_path),
+            visual_repair_applied=repaired, visual_issues_remaining=issues,
+        )
+
+    def attempt(code: str, tier: RenderTier) -> RenderResult | None:
+        """Renders `code`; returns the finished result if it renders and
+        passes the layout audit, else records why not and returns None."""
+        nonlocal attempts, last_error, last_layout, best
+        attempts += 1
+        ok, error, mp4_path, layout = _try_render(
+            render_dir, code, class_name, quality, n_beats, duration,
+        )
+        if not ok:
+            last_error, last_layout = error, None
+            return None
+        if not layout.findings:
+            (render_dir / f"{class_name}_best.mp4").unlink(missing_ok=True)
+            return finish(tier, code, mp4_path, layout)
+        if best is None or len(layout.findings) < len(best.layout.findings):
+            stash = render_dir / f"{class_name}_best.mp4"
+            shutil.copy(mp4_path, stash)
+            best = _Candidate(tier, code, mp4_path, stash, layout)
+        last_error, last_layout = layout.format_for_prompt(), layout
+        return None
 
     # --- First attempt -----------------------------------------------------
     try:
@@ -197,54 +263,49 @@ def render_segment(
     except (UnsafeCodeError, SyntaxError) as e:
         code, last_error = "", str(e)
     else:
-        attempts += 1
-        ok, last_error, mp4_path = try_render(code)
-        if ok:
-            mp4_path, repaired, issues = critic_pass(code, mp4_path)
-            return RenderResult(
-                segment_index=segment_index, tier="llm_first_try", attempts=attempts,
-                render_seconds=time.monotonic() - start, video_path=str(mp4_path),
-                visual_repair_applied=repaired, visual_issues_remaining=issues,
-            )
+        if (result := attempt(code, "llm_first_try")) is not None:
+            return result
 
     # --- Tier 1: targeted repair, up to MAX_TIER1_REPAIRS times ------------
     for _ in range(MAX_TIER1_REPAIRS):
         try:
-            code = repair_scene(
-                code, last_error, segment, beat_durations, class_name, model=model, manifest=manifest,
-            )
+            if last_layout is not None:
+                code = repair_layout(
+                    code, last_layout.format_for_prompt(), segment, beat_durations, class_name,
+                    model=model, manifest=manifest,
+                )
+            else:
+                code = repair_scene(
+                    code, last_error, segment, beat_durations, class_name, model=model, manifest=manifest,
+                )
         except (UnsafeCodeError, SyntaxError) as e:
             last_error = str(e)
             continue
-        attempts += 1
-        ok, last_error, mp4_path = try_render(code)
-        if ok:
-            mp4_path, repaired, issues = critic_pass(code, mp4_path)
-            return RenderResult(
-                segment_index=segment_index, tier="llm_repaired", attempts=attempts,
-                render_seconds=time.monotonic() - start, video_path=str(mp4_path),
-                visual_repair_applied=repaired, visual_issues_remaining=issues,
-            )
+        if (result := attempt(code, "llm_repaired")) is not None:
+            return result
 
     # --- Tier 2: full regeneration from the original spec, once -----------
     try:
         code = generate_scene(segment, beat_durations, class_name, model=model, manifest=manifest)
-        attempts += 1
-        ok, last_error, mp4_path = try_render(code)
-        if ok:
-            mp4_path, repaired, issues = critic_pass(code, mp4_path)
-            return RenderResult(
-                segment_index=segment_index, tier="llm_regenerated", attempts=attempts,
-                render_seconds=time.monotonic() - start, video_path=str(mp4_path),
-                visual_repair_applied=repaired, visual_issues_remaining=issues,
-            )
     except (UnsafeCodeError, SyntaxError) as e:
         last_error = str(e)
         attempts += 1
+    else:
+        if (result := attempt(code, "llm_regenerated")) is not None:
+            return result
+
+    # --- Best LLM render that still has layout findings -------------------
+    if best is not None:
+        (render_dir / f"{class_name}.py").write_text(best.code)
+        shutil.move(best.stash, best.mp4_path)
+        _write_layout_report(render_dir, best.layout)
+        return finish(best.tier, best.code, best.mp4_path, best.layout)
 
     # --- Tier 3: deterministic template fallback (always renders) ---------
     template_code = build_template_scene(segment, class_name)
-    ok, template_error, mp4_path = try_render(template_code)
+    ok, template_error, mp4_path, _ = _try_render(
+        render_dir, template_code, class_name, quality, n_beats, duration,
+    )
     attempts += 1
     if ok:
         return RenderResult(

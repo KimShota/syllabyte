@@ -318,8 +318,11 @@ def text(
     if system is not None:
         kwargs["system"] = system
 
+    # Streamed so callers can give thinking a large max_tokens: the SDK
+    # refuses non-streaming requests big enough to risk an HTTP timeout.
     start = time.monotonic()
-    response = get_client().messages.create(**kwargs)
+    with get_client().messages.stream(**kwargs) as stream:
+        response = stream.get_final_message()
     wall_seconds = time.monotonic() - start
 
     if response.stop_reason == "refusal":

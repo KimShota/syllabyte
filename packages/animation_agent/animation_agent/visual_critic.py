@@ -28,13 +28,14 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import numpy as np
 from pydantic import BaseModel, Field
 
 from syllabyte_common.llm import DEFAULT_MODEL, image_block, structured, text, text_block
 from syllabyte_common.models import RunManifest
 
 from animation_agent.layout import GRID_DIAGRAM, format_occupancy_table, parse_grid_calls
-from animation_agent.manim_codegen import validate_generated_code
+from animation_agent.manim_codegen import codegen_max_tokens, validate_generated_code
 
 
 class LayoutIssue(BaseModel):
@@ -52,9 +53,10 @@ class LayoutCritique(BaseModel):
 
 
 SYSTEM_PROMPT = f"""\
-You are the Visual Critic in SyllaByte. You are shown 3 frames (at roughly \
-25%, 50%, and 90% through a short animated clip for a 9:16 phone screen), \
-plus the clip's current grid occupancy table.
+You are the Visual Critic in SyllaByte. You are shown one frame per beat \
+(narration sentence) of a short animated clip for a 9:16 phone screen, \
+each taken near the end of its beat, plus the clip's current grid \
+occupancy table.
 
 {GRID_DIAGRAM}
 Every mobject in this clip was placed with `self.place_at_grid(obj, POS, \
@@ -83,20 +85,21 @@ Report has_issues=false only if none of the above are present in any frame.\
 """
 
 
-def _extract_frames(video_path: Path, fractions: tuple[float, ...] = (0.25, 0.5, 0.9)) -> list[Path]:
-    duration_result = subprocess.run(
-        [
-            "ffprobe", "-v", "error", "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1", str(video_path),
-        ],
-        capture_output=True, text=True, check=True,
-    )
-    duration = float(duration_result.stdout.strip())
+# Where in each beat to sample: the codegen prompt has a beat's animations
+# take 60-85% of it, so by here the beat's visual is complete.
+BEAT_SAMPLE_POINT = 0.85
 
+
+def beat_sample_times(beat_durations: list[float]) -> list[float]:
+    starts = np.concatenate([[0.0], np.cumsum(beat_durations)[:-1]])
+    return [float(s + d * BEAT_SAMPLE_POINT) for s, d in zip(starts, beat_durations)]
+
+
+def _extract_frames(video_path: Path, timestamps: list[float]) -> list[Path]:
     tmp_dir = Path(tempfile.mkdtemp(prefix="visual_critic_"))
     frame_paths = []
-    for i, frac in enumerate(fractions):
-        ts = max(0.01, duration * frac)
+    for i, ts in enumerate(timestamps):
+        ts = max(0.01, ts)
         out_path = tmp_dir / f"frame_{i}.png"
         subprocess.run(
             ["ffmpeg", "-y", "-ss", f"{ts:.3f}", "-i", str(video_path), "-frames:v", "1", "-update", "1", str(out_path)],
@@ -109,17 +112,18 @@ def _extract_frames(video_path: Path, fractions: tuple[float, ...] = (0.25, 0.5,
 def critique_render(
     video_path: Path,
     code: str,
+    beat_durations: list[float],
     *,
     model: str = DEFAULT_MODEL,
     manifest: RunManifest | None = None,
 ) -> LayoutCritique:
-    """Critiques a rendered segment's layout against the grid occupancy
-    table statically parsed from its source (`code`)."""
-    frames = _extract_frames(video_path)
+    """Critiques a rendered segment's layout, one frame per beat, against
+    the grid occupancy table statically parsed from its source (`code`)."""
+    frames = _extract_frames(video_path, beat_sample_times(beat_durations))
     occupancy = format_occupancy_table(parse_grid_calls(code))
     content = [image_block(f) for f in frames] + [
         text_block(
-            "These are frames from one rendered clip, in chronological order.\n\n"
+            "These are frames from one rendered clip, one per beat, in order.\n\n"
             f"Current grid occupancy:\n{occupancy}\n\nCritique the layout."
         )
     ]
@@ -171,6 +175,6 @@ Fixes to apply:
 {code}
 """
     fixed = text(
-        content=prompt, stage="visual_repair", model=model, max_tokens=20000, manifest=manifest,
+        content=prompt, stage="visual_repair", model=model, max_tokens=codegen_max_tokens(model), manifest=manifest,
     )
     return validate_generated_code(fixed)
