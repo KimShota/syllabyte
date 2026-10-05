@@ -7,6 +7,7 @@ Professor Hanan Salam.
 See `plan/ShotaMatsumoto_CapstoneProposal.pdf` for the full capstone proposal
 and `plan/week1-shorts-from-slides-plan.md` for the current sprint plan
 (generating short-form videos from syllabus + slides only, no lecture audio).
+The student-facing UI/UX is specified in `plan/ui-ux-implementation-plan.md` and built in `apps/web`.
 
 ## Repo layout
 
@@ -19,7 +20,9 @@ syllabyte/
 ├── runs/<run_id>/             # local-only: pipeline outputs per run (gitignored)
 ├── scripts/
 │   ├── generate_shorts.py     # Week-1 end-to-end orchestrator CLI
+│   ├── build_ui_fixtures.py   # turns a finished run into the web app's fixtures (see apps/web)
 │   └── report.py              # renders runs/<id>/report.md
+├── apps/web/                  # student web app (Next.js): Phase 0 clickable prototype, see apps/web/README.md
 └── packages/
     ├── common/                       # shared: models.py, llm.py, run_store.py, db.py, storage.py, celery_app.py
     ├── ingestion_agent/               # Component 1: syllabus + slide parsing (no LLM)

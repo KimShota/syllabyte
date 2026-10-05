@@ -654,3 +654,42 @@ condition B (§3.14) · Q27 study instruments (§3.18) · Q28 retention quizzes 
 versions (§7.4) · Q30 data rights (§3.19) · Q31 missing/error states (§3.16) · Q32 email (§9.4) · Q33
 level stability (§2) · Q34 Week 7 rule (§4.4) · Q35 calibration (§3.8) · Q36 Rasch (§4.6) · Q37
 usability tasks (§10)
+
+## 17. Implementation status (2026-10-05)
+
+**Phase 0 is built** in `apps/web` (see its README for commands). It covers §3.0–3.12, §3.15, §3.16 (except the
+IndexedDB offline queue, which only matters once there is a network), and §3.17, plus the fixture generator
+(`scripts/build_ui_fixtures.py`), the UI manifest builder (`animation_agent/ui_manifest.py`) and the learner models
+(`syllabyte_common/learner.py`). Checks: 69 unit tests, 106 Playwright tests at 390×844 and 1280×800, axe (WCAG 2.2 AA)
+clean on every route and sheet, TypeScript and ESLint clean.
+
+**Not built yet:** Phase 1 (FastAPI, Mongo, magic-link auth, event ingest, offline queue), Phase 2 (per-level video
+variants, instructor queue, deployment), Phase 3 (§3.14 control shell, §3.18 study tasks, ZIP export, weekly email,
+researcher export). The Phase 0 "Study tasks" card and "Withdraw / Reset" flows are minimal versions.
+
+**Where the build departs from, or interprets, this spec**
+- *Week 7 minimum answers (§4.4).* "Needs ≥3 answered" is applied to the score rules; the "more than half Not sure" rule
+  needs ≥3 *presented* (answered + Not sure). Read literally, that rule could never fire.
+- *Hints and half credit (§4.4, §3.4).* A hint that was visible when the student answered counts as used, so a Level 1
+  student, who sees the hint inline, earns half credit on checkpoint answers.
+- *Short titles.* Cards, headers and receipts use a hand-written `short_title` per KU (in `build_ui_fixtures.py`); the
+  full KU title appears in "About this video" and the transcript.
+- *Reason text quotes topic titles* (`questions on “Causal questions”`) instead of appending a noun, which broke on titles
+  that already end in "questions".
+- *Answer positions* in generated items are rotated A/B/C deterministically after generation, because the model favoured
+  some slots (all four prove-it keys were option C).
+- *Nothing is drawn over the video, including the start button:* the large play control sits under the video.
+- *The player's own seeks are not logged.* Landing on the checkpoint after an overshoot would otherwise add a `video_seek`
+  the student never made.
+- *Persistence flushes on page hide,* so a tap followed by a quick navigation can't lose the last change.
+- *Test builds* (`NEXT_PUBLIC_TEST_WEBM=1`) list a small WebM before the MP4 and preload it whole, because Playwright's
+  Chromium has no H.264 decoder and seeks poorly in progressively loaded files. Production is unaffected.
+
+**Before the first usability session**
+1. Re-render the fixture videos with the current pipeline: two of the four show an unrelated plot and clipped titles
+   (older pipeline output), which would contaminate the claim-check and trust tasks.
+2. Read `apps/web/fixtures/_review.md` end to end (26 items, 12 claims, 4 sentence frames). The critic passed everything,
+   but a quiz error in a think-aloud session derails it.
+3. Replace `content/consent.md` with the IRB-approved text.
+4. Add the new design choices to the traceability table (the 12 h / 2-per-visit / 7-day rules, playlist cap, Week 7
+   thresholds, speed cap, sentence frame, calibration blocks).
