@@ -15,12 +15,15 @@ up from any stage instead of recomputing everything. Stage order:
 
 Within a KU, a stage is skipped automatically if its output already exists
 on disk UNLESS --from-stage explicitly names that stage or an earlier one
-(which forces recomputation of everything from that point on).
+(which forces recomputation of everything from that point on). The animate
+stage also checkpoints each segment (render/seg_i/render_result.json), so
+a run that dies partway resumes from the first unfinished segment.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import time
@@ -41,9 +44,11 @@ from syllabyte_common.models import (
     CourseCorpus,
     KnowledgeUnit,
     KUList,
+    RenderResult,
     RenderResultList,
     RunManifest,
     Script,
+    Segment,
     SegmentAudioList,
 )
 from syllabyte_common.run_store import RunDir, new_run_id
@@ -57,6 +62,33 @@ def stage_index(name: str) -> int:
 
 def log(msg: str) -> None:
     print(f"[generate_shorts] {msg}", flush=True)
+
+
+SEGMENT_RESULT_FILE = "render_result.json"
+
+
+def segment_render_key(segment: Segment, beat_durations: list[float], quality: str) -> str:
+    """Identifies a segment render's inputs, so a checkpoint is only reused
+    for the same beats, timings and quality."""
+    payload = segment.model_dump_json() + json.dumps(beat_durations) + quality
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def load_segment_result(seg_dir: Path, key: str) -> RenderResult | None:
+    path = seg_dir / SEGMENT_RESULT_FILE
+    if not path.exists():
+        return None
+    saved = json.loads(path.read_text())
+    result = RenderResult.model_validate(saved["result"])
+    if saved.get("key") != key or result.video_path is None or not Path(result.video_path).exists():
+        return None
+    return result
+
+
+def save_segment_result(seg_dir: Path, key: str, result: RenderResult) -> None:
+    (seg_dir / SEGMENT_RESULT_FILE).write_text(
+        json.dumps({"key": key, "result": result.model_dump()}, indent=2)
+    )
 
 
 def run(args: argparse.Namespace) -> None:
@@ -149,13 +181,21 @@ def run(args: argparse.Namespace) -> None:
         render_results_path = render_dir / "render_results.json"
         if force_from <= stage_index("animate") or not render_results_path.exists():
             log(f"[5/6] animate: rendering {len(script.segments)} segment(s), quality={args.quality}")
+            forced = force_from <= stage_index("animate")
             render_results = []
             for i, (seg, audio) in enumerate(zip(script.segments, segment_audios)):
+                seg_dir = render_dir / f"seg_{i}"
+                key = segment_render_key(seg, audio.beat_durations, args.quality)
+                if not forced and (done := load_segment_result(seg_dir, key)) is not None:
+                    log(f"    segment {i}: reusing finished render (tier={done.tier})")
+                    render_results.append(done)
+                    continue
                 t0 = time.monotonic()
                 result = render_segment(
-                    seg, i, audio.beat_durations, render_dir / f"seg_{i}",
+                    seg, i, audio.beat_durations, seg_dir,
                     quality=args.quality, manifest=manifest,
                 )
+                save_segment_result(seg_dir, key, result)
                 render_results.append(result)
                 log(
                     f"    segment {i}: tier={result.tier} attempts={result.attempts} "
