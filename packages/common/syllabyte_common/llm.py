@@ -149,7 +149,9 @@ def _record_openai_usage(
 def get_client() -> anthropic.Anthropic:
     global _client
     if _client is None:
-        _client = anthropic.Anthropic()
+        # Segments render concurrently, so expect occasional 429s; the SDK
+        # retries them with backoff (its default is 2 retries).
+        _client = anthropic.Anthropic(max_retries=6)
     return _client
 
 

@@ -27,6 +27,7 @@ import hashlib
 import json
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 # Make the sibling `packages/*/…` dirs importable when run via `uv run
@@ -182,25 +183,34 @@ def run(args: argparse.Namespace) -> None:
         if force_from <= stage_index("animate") or not render_results_path.exists():
             log(f"[5/6] animate: rendering {len(script.segments)} segment(s), quality={args.quality}")
             forced = force_from <= stage_index("animate")
-            render_results = []
-            for i, (seg, audio) in enumerate(zip(script.segments, segment_audios)):
+
+            def animate_segment(i: int, seg: Segment, audio) -> RenderResult:
                 seg_dir = render_dir / f"seg_{i}"
                 key = segment_render_key(seg, audio.beat_durations, args.quality)
                 if not forced and (done := load_segment_result(seg_dir, key)) is not None:
                     log(f"    segment {i}: reusing finished render (tier={done.tier})")
-                    render_results.append(done)
-                    continue
+                    return done
                 t0 = time.monotonic()
                 result = render_segment(
                     seg, i, audio.beat_durations, seg_dir,
                     quality=args.quality, manifest=manifest,
                 )
                 save_segment_result(seg_dir, key, result)
-                render_results.append(result)
                 log(
                     f"    segment {i}: tier={result.tier} attempts={result.attempts} "
                     f"({time.monotonic() - t0:.1f}s)"
                 )
+                return result
+
+            # Segments are independent (own seg_i dir and Seg{i} class) and
+            # spend their time waiting on the API or a manim subprocess, so
+            # threads run them concurrently. Results keep segment order.
+            with ThreadPoolExecutor(max_workers=args.parallel_segments) as pool:
+                futures = [
+                    pool.submit(animate_segment, i, seg, audio)
+                    for i, (seg, audio) in enumerate(zip(script.segments, segment_audios))
+                ]
+                render_results = [f.result() for f in futures]
             render_dir.mkdir(parents=True, exist_ok=True)
             render_results_path.write_text(
                 RenderResultList(items=render_results).model_dump_json(indent=2)
@@ -257,6 +267,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--quality", default="low", choices=["low", "high"])
     parser.add_argument("--from-stage", default=None, choices=STAGES, help="Force recomputation from this stage onward")
     parser.add_argument("--skip-critic", action="store_true", help="Skip the semantic critique round (faster iteration)")
+    parser.add_argument(
+        "--parallel-segments", type=int, default=3,
+        help="Segments rendered at once per KU (1 = one after another)",
+    )
     parser.add_argument(
         "--allow-fallback", action="store_true",
         help="Assemble videos even if a segment fell back to the caption template",
