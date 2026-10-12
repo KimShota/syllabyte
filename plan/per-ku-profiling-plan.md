@@ -1,6 +1,6 @@
 # Per-KU learner profiling with CAT: plan
 
-Branch: `per-ku-profiling` (from `main` at 2d391ce). Status: **decisions settled (2026-10-12); commits 1–2 of 7 done.**
+Branch: `per-ku-profiling` (from `main` at 2d391ce). Status: **decisions settled (2026-10-12); commits 1–3 of 7 done.**
 The Figma redesign waits on this; its plan is `plan/ui-redesign-figma-plan.md` on branch `ui-improvement`.
 
 ## Why
@@ -105,7 +105,11 @@ from a fixed 8-question check, and changes it only at a student-approved Week 7 
 2. **CAT engine (Python)** *(done)*: `catsim` added; `assessment_agent.cat` / `.readiness`; 49 pytest tests; golden
    file `apps/web/tests/fixtures/cat-parity.json` (26 simulated sessions, 140 steps) written by
    `scripts/make_cat_parity.py`. See "Engine notes" below.
-3. **CAT engine (TypeScript):** `cat.ts`, `readiness.ts`; parity and unit tests.
+3. **CAT engine (TypeScript)** *(done)*: `lib/logic/cat.ts` (engine + `readinessLevel`), a line-for-line port of scipy's
+   bounded Brent search and catsim's response/information/Dodd formulas. 56 new unit tests. Parity: all 140 recorded
+   steps pick the same item, with θ within 1.2e-11 and SE within 1.1e-12 of Python (tolerance 1e-6). Mutation-checked:
+   reversing the tie order, taking Dodd's range from the answered items only, or ignoring the hint shift each make the
+   parity test fail.
 4. **Item bank + lectures as topics:** per-KU 3-tier generation in the builder; delete the `TOPICS` dict and derive
    one topic per lecture. **Dry run on one lecture first and report the LLM cost; full run only after approval.**
    Retire onboarding/re-check items.
