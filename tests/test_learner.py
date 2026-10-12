@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
-
 from syllabyte_common.learner import Course, CourseConfig, Item, KuEntry, Lecture, Topic
 
 REPO = Path(__file__).resolve().parent.parent

@@ -1,6 +1,6 @@
 # Per-KU learner profiling with CAT: plan
 
-Branch: `per-ku-profiling` (from `main` at 2d391ce). Status: **decisions settled (2026-10-12); commit 1 of 7 done.**
+Branch: `per-ku-profiling` (from `main` at 2d391ce). Status: **decisions settled (2026-10-12); commits 1–2 of 7 done.**
 The Figma redesign waits on this; its plan is `plan/ui-redesign-figma-plan.md` on branch `ui-improvement`.
 
 ## Why
@@ -102,7 +102,9 @@ from a fixed 8-question check, and changes it only at a student-approved Week 7 
    TS types, tests. Additive only: the app behaves exactly as before. **Lectures-as-topics moved to commit 4**:
    the existing items, levels and tests are keyed to the 4 hand-written topics, so topics can only become lectures
    in the same commit that replaces those items with the per-KU bank.
-2. **CAT engine (Python):** add `catsim`; `assessment_agent` CAT + readiness; pytest; parity golden file.
+2. **CAT engine (Python)** *(done)*: `catsim` added; `assessment_agent.cat` / `.readiness`; 49 pytest tests; golden
+   file `apps/web/tests/fixtures/cat-parity.json` (26 simulated sessions, 140 steps) written by
+   `scripts/make_cat_parity.py`. See "Engine notes" below.
 3. **CAT engine (TypeScript):** `cat.ts`, `readiness.ts`; parity and unit tests.
 4. **Item bank + lectures as topics:** per-KU 3-tier generation in the builder; delete the `TOPICS` dict and derive
    one topic per lecture. **Dry run on one lecture first and report the LLM cost; full run only after approval.**
@@ -137,3 +139,27 @@ from a fixed 8-question check, and changes it only at a student-approved Week 7 
    student needs it (today ≈ 8 min per video). Item banks generated per upload.
 5. **Figma UI redesign** (`ui-improvement`): resumes with My Levels grouped by lecture and the Week 7 banner
    dropped.
+
+## Engine notes (found while building commit 2)
+
+These are properties of the `catsim` 0.21.0 / scipy 1.18 behaviour the engine inherits; the TypeScript port must
+reproduce them, and the parity file pins them.
+
+- **Selection ties.** catsim's `MaxInfoSelector` sorts with `numpy.argsort`, which is not stable, so equally
+  informative items come back in arbitrary order. With α = 1 every item at the same distance from θ ties (b = +0.5
+  and −0.5 at θ = 0), so ties are the common case, not an edge case. The engine picks the most informative unseen
+  item and breaks ties (within 1e-9 information) by **pool order**. It uses catsim's own information function.
+- **Dodd's heuristic uses the whole pool.** For an all-correct (all-wrong) pattern catsim moves θ halfway toward the
+  *pool's* hardest (easiest) item, from the previous estimate, so it compounds: after n uniform answers θ is
+  (1 − 2⁻ⁿ) of the way from the start to the pool's extreme. After 4 answers that is 94%. The pool therefore needs a
+  wide difficulty range (the 3 tiers per KU across a lecture's KUs provide it).
+- **Dodd is not an MLE.** With a narrow pool, "all correct" can come out *below* "all but one correct" (observed:
+  1.48 vs 2.09 on a 6-item pool spanning −1 … 1.5), and "all wrong" above "one right". The estimate is always finite
+  and inside the pool's range. We keep catsim's behaviour (D7); revisit after the pilot with calibrated items.
+- **Estimation replays the answers in order**, because Dodd is defined from the previous estimate. A "Not sure" answer
+  never enters the estimate; a hinted answer enters as the same item with b − `hint_beta_shift`.
+- **Standard error** is 1/√(test information) over the scored answers (infinite before any). With α = 1 and 4 items
+  near θ it is ≈ 1.0 logit, which is why the length is fixed (D7) and why "least certain topic" (D8, review items)
+  can use it directly.
+- catsim prints a blank line on every item-bank validation, so items are validated in `BankItem` and `ItemBank` is
+  built with `validate=False`.
