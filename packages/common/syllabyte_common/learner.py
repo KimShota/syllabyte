@@ -16,7 +16,9 @@ from syllabyte_common.models import BloomLevel, SlideRef
 
 Level = Literal[1, 2, 3]
 ItemContext = Literal[
-    "onboarding", "checkpoint", "recheck", "next_session", "prove_it", "retention"
+    "onboarding", "checkpoint", "recheck", "next_session", "prove_it", "retention",
+    # the per-KU item bank: Week 0 baseline, pre-lecture checks and review questions (plan D4, D8)
+    "assessment",
 ]
 # The three tiers of the per-KU item bank (plan/per-ku-profiling-plan.md, D4). They follow the
 # proposal's mapping: basic = Remember/Understand, applied = Apply/Analyze, advanced = Evaluate/Create.

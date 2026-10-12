@@ -1,6 +1,6 @@
 # Per-KU learner profiling with CAT: plan
 
-Branch: `per-ku-profiling` (from `main` at 2d391ce). Status: **decisions settled (2026-10-12); commits 1–3 of 7 done.**
+Branch: `per-ku-profiling` (from `main` at 2d391ce). Status: **decisions settled (2026-10-12); commits 1–3 of 7 done, 4 coded.**
 The Figma redesign waits on this; its plan is `plan/ui-redesign-figma-plan.md` on branch `ui-improvement`.
 
 ## Why
@@ -37,7 +37,7 @@ from a fixed 8-question check, and changes it only at a student-approved Week 7 
 | D2 | **One θ per topic**, and **a topic is a lecture** (from ingestion and the syllabus; no hand-written topics). Each KU's level comes from its own items' parameters at that θ. |
 | D3 | `catsim` in `packages/assessment_agent` is the **engine of record**. A TypeScript port runs the static Phase 0 demo; a **parity test** feeds identical response sequences through both and fails on any difference in θ or chosen item. |
 | D4 | **Item bank: 3 items per KU**, one per Bloom tier — basic (Remember/Understand), applied (Apply/Analyze), advanced (Evaluate/Create) — generated per course upload, one LLM call per KU plus the existing critic. A sample is hand-validated for the pilot course. Replaces the 14 per-topic onboarding/re-check items. |
-| D5 | **Item parameters before calibration:** β = LLM `difficulty_prior` adjusted by Bloom tier; **α fixed at 1.0** (Rasch inside the 2PL machinery) until post-pilot calibration. Stated as a limitation. |
+| D5 | **Item parameters before calibration:** the LLM rates each **KU** once (`ku_difficulty`, −2…2, first-time learner); β = tier offset (−1 / 0 / +1) + 0.5 × that rating, so the tiers sit one logit apart and a hard KU shifts all three up (a per-item LLM score would count the tier twice and is the noisiest signal); tiers forced into increasing order; **α fixed at 1.0** (Rasch inside the 2PL machinery) until post-pilot calibration. Stated as a limitation. |
 | D6 | **KU readiness (tier rule):** proficient if θ ≥ β of the KU's advanced item; developing if θ ≥ β of its applied item; else novice. Shown as Levels 3/2/1. |
 | D7 | **CAT settings:** start θ = 0 (`FixedPointInitializer`); next item = most informative unseen item (`MaxInfoSelector`); θ by `NumericalSearchEstimator` (bounded) with Dodd; **fixed length** (`TestLengthStopper`). **"Not sure"** counts toward the length but not the estimate (plan §2 rule 3); a topic answered entirely "Not sure" makes its KUs novice. Limitation: with α = 1, SE(θ) stays ≈ 1 logit after ~4 items, so an SE stopping rule would never fire at these lengths. |
 | D8 | **When students are assessed:** a **Week 0 baseline** (≈ 16 items) on the first lectures' KUs and the KU graph's prerequisite roots — gives every KU a provisional level (θ pooled over all Week 0 answers for lectures not yet checked). **Before each lecture's videos**, a check of ≈ 4 items on that lecture plus ≈ 2 **review** items from earlier lectures, aimed where θ is least certain. Every sitting has a fixed length regardless of course size; lengths are config, tuned by simulation before the pilot. |
@@ -110,9 +110,13 @@ from a fixed 8-question check, and changes it only at a student-approved Week 7 
    steps pick the same item, with θ within 1.2e-11 and SE within 1.1e-12 of Python (tolerance 1e-6). Mutation-checked:
    reversing the tie order, taking Dodd's range from the answered items only, or ignoring the hint shift each make the
    parity test fail.
-4. **Item bank + lectures as topics:** per-KU 3-tier generation in the builder; delete the `TOPICS` dict and derive
-   one topic per lecture. **Dry run on one lecture first and report the LLM cost; full run only after approval.**
-   Retire onboarding/re-check items.
+4. **Item bank** *(code done; generation awaits approval)*: `assessment_agent.bank` (tier difficulty rules, assembly,
+   balancing, validation; LLM-free, tested) and `scripts/build_item_bank.py` (`--estimate` prints the cost with no API
+   call; generation is cached per KU in `runs/<id>/ui_cache/bank-<ku>.json`; writes `bank.json` and `_bank-review.md`).
+   Additive: `bank.json` sits beside the existing fixtures and the app does not read it yet.
+   **Lectures-as-topics and retiring the 14 onboarding/re-check items moved to commit 5**, which rebuilds the flow
+   that depends on them. Estimated cost of the full dev bank (20 KUs): ≈ $1.16 on claude-opus-5, ≈ $0.46 on
+   claude-sonnet-5; lecture 1 alone (10 KUs) ≈ $0.57 / $0.23.
 5. **Profile and delivery:** state v2, Week 0 CAT, pre-lecture checks with review items, continuous evidence,
    lecture-boundary updates, made-level tracking, prerequisite ordering, engagement refreshers, per-KU "Correct
    this", Week 7 removal, persona; unit tests.

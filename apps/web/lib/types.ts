@@ -7,7 +7,10 @@
 export type Level = 1 | 2 | 3;
 export type Confidence = "guess" | "pretty" | "certain";
 export type Choice = number | "not_sure";
-export type ItemContext = "onboarding" | "checkpoint" | "recheck" | "next_session" | "prove_it" | "retention";
+export type ItemContext =
+  | "onboarding" | "checkpoint" | "recheck" | "next_session" | "prove_it" | "retention"
+  /** the per-KU item bank: Week 0 baseline, pre-lecture checks and review questions */
+  | "assessment";
 /** Bloom's taxonomy level of a Knowledge Unit (mirrors syllabyte_common.models.BloomLevel). */
 export type BloomLevel = "remember" | "understand" | "apply" | "analyze" | "evaluate" | "create";
 /** Tier of an item in the per-KU bank: basic = Remember/Understand, applied = Apply/Analyze, advanced = Evaluate/Create. */
