@@ -551,7 +551,12 @@ def main() -> None:
     ]
     video_by_ku = {v.ku_id: v.id for v in videos}
     ku_entries = [
-        KuEntry(id=k.id, title=k.title, short_title=SHORT_TITLES[k.id], topic_id=ku_topic[k.id], lecture_n=lecture_of(k), video_id=video_by_ku.get(k.id))
+        KuEntry(
+            id=k.id, title=k.title, short_title=SHORT_TITLES[k.id], topic_id=ku_topic[k.id], lecture_n=lecture_of(k),
+            video_id=video_by_ku.get(k.id), bloom_level=k.bloom_level,
+            # the pipeline's graph can name a KU that was dropped from the run; the Course validator rejects those
+            prerequisites=list(k.prerequisites),
+        )
         for k in sorted(kus_list, key=lambda k: min(r.slide_number for r in k.source_refs))
     ]
     course = Course(

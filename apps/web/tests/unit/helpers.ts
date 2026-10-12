@@ -34,7 +34,7 @@ export function item(id: string, topic_id: string, context: ItemContext, extra: 
   return {
     id, ku_id: null, topic_id, context, stem: `Q ${id}`, options: ["a", "b", "c"], correct_index: 1,
     allows_not_sure: context !== "checkpoint" && context !== "next_session", explanation: "because", hint: "hint",
-    difficulty_prior: 0, source_refs: [], ...extra,
+    difficulty_prior: 0, discrimination: 1, tier: null, source_refs: [], ...extra,
   };
 }
 

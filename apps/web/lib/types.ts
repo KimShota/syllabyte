@@ -8,6 +8,10 @@ export type Level = 1 | 2 | 3;
 export type Confidence = "guess" | "pretty" | "certain";
 export type Choice = number | "not_sure";
 export type ItemContext = "onboarding" | "checkpoint" | "recheck" | "next_session" | "prove_it" | "retention";
+/** Bloom's taxonomy level of a Knowledge Unit (mirrors syllabyte_common.models.BloomLevel). */
+export type BloomLevel = "remember" | "understand" | "apply" | "analyze" | "evaluate" | "create";
+/** Tier of an item in the per-KU bank: basic = Remember/Understand, applied = Apply/Analyze, advanced = Evaluate/Create. */
+export type ItemTier = "basic" | "applied" | "advanced";
 export type ReviewStatus = "unreviewed" | "approved" | "flagged" | "hidden";
 export type TailoringKind = "left_out" | "added" | "set_to";
 export type Condition = "A" | "B";
@@ -30,7 +34,12 @@ export interface Item {
   allows_not_sure: boolean;
   explanation: string;
   hint: string | null;
+  /** IRT difficulty (β), logit scale */
   difficulty_prior: number;
+  /** IRT discrimination (α); fixed at 1 until post-pilot calibration */
+  discrimination: number;
+  /** per-KU item bank tier; null on the legacy onboarding / re-check / video items */
+  tier: ItemTier | null;
   source_refs: SlideRef[];
 }
 
@@ -57,6 +66,9 @@ export interface KuEntry {
   topic_id: string;
   lecture_n: number;
   video_id: string | null;
+  bloom_level: BloomLevel;
+  /** ids of the KUs this one builds on (the Knowledge Unit Graph is a DAG) */
+  prerequisites: string[];
 }
 
 export interface CourseConfig {

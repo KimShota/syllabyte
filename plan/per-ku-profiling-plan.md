@@ -1,6 +1,6 @@
 # Per-KU learner profiling with CAT: plan
 
-Branch: `per-ku-profiling` (from `main` at 2d391ce). Status: **decisions settled (2026-10-12), not started.**
+Branch: `per-ku-profiling` (from `main` at 2d391ce). Status: **decisions settled (2026-10-12); commit 1 of 7 done.**
 The Figma redesign waits on this; its plan is `plan/ui-redesign-figma-plan.md` on branch `ui-improvement`.
 
 ## Why
@@ -97,12 +97,16 @@ from a fixed 8-question check, and changes it only at a student-approved Week 7 
 `refresher_dropoff_fraction`, `refresher_replay_count`.
 
 ## Commits (each: typecheck, unit, parity, e2e incl. axe green)
-1. **Fixtures carry the KU graph:** lectures as topics, Bloom level and prerequisites on KUs, new item fields;
-   Python models, builder, TS types, `check-fixtures`.
+1. **Fixtures carry the KU graph** *(done)*: Bloom level and prerequisites on KUs (the `Course` model rejects an
+   unknown prerequisite, a self-loop or a cycle), `discrimination` and `tier` on items; Python models, builder,
+   TS types, tests. Additive only: the app behaves exactly as before. **Lectures-as-topics moved to commit 4**:
+   the existing items, levels and tests are keyed to the 4 hand-written topics, so topics can only become lectures
+   in the same commit that replaces those items with the per-KU bank.
 2. **CAT engine (Python):** add `catsim`; `assessment_agent` CAT + readiness; pytest; parity golden file.
 3. **CAT engine (TypeScript):** `cat.ts`, `readiness.ts`; parity and unit tests.
-4. **Item bank:** per-KU 3-tier generation in the builder. **Dry run on one lecture first and report the LLM cost;
-   full run only after approval.** Retire onboarding/re-check items.
+4. **Item bank + lectures as topics:** per-KU 3-tier generation in the builder; delete the `TOPICS` dict and derive
+   one topic per lecture. **Dry run on one lecture first and report the LLM cost; full run only after approval.**
+   Retire onboarding/re-check items.
 5. **Profile and delivery:** state v2, Week 0 CAT, pre-lecture checks with review items, continuous evidence,
    lecture-boundary updates, made-level tracking, prerequisite ordering, engagement refreshers, per-KU "Correct
    this", Week 7 removal, persona; unit tests.

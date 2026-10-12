@@ -12,12 +12,15 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from syllabyte_common.models import SlideRef
+from syllabyte_common.models import BloomLevel, SlideRef
 
 Level = Literal[1, 2, 3]
 ItemContext = Literal[
     "onboarding", "checkpoint", "recheck", "next_session", "prove_it", "retention"
 ]
+# The three tiers of the per-KU item bank (plan/per-ku-profiling-plan.md, D4). They follow the
+# proposal's mapping: basic = Remember/Understand, applied = Apply/Analyze, advanced = Evaluate/Create.
+ItemTier = Literal["basic", "applied", "advanced"]
 ReviewStatus = Literal["unreviewed", "approved", "flagged", "hidden"]
 TailoringKind = Literal["left_out", "added", "set_to"]
 Phase = Literal["prepare", "initiate", "deliver", "end"]
@@ -50,7 +53,11 @@ class Item(BaseModel):
     allows_not_sure: bool
     explanation: str
     hint: str | None = None
-    difficulty_prior: float = 0.0
+    difficulty_prior: float = 0.0  # IRT difficulty (beta), logit scale
+    # IRT discrimination (alpha). Fixed at 1.0 until post-pilot calibration (plan D5).
+    discrimination: float = Field(default=1.0, gt=0)
+    # Set on the per-KU item bank; None on the legacy onboarding/re-check/video items.
+    tier: ItemTier | None = None
     source_refs: list[SlideRef] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -91,6 +98,9 @@ class KuEntry(BaseModel):
     topic_id: str
     lecture_n: int
     video_id: str | None = None
+    # From the pipeline's Knowledge Unit Graph (KnowledgeUnit.bloom_level / .prerequisites).
+    bloom_level: BloomLevel
+    prerequisites: list[str] = Field(default_factory=list)  # other KU ids
 
 
 class CourseConfig(BaseModel):
@@ -122,6 +132,37 @@ class Course(BaseModel):
     topics: list[Topic]
     lectures: list[Lecture]
     kus: list[KuEntry]
+
+    @model_validator(mode="after")
+    def _ku_graph_is_a_dag(self) -> "Course":
+        """The Knowledge Unit Graph is "a directed acyclic graph" (proposal §3.1): every
+        prerequisite must be a KU of this course, and there must be no cycles."""
+        ids = {k.id for k in self.kus}
+        for k in self.kus:
+            for p in k.prerequisites:
+                if p not in ids:
+                    raise ValueError(f"KU {k.id}: unknown prerequisite {p}")
+                if p == k.id:
+                    raise ValueError(f"KU {k.id} lists itself as a prerequisite")
+        # Kahn's algorithm: whatever cannot be peeled off is on a cycle.
+        indegree = {k.id: len(k.prerequisites) for k in self.kus}
+        children: dict[str, list[str]] = {i: [] for i in ids}
+        for k in self.kus:
+            for p in k.prerequisites:
+                children[p].append(k.id)
+        ready = [i for i, n in indegree.items() if n == 0]
+        seen = 0
+        while ready:
+            node = ready.pop()
+            seen += 1
+            for c in children[node]:
+                indegree[c] -= 1
+                if indegree[c] == 0:
+                    ready.append(c)
+        if seen != len(ids):
+            stuck = sorted(i for i, n in indegree.items() if n > 0)
+            raise ValueError(f"KU prerequisites contain a cycle through {stuck}")
+        return self
 
 
 # --------------------------------------------------------------------------
