@@ -4,16 +4,23 @@ Status: **settled spec** (grilling session 2026-10-04, 37 decisions). Decision n
 (Q1–Q37) are kept inline in brackets so each rule can be traced to the session; §16 lists them.
 Build in the phase order of §14. Phase 0 first.
 
+> **Revised 2026-10-13 (`plan/per-ku-profiling-plan.md`, branch `per-ku-profiling`).** To follow the capstone proposal
+> (§3.2), levels are measured **per Knowledge Unit** by a **computerized adaptive test** (2PL IRT, `catsim`), and
+> **Week 7 is no longer part of the app**. Revised here: rules 1–4 of §2, §3.1, §3.1b, §3.8, §3.9, §3.10, §4.1–§4.4, §4.6,
+> §5.1, §5.2, §6.1, §6.2, §7.2, §7.3 and §17. Decisions Q15, Q16, Q33, Q34 and Q36 are superseded (§16). Everything
+> else stands. The per-KU plan is the source of truth for the assessment design (decisions D1–D18).
+
 ## 0. Context
 
 Inputs: `SyllaByte UI Wireframes.pdf` (10 screens), `Syllabyte UI Literature Review.pdf`
 (28 papers plus a traceability table), the capstone proposal, and the current repo.
 
 **What the UI delivers:** the closed loop the literature review identifies as the novel
-contribution: onboarding check → per-topic levels the student can see and correct → a
-playlist of tailored micro-videos with in-video checks → a Week 7 reassessment shown as
-proposals the student accepts or disputes. Every override, skip, confidence rating and
-dispute is research data for RQ1–RQ3, so instrumentation is a core feature from Phase 0.
+contribution: a baseline check → a level for every Knowledge Unit that the student can see and
+correct → a playlist of tailored micro-videos with in-video checks → a short check before each
+lecture that moves levels at lecture boundaries, with a card saying what changed and why. Every
+override, skip, confidence rating and correction is research data for RQ1–RQ3, so instrumentation is
+a core feature from Phase 0.
 
 **Repo state (2026-10-04):** the file-based Week-1 pipeline (`scripts/generate_shorts.py`)
 produces, per KU, `final.mp4` (9:16, 1080×1920, 60–90 s), `audio/captions.srt`, `script.json`
@@ -54,10 +61,10 @@ publisher pages blocked full text. Check the numbers before citing them.
 
 These apply on every screen. Claude Code should treat them as invariants and test them.
 
-1. **Per-topic levels (1–3) drive which video version a student gets.** The overall level is only a summary [Q15].
-2. **Levels change only at the Week 7 check-in or by student correction** [Q33]. Weeks 1–6 evidence affects playlist tags only (§4.3).
-3. **"Not sure yet" is missing evidence, never a wrong answer** [Q5]. It appears in onboarding, the Week 7 re-check and prove-it. It **does not** appear in in-video checks (the "Guessing" confidence covers it) or retention quizzes.
-4. **Every "because…" string a student sees is built from a template over stored data, never written freely by an LLM** (screens 1-result, 2, 5, 8, 10). Numbers in reason text must equal the stored counts. Tests assert this.
+1. **Per-KU levels (1–3) drive which video version a student gets.** A topic is a lecture. The overall level is only a summary (per-KU plan D2, D6; supersedes Q15).
+2. **Levels change only at a lecture boundary (the end of a check before a lecture) or by student correction** (per-KU plan D11; supersedes Q33). Answers in between update the estimate behind the scenes but never a level the student sees.
+3. **"Not sure yet" is missing evidence, never a wrong answer** [Q5]. It appears in the baseline, the checks before a lecture and prove-it. It **does not** appear in in-video checks (the "Guessing" confidence covers it) or retention quizzes.
+4. **Every "because…" string a student sees is built from a template over stored data, never written freely by an LLM** (screens 1-result, 2, 5, 8, the "What changed and why" card). Numbers in reason text must equal the stored counts. Tests assert this.
 5. **Nothing overlays the video**, including captions [Q3, Q17].
 6. **No autoplay, no infinite feed, no streaks, points, leaderboards, or peer comparison.** Students only see their own history.
 7. **When evidence is mixed or missing, default to more support** (lower level, more help).
@@ -79,28 +86,36 @@ Screen numbers match the wireframe PDF. New screens have letter suffixes.
 - Phase 3: the server assigns condition A/B **after** consent. Decliners get condition A with no research logging (confirm with IRB, §15).
 - Next: screen 1.
 
-### 3.1 Onboarding check (screen 1) [Q4, Q5, Q15]
+### 3.1 Baseline check (screen 1) [Q4, Q5; per-KU plan D8, D9]
 - Layout as wireframed:
   - Back button and **Pick my own level** link at the top.
   - Eyebrow `{COURSE} · START`, title "A quick check, no grade".
-  - Subtitle "8 questions, about 4 minutes. It only tunes your videos. 'Not sure' is a fine answer."
-  - 8-segment progress bar, "Question n of 8".
-  - Question card with topic eyebrow, stem, 3 options + dashed **Not sure yet**.
-  - "After question 8" info card. **Back** / **Next**.
-- **8 items, spread across topics** (~2 per topic for 4 topics). No confidence row. Next is enabled once an option is selected. Nothing is preselected.
-- **Pick my own level:** works at any point. A sheet with the three level cards (§3.12 descriptions) sets **all** topics. Answers given so far are kept as evidence, and the level source is `student`.
+  - Subtitle "{n} questions, about {m} minutes. It only tunes your videos. 'Not sure' is a fine answer." and the line
+    "Each question adapts to your last answer, so you can't go back."
+  - n-segment progress bar, "Question i of n".
+  - Question card with the lecture as eyebrow, stem, 3 options + dashed **Not sure yet**.
+  - "After question n" info card. **Back** (first question only) / **Next**.
+- **A fixed-length adaptive sitting** (`cat_week0_length` 16, capped by `cat_items_per_topic` 4 × the first
+  `cat_week0_lectures` 4 lectures; 12 on the 3-lecture dev course), interleaved lecture by lecture. Each question is the most
+  informative unseen item of its lecture at the current ability estimate (§4.1). No confidence row. Next is enabled once an
+  option is selected; nothing is preselected. A choice can change until **Next**, then it is locked: **there is no going
+  back**, and **Back** and the top arrow exist on the first question only. Closing the tab resumes on the same question.
+- **Pick my own level:** works at any point. A sheet with the three level cards (§3.12 descriptions) sets **every KU**.
+  Answers given so far are kept as evidence, and the level source is `student`.
 
-### 3.1b Onboarding result (new) [Q15]
-- "We suggest **Level N · {name}** overall", then a per-topic list (topic, `LevelBar`, level, templated reason).
-- Topics with no onboarding items show as dashed **Not checked yet** cards at Level 1 ("We'll check this when Lecture N comes up").
+### 3.1b Start result (new) [Q15 revised]
+- "We suggest **Level N · {name}** overall", then **one card per lecture** (title, a bar, "{k} concepts at Level L · …"), each
+  opening into its concepts (a card per KU: `LevelBar`, level, templated reason, **Change**).
+- A lecture the baseline did not cover starts from the ability pooled over the answers so far ("We have not asked about
+  “{lecture}” yet…"); with no answer anywhere it is a dashed **Not covered yet** card at Level 1.
 - **Review my answers:** each item with the student's answer, the correct answer and a one-line explanation (pretesting benefit).
-- Actions: **Keep these levels** (primary) · **Change a topic** (opens §3.12) · **Pick one level for everything** (opens the level picker).
+- Actions: **Keep these levels** (primary) · **Change a concept** (opens §3.12) · **Pick one level for everything**.
 - Next: Playlist.
 
 ### 3.2 Playlist (screen 2) [Q12, Q13, Q22, Q27, Q31]
 Top to bottom:
 1. **Study tasks card** (only when a task is due; condition A/B; §3.18).
-2. **Week 7 card** (pinned during the check-in window after the invite was first seen; §3.9).
+2. **Check card** (the check before the upcoming lecture, when due; §3.9), and the **What changed and why** card (§3.10) after a lecture boundary moved levels.
 3. **Next-session cards** (max 2 per visit, one at a time; §3.3.3).
 4. Header: eyebrow `{COURSE} · LEVEL {overall}`, title "Your playlist", subtitle "{n} videos, about {m} minutes. Play them in any order."
 5. **Why this order** card: templated text (§4.3), or "You set this order" after a manual reorder. **Change order** link.
@@ -111,7 +126,7 @@ Top to bottom:
 - When every video is watched: "That's this week's playlist." with Watch again. No autoplay.
 - **⋮ menu:** Skip · Move up · Move down · View in course map.
 - **Skip:** the card moves to the Skipped group, and the toast "Skipped '{title}'. **Say why** · **Undo**" appears. It shows for 8 s, paused while focused or hovered. Say why opens screen 3.
-- **Change order:** edit mode with ↑/↓ on each card (plus drag on desktop), **Done**, and **Reset to suggested order**. A manual order persists until reset or the Week 7 rebuild.
+- **Change order:** edit mode with ↑/↓ on each card (plus drag on desktop), **Done**, and **Reset to suggested order**. A manual order persists until reset or the next rebuild.
 - **Empty states [Q31]:** "Your Lecture {n} videos are being made. Ready by {date}." with Watch again + Course map links. No spinner.
 - Bottom tabs on mobile: **Playlist · My levels · Course**. A left sidebar on desktop.
 
@@ -200,9 +215,11 @@ Top to bottom:
 
 ### 3.8 My levels (screen 8) [Q14, Q30, Q33, Q35]
 - Eyebrow `{COURSE} · MY LEVELS`, title "What your videos are based on", subtitle "This is our best guess, not a grade. If a level looks wrong, correct it."
-- **Overall card** (dark): "OVERALL START LEVEL · Level N · {name}". "Set from your Week 1 check. Next check-in: Week 7." After Week 7: "Updated at your Week 7 check-in."
-- **Topic cards:** name, `LevelBar`, level, templated reason, and **Correct this** (→ §3.12).
+- **Overall card** (dark): "OVERALL START LEVEL · Level N · {name}". "Levels update after your check for “{lecture}”." while one is due, else "Levels update after each lecture's check. Videos already made keep the level they were made at."
+- **The "What changed and why" card** (§3.10), when a lecture boundary moved levels. **Do the check for “{lecture}”** when one is due.
+- **One section per lecture, one card per concept (KU):** name, `LevelBar`, level, templated reason, and **Correct this** (→ §3.12).
   - If the student set the level: "Set by you" + **Use suggested level**.
+  - If the video was made at another level: "Its video was made at Level a. You are now Level b, so new videos on it use Level b."
   - Dashed **Not checked yet** cards use **Set it myself**.
 - **Calibration block 1: "How sure you were, and how often you were right."**
   - Source: checkpoint answers with confidence. Correct-after-hint counts as right.
@@ -213,34 +230,27 @@ Top to bottom:
   - The last 5 pairs: "{title} · You said **Maybe** · Next day: **right**".
   - A summary after ≥ 3 pairs: "When you said *Yes*, you got the next-day question right {a} of {b} times."
   - Hidden until ≥ 1 pair.
-- **You, since Week 1:** a list of level changes from the student's own history ("Selection bias went from Level 1 to Level 2 at Week 7"), or "No changes yet."
-- A **Do the Week 7 check-in** button if it was skipped (until Week 9).
+- **You, since your first check:** a list of level changes from the student's own history (“Selection bias formula” went from Level 2 to Level 1 at your “Randomization” check), or "No changes yet."
 - Footer: **Download my data** · **Reset my model** (§3.19).
 
-### 3.9 Week 7 invite (screen 9) and re-check (9b) [Q16]
-- **Trigger:** `course.semester_start` + `recheck_week` (7). On the first visit in that week, screen 9 opens full-screen once. After that it's a pinned Playlist card until it's done or skipped.
-- **Screen 9** as wireframed:
-  - Close ×, "Not graded" chip. Eyebrow `{COURSE} · WEEK 7`, title "Time to re-check your level", subtitle "You have watched {n} videos since Week 1. 6 questions, about 3 minutes. Your answers only retune what comes next."
-  - "When do you want to do it?" slots: **Now** · **Tonight at 8:00 pm** (hidden after 7 pm local) · **Tomorrow morning** (9:00 am) · **Remind me on Friday** (9:00 am; hidden on Fri/Sat, then "Monday").
-  - "What happens next" and "Review videos" cards.
-  - Primary button = "Schedule for {slot}" or **Start now**. **Skip this check-in**.
-- **Scheduling:** shows "Scheduled for {slot} · **Add to calendar (.ics)**" and sends an email reminder at the slot (Phase 3; Phase 0 shows the confirmation only).
-- **Skip this check-in:** a confirm, "Your levels stay as they are. You can do the check-in later from My levels."
-- **9b Re-check:** 6 bank items (`context: recheck`), onboarding layout, header "WEEK 7 CHECK-IN · NOT GRADED", "Not sure yet" allowed, no confidence row. Then screen 10.
+### 3.9 The check before a lecture (replaces Week 7 invite and re-check) [per-KU plan D8, D9]
+- **When it is due:** before the upcoming lecture's videos, from the lecture week after the baseline (the baseline already covers a lecture it
+  asked about in the same week). It appears as a card at the top of the Playlist: eyebrow "Before “{lecture}”", "A quick check before this
+  lecture.", "{n} questions, about {m} minutes… Not graded.", **Start the check** (or **Continue the check**) and **Not now**.
+- **The sitting** (`/check?l=N`): eyebrow `{COURSE} · LECTURE N CHECK`, title "A quick check before this lecture", same layout, same rules as
+  §3.1 (adaptive, no going back, "Not sure yet" allowed, close **×** to leave and resume later). `cat_prelecture_new` (4) questions on the
+  lecture and `cat_prelecture_review` (2) from earlier lectures, chosen from the earlier lecture whose ability is least certain. The order is
+  new, new, review, new, new, review. The last button reads **Start the lecture**.
+- **Not now:** skips it. Nothing changes and the card goes away for that lecture.
+- **At the end:** the levels the answers support are published and the playlist is rebuilt (§3.10, §4.3). A level the student set is not overwritten.
+- There is no scheduling, calendar file or reminder: the check is short and sits where the student already is.
 
-### 3.10 Week 7 results (screen 10) and every-change list (10b) [Q16, Q34]
-- As wireframed: eyebrow "WEEK 7 CHECK-IN · DONE", title "We suggest {k} changes", subtitle "Compared with your own Week 1 check. Nothing changes until you decide. Each level moves one step at most."
-- **Proposal card** per changed topic:
-  - Topic, ↑ Up (teal) / ↓ Down (amber) chip, "Level a → Level b proposed", and the templated reason (§4.4).
-  - **Accept** / **Keep Level a**. Down cards add the line "That is useful: your next videos here will go slower and include more help."
-  - **Tell us why we are wrong** opens an inline text field. Saving it sets the decision to `disputed` and keeps the level.
-  - If the student set the level: the note "You set this level in Week {n}".
-- **Unchanged topics:** "Level N, no change · Same". With < 3 answers: "Level N, no change · not enough answers yet".
-- **"Your playlist if you accept"** card: counts of new / swapped / removed, and **See every change** (→ 10b: full-screen list grouped *New* / *Swapped to slower/faster* / *Removed, already known*, each row a title + topic + reason).
-- Buttons:
-  - **Apply my choices ({x} accepted, {y} kept):** applies levels, rebuilds the playlist, and shows the toast "Playlist updated · {n} new, {s} swapped, {r} removed · Undo" (Undo available for 24 h).
-  - **Keep my old playlist:** all proposals become `kept`.
-  - **I will pick the videos myself:** applies the accepted levels, then opens the Course map.
+### 3.10 What changed and why (replaces Week 7 results) [per-KU plan D11]
+- A card on the Playlist and My levels after a lecture boundary moved any level: eyebrow "What changed and why", "Your levels moved after the
+  “{lecture}” check.", then one line per KU that moved: "{KU}: Level a → b. {r} of {n} right on “{lecture}” so far. Your next videos on it will use
+  Level b." (a template over the stored counts), and the line "Videos already made keep the level they were made at. You can correct any level yourself."
+- **Got it** dismisses it for good; **See my levels** (Playlist only). Nothing needs deciding: there are no proposals, accept/keep/dispute
+  buttons, or undo window. The student's lever is **Correct this** (§3.8, §3.12), which applies at once, is logged as the student's choice and can be undone.
 
 ### 3.11 Course tab (new) [Q8]
 - **Course map:** grouped by lecture → topic → videos (`VideoCard`) with status *Watched* / *In playlist* / *Skipped* / *Not made yet* (dashed, no play, "Expected by {date}" or "Coming soon").
@@ -262,7 +272,7 @@ Top to bottom:
     - **Level 3 · Advanced:** "Skips the basics, adds a 'what if'."
   - Optional reason chips: *Videos feel too easy* · *Videos feel too hard* · *I learned this elsewhere* · *Other* (+ one-line note).
   - **Save level**, then a toast "{Topic} set to Level N by you. Your playlist will update. **Undo**".
-- Effects: level `source = student`, and the topic's playlist entries swap to that level's versions. Week 7 never silently overwrites the level (§4.4).
+- Effects: level `source = student`, and the topic's playlist entries swap to that level's versions. A check never silently overwrites a level the student set (§3.9); only its suggestion moves.
 
 ### 3.13 Instructor review queue (new, Phase 2) [Q25]
 - Desktop-first, `instructor` role.
@@ -313,7 +323,7 @@ Top to bottom:
 - Items:
   - **Participant code** (e.g. `P03`, stamped on every event).
   - **Reset demo** (clears all state and the log, returns to Welcome).
-  - **Jump to screen…:** Welcome, Onboarding, Onboarding result, Playlist, Player (each video), Receipt, Claim check, Before you move on, My levels, Course, Week 7 invite, Week 7 re-check, Week 7 results, Empty playlist.
+  - **Jump to screen…:** Welcome, Baseline check, Start result, Playlist, Player (each video), Receipt, Claim check, Before you move on, My levels, Course, Check due, Lecture 3 check quiz, Levels changed, My levels (mid-course student), Empty playlist; tools: Simulate next day, Simulate next week.
   - **Simulate next day** (+24 h on the mock clock).
   - **Download session log (JSON)**.
   - **Open `/debug/events`** (a live event timeline).
@@ -340,57 +350,56 @@ Top to bottom:
 
 ## 4. Logic (`packages/assessment_agent/`)
 
-All thresholds live in the course config (§5.2). In Phase 0 a minimal TypeScript port of §4.1–§4.3 runs inside the mock. Week 7 proposals come from fixtures [Q6].
+All thresholds live in the course config (§5.2). The engine of record is Python (`assessment_agent`, on `catsim`); in Phase 0 a TypeScript port of §4.1 and §4.3 runs inside the mock, and a parity test replays golden sessions recorded from the Python engine and fails on any difference in the item chosen or in ability (per-KU plan D3).
 
-### 4.1 Onboarding levels [Q15]
-- Per topic, over its onboarding items (excluding "Not sure"):
-  - 2/2 correct → L3.
-  - 1/2 → L2.
-  - 0/2 → L1.
-  - If only one answered item: correct → L2, wrong → L1.
-  - All "Not sure" or no items → L1 with reason "not checked yet".
-- **Overall level** = median of topic levels, rounded down.
+### 4.1 Levels from adaptive tests [Q15 revised; per-KU plan D1–D10]
+- **A topic is a lecture; one ability (θ) per topic**, from a 2PL CAT (`catsim`): start θ 0, next item = the most informative unseen item (ties go to
+  the earlier item in the pool), θ by bounded maximum likelihood with Dodd's heuristic for an all-correct / all-wrong pattern.
+- **Item bank:** 3 items per KU, one per Bloom tier (basic = Remember/Understand, applied = Apply/Analyze, advanced = Evaluate/Create), generated per
+  course upload (§7.3). Difficulty β = tier offset (−1 / 0 / +1) + 0.5 × the LLM's single rating of the KU; discrimination α = 1.0 until post-pilot calibration.
+- **Evidence for a lecture's θ:** its assessment items and its videos' quick-check, next-day and prove-it items (latest answer per item). A hinted
+  answer counts as the same item made easier (β − `irt_hint_beta_shift`); "Not sure" counts toward a sitting's length and for nothing in the estimate.
+- **KU level (tier rule):** Level 3 if θ ≥ β of the KU's advanced item; Level 2 if θ ≥ β of its applied item; else Level 1. A lecture answered entirely
+  "Not sure" is Level 1. A lecture not asked about yet borrows the θ pooled over every answer so far (provisional); with none it is "not checked".
+- **Overall level** = median of the KU levels, rounded down.
 - Reason templates, for example:
-  - "You answered both {topic} questions correctly, so we skip the basics here."
-  - "Right on {item_a}, 'Not sure' on {item_b}. Mixed, so we use medium pacing."
-  - "You chose 'Not sure' on all {n} questions, so videos start from the basics with more hints."
+  - "From your {n} answers on “{lecture}” ({r} right), you are likely to handle this concept's applied questions but not yet its advanced ones, so we use medium pacing."
+  - "You chose 'Not sure' on all {n} questions on “{lecture}”, so videos start from the basics with more hints."
+  - "We have not asked about “{lecture}” yet. From your {n} answers so far ({r} right) and how hard this concept is, we start you at Level {l}. We will check it before that lecture."
+- **Sittings:** the Week 0 baseline and the check before each lecture are fixed-length (§3.1, §3.9); items answered in any sitting are never asked again.
+- **When a level changes:** only at a lecture boundary (the end of a baseline or pre-lecture check), when it is published and the playlist is rebuilt (§3.10).
 
 ### 4.2 Video version selection
-- Topic level → `VideoVariant(ku, level)`, with the §3.16 fallback.
+- KU level → `VideoVariant(ku, level)`, with the §3.16 fallback. A video is made once, at the KU's level when first needed, and never remade; the app records the level it was made at (per-KU plan D15).
 
-### 4.3 Weekly playlist builder [Q22, Q33]
+### 4.3 Playlist builder [Q22; per-KU plan D13, D14]
 - **Eligible:** KUs mapped to the upcoming lecture plus the previous two (from the lecture schedule, §5.2), minus hidden variants, minus videos skipped as known after a passed prove-it.
 - **Tags:**
-  - *gap:* topic at L1, or the student missed this KU's checkpoint or next-session item.
-  - *new:* upcoming lecture, not yet watched.
-  - *refresher:* watched, and (topic is a gap, or the next-session item was missed). Only added after every gap and new entry is watched or skipped.
+  - *gap:* the video's KU is at Level 1.
+  - *new:* upcoming lecture, not yet watched (or started and left early, to pick up again).
+  - *refresher:* watched, and (the KU is at Level 1, or the checkpoint or next-session item was missed, or it was watched `refresher_replay_count` times). Only added after every gap and new entry is watched or skipped.
   - *you_added:* via the Course map.
-- **Order:** gaps (upcoming lecture first, then KU prerequisite order) → new → refreshers → you_added (appended).
+- **Order:** gaps → new → refreshers → you_added (appended). Inside a group a KU's **prerequisites come first** (the Knowledge Unit Graph), then the upcoming lecture's gaps, then earlier slides. A video stopped before `refresher_dropoff_fraction` of it goes to the very top, ahead of the cap, once 30 minutes have passed.
 - **Cap:** 6 videos or 600 s total, whichever comes first. Overflow stays reachable in the Course map.
-- **Rebuild:** at the start of each lecture week, after Week 7 Apply, and on a level correction (only that topic's entries swap version). A manual order persists until reset or the Week 7 rebuild.
-- **Why this order template:** "Lecture {n} is next{, and your levels show {gap_topics} as gaps}. We put those first, then new videos from Lecture {n}{, then a short refresher}."
+- **Rebuild:** at the baseline, at the end of each pre-lecture check, and at the start of each lecture week. A manual order persists until reset or the next rebuild. A level correction does not rebuild.
+- **Why this order template:** "Lecture {n} is next{, and your levels show {gap_KUs} as gaps}. We put those first, then new videos from Lecture {n}{, then a short refresher}.{ You stopped “{video}” partway, so it is back at the top.}{ “{A}” comes first because “{B}” builds on it.}" Engagement (drop-off, replays) only changes what is delivered, never a level (D13).
 
-### 4.4 Week 7 proposals [Q34]
-- **Pool per topic:**
-  - Included: the topic's re-check items plus its Weeks 1–6 checkpoint and next-session answers.
-  - Counted as missing: "Not sure" and skipped checks.
-  - Correct-after-hint: 0.5 credit.
-- **Score** = credit ÷ answered. Needs ≥ `recheck_min_answers` (3), otherwise no proposal ("not enough answers yet").
-- **Proposal:**
-  - Up 1 if score ≥ `recheck_up_threshold` (0.8).
-  - Down 1 if score ≤ `recheck_down_threshold` (0.4), or if more than half of the topic's items were "Not sure".
-  - Otherwise no change.
-  - Clamp to 1–3. Student-set levels go through the same rule.
-- **Reason template:** "{correct} of {answered} right{, including {item}, which you skipped/missed in Week 1}{, up from {w1c} of {w1a} in Week 1}{. You watched all {n} {topic} videos}."
-- These thresholds are **design choices**; add them to the traceability table.
+### 4.4 Week 7 proposals: removed [Q34 superseded]
+- There is no Week 7 in the app. Its job (re-measuring and updating levels) is done continuously: each check before a lecture adds review
+  questions from earlier lectures, and quick-check, next-day and prove-it answers feed their lecture's ability. The pilot's midterm
+  *measurement* (retention quiz, NASA-TLX, SUS, Likert, trust scale, focus groups) is a study-protocol item (roadmap: study instruments), not a level update.
+- **Needs the advisor's sign-off** (OSF pre-registration not yet filed): H3 and the profile-shift heatmap change from "recalibration after the
+  Week 7 reassessment vs a static profile" to "continuous per-lecture adaptation vs a static Week 0 profile".
 
 ### 4.5 Next-session scheduling [Q13]
 - Covered in §3.3.3.
 
-### 4.6 Rasch logging [Q36]
-- Per topic, a Rasch (1PL) θ is estimated from all non-"Not sure" responses (girth), using each item's `difficulty_prior` (LLM-estimated) as the initial difficulty.
-- Stored in level snapshots. **Never shown to students and never used to set levels.**
-- After the pilot: fit 2PL on real responses and report rule-vs-IRT agreement.
+### 4.6 Ability and item parameters [Q36 superseded]
+- θ is no longer log-only: it sets levels (§4.1). It is **never shown to students**.
+- Item parameters before the pilot are priors: β from the LLM's KU rating plus the tier offset, α fixed at 1.0. Stated limitations: standard error
+  stays about one logit at these test lengths, so sittings have a fixed length rather than a precision target; Dodd's heuristic is not a
+  maximum-likelihood estimate and can place "all correct" below "all but one correct" on a narrow pool.
+- After the pilot: calibrate β and α on real responses and report agreement with the priors.
 
 ---
 
@@ -399,15 +408,18 @@ All thresholds live in the course config (§5.2). In Phase 0 a minimal TypeScrip
 ### 5.1 Models (`syllabyte_common/learner.py`, Pydantic; TS types mirror them)
 | Model | Key fields |
 |---|---|
-| `Course` | id, name, display_eyebrow, semester_start, config (§5.2), lectures `[{n, date, deck, slide_range, ku_ids}]` |
-| `Topic` | id, course_id, title, ku_ids, first_lecture |
-| `Item` | id, ku_id, topic_id, context (`onboarding`/`checkpoint`/`recheck`/`next_session`/`prove_it`/`retention`), stem, options, correct_index, allows_not_sure, explanation, hint, difficulty_prior, source_refs |
+| `Course` | id, name, display_eyebrow, semester_start, config (§5.2), lectures `[{n, date, deck, slide_range, ku_ids}]`, kus (each with `bloom_level` and `prerequisites`; the graph is validated as a DAG) |
+| `Topic` | id (`lecture-<n>`), title, ku_ids, first_lecture (a topic is a lecture) |
+| `Item` | id, ku_id, topic_id, context (`assessment`/`checkpoint`/`next_session`/`prove_it`/`retention`), tier (`basic`/`applied`/`advanced` on bank items), stem, options, correct_index, allows_not_sure, explanation, hint, difficulty_prior (β), discrimination (α, 1.0), source_refs |
 | `Response` | id, student_id, item_id, choice (`int` \| `"not_sure"`), confidence (`guess`/`pretty`/`certain` \| null), hint_used, latency_ms, context, variant_id?, at |
-| `TopicLevel` | student_id, topic_id, level, source (`model`/`student`), reason_text, evidence_response_ids, theta_rasch?, history `[{level, source, at, cause}]` |
+| `KuLevel` | student_id, ku_id, level, source (`model`/`student`), suggested_level, reason, not_checked, provisional, history `[{level, source, at, cause}]` (cause: `baseline`/`lecture_check`/`student`/`use_suggested`/`pick_all`/`reset`) |
+| `Sitting` | student_id, id (`week0` / `lecture-<n>`), answered_ids, started_at, finished_at, skipped, week |
+| `LevelUpdate` | per lecture boundary: ku_id, from, to, direction, reason (the "What changed and why" rows), seen |
+| `Progress` | student_id, video_id, max_t, duration_s, last_at (drives drop-off, D13) |
+| `MadeLevel` | student_id, ku_id, level the KU's video was made at (a video is made once, D15) |
 | `VideoVariant` | id, ku_id, level, version, video_url, vtt_url, poster_url, duration_s, lecture_n, checkpoint `{t, item_id}`, next_session_item_id, prove_it_item_id, sentence_frame `{template, blanks}`, segments `[{phase, start, end}]`, claims `[{idx, text, segment_idx, slide_refs, lecture_clip?}]`, tailoring `[{kind: left_out/added/set_to, what, dimension}]`, transcript `[{t, narration, visual}]`, review_status, expected_by? |
 | `PlaylistEntry` | student_id, variant_id, position, tag (`gap`/`new`/`refresher`/`you_added`), state (`todo`/`watched`/`skipped`), skip_reason?, manual_order, week |
 | `NextSessionTask` | student_id, variant_id, item_id, jol (`yes`/`maybe`/`no` \| null), due_after, expires_at, done |
-| `LevelProposal` | student_id, topic_id, from, to, score, answered, reason_text, decision (`accepted`/`kept`/`disputed` \| null), dispute_text |
 | `ClaimVerdict` | student_id, variant_id, claim_idx, verdict (`matches`/`mismatch`), note |
 | `Report` | student_id, variant_id, category, video_t, note, status (`open`/`resolved`), resolution |
 | `Note` | student_id, variant_id, video_t, text, at |
@@ -417,11 +429,12 @@ All thresholds live in the course config (§5.2). In Phase 0 a minimal TypeScrip
 | `Event` | `{actor: pid, verb, object: {type, id}, result?, context: {screen, device, orientation, condition, participant_code?}, timestamp}` |
 
 ### 5.2 Course config (`course.json`)
-`semester_start`, `recheck_week: 7`, `recheck_skip_until_week: 9`, `recheck_up_threshold: 0.8`,
-`recheck_down_threshold: 0.4`, `recheck_min_answers: 3`, `playlist_max_videos: 6`,
-`playlist_max_seconds: 600`, `next_session_min_hours: 12`, `next_session_max_per_visit: 2`,
-`next_session_expiry_days: 7`, `retention_due_days: 3`, `retention_delay_days: 14`,
-`reveal_retention_scores_after_week_14: false`, `lectures` (schedule, entered by hand).
+`semester_start`, `playlist_max_videos: 6`, `playlist_max_seconds: 600`, `next_session_min_hours: 12`, `next_session_max_per_visit: 2`,
+`next_session_expiry_days: 7`, `retention_due_days: 3`, `retention_delay_days: 14`, `reveal_retention_scores_after_week_14: false`,
+`lectures` (schedule, entered by hand today, from ingestion later), and the adaptive-assessment settings (design choices, to be tuned by
+simulation before the pilot): `cat_start_theta: 0`, `cat_items_per_topic: 4`, `cat_week0_length: 16`, `cat_week0_lectures: 4`,
+`cat_prelecture_new: 4`, `cat_prelecture_review: 2`, `irt_hint_beta_shift: 1.0`, `refresher_dropoff_fraction: 0.6`, `refresher_replay_count: 3`.
+The Week 7 settings (`recheck_*`) are gone.
 
 ---
 
@@ -432,13 +445,12 @@ All thresholds live in the course config (§5.2). In Phase 0 a minimal TypeScrip
 |---|---|
 | Auth | `POST /auth/request-link`, `GET /auth/callback`, `POST /auth/logout`, `GET /me` |
 | First run | `POST /consent`, `POST /withdraw` |
-| Onboarding | `GET /onboarding/items`, `POST /responses`, `GET /onboarding/result`, `POST /levels/accept`, `POST /levels/pick-all` |
-| Levels | `GET /levels`, `POST /levels/{topic}/correct`, `POST /levels/{topic}/use-suggested`, `GET /calibration`, `GET /history` |
+| Sittings | `GET /sittings/{id}` (the question it is on), `POST /sittings/{id}/answer` (locks it), `POST /sittings/{id}/finish` (publishes levels), `POST /sittings/{id}/skip`, `GET /start-result`, `POST /levels/accept`, `POST /levels/pick-all` |
+| Levels | `GET /levels` (by lecture), `POST /levels/{ku}/correct`, `POST /levels/{ku}/use-suggested`, `GET /calibration`, `GET /level-updates`, `POST /level-updates/{id}/dismiss`, `GET /history` |
 | Playlist | `GET /playlist`, `POST /playlist/reorder`, `POST /playlist/reset-order`, `POST /playlist/{entry}/skip`, `POST /playlist/{entry}/undo`, `POST /playlist/{entry}/skip-reason`, `GET /next-session`, `POST /next-session/{task}/answer` |
 | Course | `GET /course`, `GET /course/map`, `POST /course/videos/{variant}/add` |
-| Player | `GET /variants/{id}`, `POST /responses` (checkpoint, prove-it), `POST /jol`, `POST /self-explanation`, `POST /notes`, `GET /notes` |
+| Player | `GET /variants/{id}`, `POST /responses` (checkpoint, prove-it), `POST /progress`, `POST /jol`, `POST /self-explanation`, `POST /notes`, `GET /notes` |
 | Trust | `POST /claims/{variant}/{idx}/verdict`, `POST /reports` |
-| Week 7 | `GET /recheck/status`, `POST /recheck/schedule` (returns `.ics`), `GET /recheck/items`, `GET /recheck/proposals`, `POST /recheck/decisions`, `GET /playlist/diff`, `POST /playlist/apply`, `POST /playlist/undo-apply` |
 | Study | `GET /study/tasks`, `GET /study/retention/{task}`, `POST /study/retention/{task}` |
 | Data | `GET /me/export` (ZIP), `POST /me/reset` |
 | Events | `POST /events` (batch) |
@@ -447,13 +459,13 @@ All thresholds live in the course config (§5.2). In Phase 0 a minimal TypeScrip
 | Admin | `POST /admin/variants` (pipeline registers an uploaded variant), `POST /admin/allowlist` (CSV) |
 
 ### 6.2 Event vocabulary [Q20]
-`consent_given, onboarding_answered, level_suggested, level_kept, level_corrected, playlist_viewed,
+`consent_given, cat_answered, cat_finished, level_suggested, levels_updated, level_kept, level_corrected, playlist_viewed,
 reordered, skipped, skip_reason, undo, prove_it_result, video_play, video_pause, video_seek,
 video_ended, speed_changed, captions_toggled, transcript_opened, note_saved, checkpoint_shown,
 checkpoint_answered, checkpoint_skipped, hint_used, rewatch_part, receipt_opened,
 full_version_requested, about_opened, claim_slide_viewed, claim_verdict, error_reported,
 difficulty_rated, jol_answered, self_explanation_saved, next_session_answered, course_video_added,
-recheck_scheduled, recheck_answered, proposal_decided, playlist_applied, data_downloaded, model_reset`
+data_downloaded, model_reset`
 
 ### 6.3 Logging rules
 - Every event carries device type, orientation, screen and condition.
@@ -477,10 +489,14 @@ One LLM call per KU, grounded in the cited slides and checked by the existing cr
 - the next-session item;
 - the prove-it item ("Not sure" allowed);
 - the sentence frame;
-- `difficulty_prior` for each item.
+- `difficulty_prior` for each item (the LLM's estimate; for the adaptive bank see §7.3).
 
-### 7.3 Item bank
-Onboarding (2 per topic) and re-check (6 total, spread across topics) items at varied Bloom levels, with a manual validation pass. Retention items are written or approved by the instructor, separately.
+### 7.3 Item bank (per KU, for the adaptive tests)
+Three items per KU, one per Bloom tier (basic, applied, advanced), written from the KU's own slides by one LLM call and checked by the existing critic
+(`scripts/build_item_bank.py`, rules in `assessment_agent/bank.py`). The LLM rates the KU once; the item difficulty is derived (§4.1). Every stem must end
+in a question, answers are rotated over A/B/C by course position, and the bank is validated (three tiers per KU, tier-ordered difficulties). A sample is
+validated by hand for the pilot course (at least 2 items per lecture), reading `_bank-review.md`. Retention items are written or approved by the
+instructor, separately. The old per-topic onboarding and re-check items are retired.
 
 ### 7.4 Per-level variants [Q29]
 Add `level: 1|2|3` to `build_script_prompt`. Three versions per KU, not one per student.
@@ -553,7 +569,6 @@ scripts/build_ui_fixtures.py      fixture generator (Phase 0; seed of §7.1–7.
 ### 9.4 Email [Q32]
 Plain text + one link. No images, tracking pixels or open tracking. One-tap unsubscribe in every email.
 - Sign-in links.
-- The Week 7 reminder at the chosen slot.
 - Study task due dates.
 - **Weekly "Your playlist is ready"** at the start of each lecture week ("{n} videos, about {m} minutes, for Lecture {k}"). Condition B: "This week's lecture materials are up." Same timing in both conditions. On by default, with a toggle in settings.
 - Instructor: a daily digest of new reports.
@@ -571,10 +586,10 @@ Plain text + one link. No images, tracking pixels or open tracking. One-tap unsu
 - **Content:** the computational-ss course. The 20 KUs are grouped into ~4 topics by the generator. There are 4 real videos (`runs/dev`: potential outcomes, selection-bias formula, coin-toss worked example, reading a difference table), one version each, labelled Level 2.
 - **Lecture schedule fixture:** 4 invented lectures, from slide ranges of the single deck. The 4 videos are spread across them.
 - **`scripts/build_ui_fixtures.py`:**
-  - From `runs/dev`: topic grouping, 8 onboarding items, per-video checkpoint/next-session/prove-it items, sentence frames, tailoring decisions, and 6 re-check items (§7.2–7.3, via `llm.py` + critic).
+  - From `runs/dev`: the lecture topics, per-video checkpoint/next-session/prove-it items, sentence frames and tailoring decisions (§7.2, via `llm.py` + critic); the per-KU adaptive bank is built separately (§7.3).
   - Without an LLM: the manifests of §7.1.
   - Writes `apps/web/fixtures/*.json`. **The author reviews every item before a session.**
-- **Persona fixture (hand-written):** levels, calibration history and Week 7 proposals that tell one coherent story. It must include ≥ 1 gap topic, ≥ 1 skippable video, ≥ 1 Up and ≥ 1 Down Week 7 proposal, ≥ 5 rated checkpoint answers and ≥ 3 JOL/next-day pairs.
+- **Persona fixture (hand-written):** levels, calibration history and a lecture boundary that tell one coherent story, built by running the real API with a backdated clock. It must include ≥ 1 gap KU, ≥ 1 skippable video, ≥ 1 level up and ≥ 1 level down on the "What changed and why" card, ≥ 5 rated checkpoint answers and ≥ 3 JOL/next-day pairs.
 - **Commands:**
   - `npm run fixtures` copies media from `runs/dev/` into `apps/web/public/fixtures/` (gitignored).
   - `npm run dev -- --hostname 0.0.0.0` serves phones on the same Wi-Fi.
@@ -588,7 +603,7 @@ Plain text + one link. No images, tracking pixels or open tracking. One-tap unsu
   5. Is this claim correct? How would you check?
   6. Skip a video you think you know.
   7. Correct a level you disagree with.
-  8. (via Jump) Decide on the Week 7 proposals.
+  8. (via Jump "Levels changed") Read the "What changed and why" card and correct one level.
 - **Per session, record:** task success (yes / with help / no), time on task, the event log, SUS, and 3 debrief questions (most confusing moment; what felt trustworthy; what you'd change).
 
 ---
@@ -611,7 +626,7 @@ Plain text + one link. No images, tracking pixels or open tracking. One-tap unsu
   - Change order + reset.
   - Change level from all 3 entry points.
   - Claim check → view slide → mismatch → badge turns flagged.
-  - Week 7 accept/keep/dispute → apply → undo.
+  - The check before a lecture: due → adaptive questions → levels published → "What changed and why" → dismissed.
   - Each flow asserts the expected events (§6.2).
 - **Accessibility:** `@axe-core/playwright` on every route. A manual VoiceOver pass on the sheets and player.
 - **Research data:** after an E2E run, the export has one row per response with confidence, context and timestamps (enough for RQ2 and RQ3).
@@ -625,7 +640,7 @@ Plain text + one link. No images, tracking pixels or open tracking. One-tap unsu
 | **0 Prototype** | Oct 5–18 | `apps/web` scaffold, design system, all screens §3.0–3.12 + §3.15–3.17 on the mock, fixture generator §10, manifests §7.1, event log + demo menu, usability round 1 |
 | **1 Backend + onboarding** | Oct 19 – Nov 8 | FastAPI, `learner.py`, Mongo, auth (§9.3), event ingest + offline queue, `assessment_agent` §4.1–4.3 + Rasch §4.6, item bank §7.3; wire §3.0–3.3, §3.8, §3.11, §3.12 to the API; OpenAPI type generation |
 | **2 Player loop + trust** | Nov 9 – Nov 29 | Wire §3.4–3.7, §3.15; per-level variants §7.4–7.5, items §7.2, upload §7.6; instructor queue §3.13; deploy §9.5; usability round 2 (SUS + UEQ-S + NASA-TLX dry run) |
-| **3 Week 7 + pilot hardening** | Dec 1 – Dec 20 | §3.9–3.10 + §4.4 + email §9.4; condition B §3.14; study tasks + retention §3.18; data §3.19; accessibility audit; error/offline tests; freeze for January |
+| **3 Pilot hardening** | Dec 1 – Dec 20 | email §9.4; condition B §3.14; study tasks + retention §3.18; data §3.19; accessibility audit; error/offline tests; freeze for January |
 
 ## 14. Build order inside Phase 0
 1. Scaffold `apps/web`, tokens and fonts, base components (§8).
@@ -640,7 +655,7 @@ Plain text + one link. No images, tracking pixels or open tracking. One-tap unsu
 3. **Proposal wording:** §4.1, the control group uses a minimal SyllaByte shell (not the LMS) [Q26]. The CAT/IRT section: levels come from transparent rules; IRT fitted on pilot data evaluates them [Q36].
 4. **NYU IT:** SSO and a possible university VM (both optional).
 5. **Exact fonts and hex values** from the wireframe tool, if available (§8 uses estimates).
-6. **Traceability table:** add the new design choices (12 h / 2 per visit / 7-day next-session rules, playlist cap, Week 7 thresholds, speed cap, sentence frame, the calibration blocks).
+6. **Traceability table:** add the new design choices (12 h / 2 per visit / 7-day next-session rules, playlist cap, the adaptive-assessment settings, speed cap, sentence frame, the calibration blocks).
 
 ## 16. Decision index
 Q1 phasing (§13–14) · Q2 course content (§0, §10) · Q3 9:16 layout (§3.4) · Q4 confidence order (§3.4) ·
@@ -655,13 +670,20 @@ versions (§7.4) · Q30 data rights (§3.19) · Q31 missing/error states (§3.16
 level stability (§2) · Q34 Week 7 rule (§4.4) · Q35 calibration (§3.8) · Q36 Rasch (§4.6) · Q37
 usability tasks (§10)
 
-## 17. Implementation status (2026-10-05)
+**Superseded 2026-10-13** (see `plan/per-ku-profiling-plan.md`): Q15 (levels are per KU, §3.1b, §4.1), Q16 (no Week 7; §3.9–3.10 are now the
+check before a lecture and "What changed and why"), Q33 (levels change at lecture boundaries, §2 rule 2), Q34 (§4.4 removed), Q36 (§4.6).
+
+## 17. Implementation status (2026-10-13)
 
 **Phase 0 is built** in `apps/web` (see its README for commands). It covers §3.0–3.12, §3.15, §3.16 (except the
 IndexedDB offline queue, which only matters once there is a network), and §3.17, plus the fixture generator
 (`scripts/build_ui_fixtures.py`), the UI manifest builder (`animation_agent/ui_manifest.py`) and the learner models
 (`syllabyte_common/learner.py`). Checks: 69 unit tests, 106 Playwright tests at 390×844 and 1280×800, axe (WCAG 2.2 AA)
 clean on every route and sheet, TypeScript and ESLint clean.
+
+**Revised 2026-10-13 on branch `per-ku-profiling`:** the assessment moved to per-KU levels from adaptive tests (§4.1), Week 7 was removed (§3.9–3.10, §4.4),
+and the app was rewired: 186 unit tests, 75 Python tests, 98 Playwright tests and axe clean. The Python CAT engine and its TypeScript port agree to 1e-11 on
+140 recorded steps; the 60-item bank for the dev course is generated locally (gitignored). The statements below about Week 7 describe the earlier build.
 
 **Not built yet:** Phase 1 (FastAPI, Mongo, magic-link auth, event ingest, offline queue), Phase 2 (per-level video
 variants, instructor queue, deployment), Phase 3 (§3.14 control shell, §3.18 study tasks, ZIP export, weekly email,
@@ -691,5 +713,6 @@ researcher export). The Phase 0 "Study tasks" card and "Withdraw / Reset" flows 
 2. Read `apps/web/fixtures/_review.md` end to end (26 items, 12 claims, 4 sentence frames). The critic passed everything,
    but a quiz error in a think-aloud session derails it.
 3. Replace `content/consent.md` with the IRB-approved text.
-4. Add the new design choices to the traceability table (the 12 h / 2-per-visit / 7-day rules, playlist cap, Week 7
-   thresholds, speed cap, sentence frame, calibration blocks).
+4. Add the new design choices to the traceability table (the 12 h / 2-per-visit / 7-day rules, playlist cap, speed cap,
+   sentence frame, calibration blocks, and the adaptive-assessment settings of §5.2 with the tier offsets and fixed α; see
+   `plan/per-ku-profiling-plan.md`).

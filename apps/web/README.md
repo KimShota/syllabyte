@@ -1,8 +1,9 @@
 # SyllaByte student web app (Phase 0 prototype)
 
 The student-facing UI from `plan/ui-ux-implementation-plan.md`. **Phase 0** is a clickable prototype:
-a static Next.js site that runs the whole loop (onboarding → per-topic levels → playlist → videos
-with one quick check → Week 7 re-check) on course fixtures, with no backend. Phases 1–3 swap the
+a static Next.js site that runs the whole loop (a baseline check → a level for every Knowledge Unit → playlist →
+videos with one quick check → a short check before each lecture that updates the levels) on course fixtures, with
+no backend. Levels are measured by adaptive tests (2PL IRT), per KU: see `plan/per-ku-profiling-plan.md`. Phases 1–3 swap the
 in-browser mock for FastAPI without touching any component.
 
 ## Run it
@@ -10,6 +11,9 @@ in-browser mock for FastAPI without touching any component.
 ```bash
 # 1. once, from the repo root: build the fixtures from a finished pipeline run
 uv run python scripts/build_ui_fixtures.py --run runs/dev --out apps/web/fixtures
+# 1b. the adaptive-assessment bank (3 questions per KU). It spends LLM credits the first time; --estimate prices it first
+uv run python scripts/build_item_bank.py --estimate
+uv run python scripts/build_item_bank.py
 # (reuses runs/dev/ui_cache, so it is free after the first run; add --regen to redo the LLM part)
 
 # 2. from apps/web
@@ -30,10 +34,11 @@ you point it at.
 Hidden from students. Open it with `?demo=1` on any URL, a 1-second long-press on any course
 eyebrow (the small grey title above a heading), or `Ctrl+Alt+D`.
 
-- **Participant code** (stamped on every event), **Reset demo**, **Simulate next day** (+24 h on the app's clock).
-- **Jump to** any screen. Anything that needs onboarding fast-forwards it. The "Week 7" jumps load a
-  scripted student (`lib/api/persona.ts`) whose answers, run through the *real* rules, produce two
-  level-ups, one level-down and one unchanged topic.
+- **Participant code** (stamped on every event), **Reset demo**, **Simulate next day** (+24 h) and **Simulate next week** (+7 days: the
+  next lecture's check becomes due).
+- **Jump to** any screen. Anything that needs the baseline fast-forwards it (a scripted student: strong on lecture 1, middling on 2, weak on 3).
+  The "Lecture checks" jumps load a scripted student (`lib/api/persona.ts`), built by running the *real* API with a backdated clock, who has
+  crossed a lecture boundary: some levels went up, some down, and the "What changed and why" card is waiting.
 - **Download session log** and `/debug/events`, a live timeline of what a click logged.
 - "Log events even if consent was declined" is **on** for usability sessions; turn it off to see the research rule.
 
@@ -46,8 +51,9 @@ lib/types.ts            types shared by fixtures, state and views (mirrors packa
 lib/api/types.ts        THE contract: every method the UI may call (plan §6.1)
 lib/api/mock.ts         Phase 0 implementation of that contract, on top of lib/store.ts (localStorage)
 lib/api/client.ts       the only import components use: `api`
-lib/logic/              pure rules, unit-tested: levels, playlist, Week 7 proposals, next-day timing,
-                        calibration, tailoring receipt, time slots, .ics
+lib/logic/              pure rules, unit-tested: cat.ts (the adaptive-test engine, a port of the Python one),
+                        kuProfile.ts (levels from answers), assessment.ts (the two sittings), lectures, prereq,
+                        engagement, playlist, next-day timing, calibration, tailoring receipt
 lib/events.ts           one event shape and vocabulary in every phase (plan §6.2)
 content/consent.md      placeholder consent text: replace with the IRB-approved wording
 scripts/                copy-fixtures, check-fixtures, sync-consent, screenshots
@@ -75,9 +81,12 @@ The 37 design decisions are in the plan (§16 indexes them). The ones most likel
 
 - **9:16 video**, capped at 62% of the screen height and shorter on a phone so the controls stay in view. Nothing is drawn over the video, captions included.
 - **One quick check per video**, after the last *deliver* segment: answer → "How sure?" → result appears by itself. No "Not sure yet" there (the "Guessing" rating covers it).
-- **Levels change only at Week 7 or when the student corrects them.** Weeks 1–6 evidence only affects playlist tags.
-- **Week 7 proposal rule** (`lib/logic/proposals.ts`) reads "needs ≥ 3 answered" as: the *score* rules need 3 answered, the *"mostly Not sure"* rule needs 3 presented. Read literally, the second could never fire.
-- A hint that was visible when a student answered counts as used (half credit at Week 7), so a Level 1 student, who sees the hint inline, earns half credit for checkpoint answers.
+- **A level belongs to a Knowledge Unit, a topic is a lecture.** The student's ability (θ) is estimated per lecture from every answer on it (the baseline and checks, plus the quick check, next-day and prove-it items of its videos); a KU's level comes from its own item difficulties (the tier rule).
+- **Levels change only at a lecture boundary** (the end of a baseline or a check before a lecture) **or when the student corrects them.** In between, answers move the estimate behind the scenes but never a level the student sees. A level the student set is not overwritten.
+- **The checks are adaptive and fixed-length, with no going back.** "Not sure" counts toward the length but not the estimate. Each question is chosen when it is asked, from the answers before it, so the same answers always give the same next question.
+- **A video is made once** at the KU's level when first needed, and says so when the level has since changed. Engagement (a video stopped early, watched several times) changes what the playlist delivers, never a level.
+- A hint that was visible when a student answered counts as used, so the answer is scored as the same question made easier (`irt_hint_beta_shift`); a Level 1 student, who sees the hint inline, always has it applied.
+- **The adaptive engine exists twice**: Python (`catsim`, the engine of record) and a TypeScript port for this static site. `tests/unit/catParity.test.ts` replays 26 recorded sessions and fails on any difference in the question chosen or in θ (`uv run python scripts/make_cat_parity.py` regenerates them).
 
 ## Known issues
 
