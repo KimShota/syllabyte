@@ -1,6 +1,6 @@
 # Per-KU learner profiling with CAT: plan
 
-Branch: `per-ku-profiling` (from `main` at 2d391ce). Status: **decisions settled (2026-10-12); commits 1–6 done; 8 (docs) to go.**
+Branch: `per-ku-profiling` (from `main` at 2d391ce). Status: **decisions settled (2026-10-12); built (2026-10-13), commits 1–8 done.**
 The Figma redesign waits on this; its plan is `plan/ui-redesign-figma-plan.md` on branch `ui-improvement`.
 
 ## Why
@@ -138,7 +138,7 @@ from a fixed 8-question check, and changes it only at a student-approved Week 7 
    `/check`, start result and My levels by lecture, the check and level-update cards on the playlist. 186 unit tests
    and all e2e (incl. axe) pass.
 7. ~~Screens~~ (folded into 6).
-8. **Docs** *(next)*: `ui-ux-implementation-plan.md` (rule 1, rule 2, §3.1, §3.1b, §3.3, §3.8, §3.9–3.10 removed, §4.1,
+8. **Docs** *(done)*: `ui-ux-implementation-plan.md` (rule 1, rule 2, §3.1, §3.1b, §3.3, §3.8, §3.9–3.10 removed, §4.1,
    §4.3, §4.4 removed, §4.6, §5, §6.1 endpoints, traceability), `apps/web/README.md`.
 
 ## Needs the advisor's sign-off (proposed changes to the proposal; OSF pre-registration not filed yet)
