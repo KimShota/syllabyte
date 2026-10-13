@@ -119,10 +119,24 @@ class Segment(BaseModel):
         return " ".join(beat.narration for beat in self.beats)
 
 
+# Manim colour constants that read well on the black background (no dark _D/_E shades). WHITE stays for neutral text.
+KeyColour = Literal["BLUE", "GREEN", "YELLOW", "ORANGE", "RED", "PURPLE", "TEAL", "PINK", "GOLD"]
+
+
+class TermColour(BaseModel):
+    """One thing the video shows repeatedly (a group, a quantity) and the one colour it has in every segment."""
+
+    term: str
+    colour: KeyColour
+
+
 class Script(BaseModel):
     ku_id: str
     title: str
     segments: list[Segment]
+    # The video's colour key: every segment's animation is written separately, so without it the same thing can change
+    # colour between segments (plan/per-student-video-plan.md). Empty for scripts written before it existed.
+    colour_key: list[TermColour] = Field(default_factory=list)
 
     @property
     def word_count(self) -> int:
@@ -131,6 +145,13 @@ class Script(BaseModel):
     @property
     def full_narration(self) -> str:
         return " ".join(seg.narration for seg in self.segments)
+
+
+class RenderSegment(Segment):
+    """A segment as the animation stage sees it: with the video's colour key, so every codegen and repair prompt
+    carries it and a changed key invalidates the segment's render cache."""
+
+    colour_key: list[TermColour] = Field(default_factory=list)
 
 
 class CritiqueScore(BaseModel):

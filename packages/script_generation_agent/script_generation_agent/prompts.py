@@ -149,6 +149,9 @@ Every sentence is something a teacher says about the idea. Never narrate the ani
 "the bars grow"): say what the picture means.
 Stay with what the slides state. Do not add claims about data collection, about what is or is not observed, or \
 terms the slides do not use.
+Give the video a `colour_key`: the 2-4 things its visuals show again and again (groups, quantities, the two sides \
+of a comparison), each with its own colour. Every visual that shows one of them uses that colour, in every \
+segment, so the viewer can follow it from segment to segment.
 
 """
 

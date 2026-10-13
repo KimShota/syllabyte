@@ -39,7 +39,7 @@ from ingestion_agent.corpus import build_corpus
 from curriculum_alignment_agent.ku_extractor import extract_kus, select_kus
 from script_generation_agent.critic import write_script_with_critique
 from animation_agent.tts import build_srt, concat_wavs, synthesize_segments
-from animation_agent.renderer import render_segment
+from animation_agent.renderer import missing_latex_tools, render_segment
 from animation_agent.assemble import assemble_ku_video
 from syllabyte_common.models import (
     CourseCorpus,
@@ -47,6 +47,7 @@ from syllabyte_common.models import (
     KUList,
     RenderResult,
     RenderResultList,
+    RenderSegment,
     RunManifest,
     Script,
     Segment,
@@ -182,6 +183,12 @@ def run(args: argparse.Namespace) -> None:
         render_results_path = render_dir / "render_results.json"
         if force_from <= stage_index("animate") or not render_results_path.exists():
             log(f"[5/6] animate: rendering {len(script.segments)} segment(s), quality={args.quality}")
+            if missing := missing_latex_tools():
+                raise SystemExit(
+                    f"LaTeX is missing ({', '.join(missing)} not on PATH), so formulas can't render. "
+                    "Install it as in README.md step 2 (brew install --cask basictex, then the tlmgr "
+                    "packages) and open a new shell."
+                )
             forced = force_from <= stage_index("animate")
 
             def animate_segment(i: int, seg: Segment, audio) -> RenderResult:
@@ -207,7 +214,7 @@ def run(args: argparse.Namespace) -> None:
             # threads run them concurrently. Results keep segment order.
             with ThreadPoolExecutor(max_workers=args.parallel_segments) as pool:
                 futures = [
-                    pool.submit(animate_segment, i, seg, audio)
+                    pool.submit(animate_segment, i, RenderSegment(**seg.model_dump(), colour_key=script.colour_key), audio)
                     for i, (seg, audio) in enumerate(zip(script.segments, segment_audios))
                 ]
                 render_results = [f.result() for f in futures]

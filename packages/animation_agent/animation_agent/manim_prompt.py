@@ -179,6 +179,12 @@ short labels attached to shapes (at most 3 words each) and for formulas. \
 NEVER write the narration, a sentence, a bullet list, or a title card on \
 screen.
 
+Formulas: write each formula (anything with a subscript, superscript, bar, \
+fraction, or an operator between terms) as ONE `MathTex`, e.g. \
+`MathTex(r"\\bar{{y}}_T", "-", r"\\bar{{y}}_C")` (split it into substrings \
+when parts need their own colour). Never put `_`, `^` or LaTeX commands \
+inside `Text`, and never build a formula from separate `Text` pieces.
+
 Beats and timing (CRITICAL): the segment is a list of beats; each beat is \
 one narration sentence plus the visual shown while it is spoken, and its \
 duration is the exact length of that sentence's recorded audio.
@@ -208,8 +214,21 @@ method. No other top-level code.
 """
 
 
+def format_colour_key(segment: Segment) -> str:
+    """The video's colour key as a prompt line, or "" for a segment without one."""
+    key = getattr(segment, "colour_key", None) or []
+    if not key:
+        return ""
+    pairs = "; ".join(f"{t.term} = {t.colour}" for t in key)
+    return (
+        "Colour key for the whole video (the other segments use it too, so the viewer can follow these things "
+        f"across segments): {pairs}. Draw each of these things in exactly its colour, in every beat, and draw "
+        "nothing else in these colours.\n\n"
+    )
+
+
 def format_beats(segment: Segment, beat_durations: list[float]) -> str:
-    return "\n".join(
+    return format_colour_key(segment) + "\n".join(
         f"Beat {n} ({duration:.2f}s)\n"
         f'  narrator says (context only — do NOT put this on screen): "{beat.narration}"\n'
         f"  visual to render: {beat.visual}"

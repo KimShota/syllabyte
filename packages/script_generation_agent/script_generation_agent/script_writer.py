@@ -52,6 +52,9 @@ def gather_source_material(corpus: CourseCorpus, ku: KnowledgeUnit) -> tuple[str
     return "\n\n".join(text_parts), image_blocks
 
 
+MAX_KEY_TERMS = 4
+
+
 def validate_script(script: Script) -> list[str]:
     """Code-side checks. Returns a list of problems (empty = valid)."""
     problems: list[str] = []
@@ -67,6 +70,15 @@ def validate_script(script: Script) -> list[str]:
     actual_phases = [s.phase for s in script.segments]
     if actual_phases != expected_phases:
         problems.append(f"phase order {actual_phases} != expected {expected_phases}")
+
+    colours = [t.colour for t in script.colour_key]
+    terms = [t.term.strip().lower() for t in script.colour_key]
+    if len(script.colour_key) > MAX_KEY_TERMS:
+        problems.append(f"colour_key has {len(script.colour_key)} terms, max {MAX_KEY_TERMS}")
+    if len(set(colours)) != len(colours):
+        problems.append(f"colour_key gives two terms the same colour: {colours}")
+    if len(set(terms)) != len(terms):
+        problems.append(f"colour_key lists a term twice: {terms}")
 
     for i, seg in enumerate(script.segments):
         if not seg.source_refs:

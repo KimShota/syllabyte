@@ -161,6 +161,39 @@ def check_beat_structure(code: str, n_beats: int) -> str | None:
     return None
 
 
+# `x_T`, `x^2`, `Y_{0}`: a subscript or superscript typed into plain Text shows the `_`/`^` on screen.
+_SCRIPT_MARK_RE = re.compile(r"[^\s_^][_^][{A-Za-z0-9(]")
+_LATEX_COMMAND_RE = re.compile(r"\\[A-Za-z]+")
+_OPERATORS = {"-", "−", "+", "=", "×", "÷", "·", "/", "<", ">", "≤", "≥", "≠"}
+
+
+def check_text_formulas(code: str) -> str | None:
+    """Returns a description of the problem, or None if no formula is set as
+    plain Text. Text can't do subscripts, so a formula typed into it shows
+    literal `_`/`^` or LaTeX commands, and one built from separate Text pieces
+    (a lone "−" between two halves) falls apart when arranged; one MathTex
+    lays it out correctly."""
+    problems = []
+    for node in ast.walk(ast.parse(code)):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "Text"):
+            continue
+        if not (node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
+            continue
+        value = node.args[0].value
+        if _SCRIPT_MARK_RE.search(value) or _LATEX_COMMAND_RE.search(value):
+            problems.append(f"line {node.lineno}: Text({value!r}) types a subscript, superscript or LaTeX command")
+        elif value.strip() in _OPERATORS:
+            problems.append(f"line {node.lineno}: Text({value!r}) is a lone operator, so a formula is built from pieces")
+    if not problems:
+        return None
+    return (
+        "Formulas must be ONE MathTex, never Text: "
+        + "; ".join(problems)
+        + '. Rewrite each formula as a single MathTex (e.g. MathTex(r"\\bar{y}_T", "-", r"\\bar{y}_C"), split into '
+        "substrings when parts need their own colour), keeping its position, colours and timing."
+    )
+
+
 def generate_scene(
     segment: Segment,
     beat_durations: list[float],

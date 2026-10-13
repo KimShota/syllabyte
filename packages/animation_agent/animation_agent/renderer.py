@@ -52,6 +52,7 @@ from animation_agent.layout import BEATS_FILE, LAYOUT_REPORT_FILE, LayoutReport
 from animation_agent.manim_codegen import (
     UnsafeCodeError,
     check_beat_structure,
+    check_text_formulas,
     generate_scene,
     repair_layout,
     repair_scene,
@@ -87,14 +88,17 @@ def _find_output_mp4(render_dir: Path, class_name: str) -> Path | None:
 
 def _try_render(
     render_dir: Path, code: str, class_name: str, quality: str, n_beats: int, duration: float,
+    *, check_formulas: bool = True,
 ) -> tuple[bool, str, Path | None, LayoutReport]:
-    """Checks the beat structure, writes code to disk, and attempts a
-    render, rejecting one whose length doesn't match the narration.
-    Returns (ok, error_text, mp4_path, layout_report); the layout report is
-    only meaningful when ok."""
+    """Checks the beat structure (and, for LLM code, that no formula is set
+    as plain Text), writes code to disk, and attempts a render, rejecting one
+    whose length doesn't match the narration. Returns (ok, error_text,
+    mp4_path, layout_report); the layout report is only meaningful when ok."""
     no_report = LayoutReport([], [])
     try:
         problem = check_beat_structure(code, n_beats)
+        if problem is None and check_formulas:
+            problem = check_text_formulas(code)
     except SyntaxError as e:
         problem = f"SyntaxError: {e}"
     if problem:
@@ -195,6 +199,16 @@ class _Candidate:
     mp4_path: Path  # where manim wrote it (later renders overwrite this)
     stash: Path  # a copy that survives later attempts
     layout: LayoutReport
+
+
+LATEX_TOOLS = ("latex", "dvisvgm")
+
+
+def missing_latex_tools() -> list[str]:
+    """The LaTeX programs MathTex needs that aren't on PATH. Without them every
+    formula crashes its render, and repairs fall back to formulas typed as
+    plain Text (README: LaTeX is required)."""
+    return [tool for tool in LATEX_TOOLS if shutil.which(tool) is None]
 
 
 def render_segment(
@@ -304,7 +318,7 @@ def render_segment(
     # --- Tier 3: deterministic template fallback (always renders) ---------
     template_code = build_template_scene(segment, class_name)
     ok, template_error, mp4_path, _ = _try_render(
-        render_dir, template_code, class_name, quality, n_beats, duration,
+        render_dir, template_code, class_name, quality, n_beats, duration, check_formulas=False,
     )
     attempts += 1
     if ok:
