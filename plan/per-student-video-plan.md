@@ -116,14 +116,14 @@ an effort setting get none). Spend: ≈ $8.6 of the $10 budget.
 **After the fixes (`runs/fix-check/`, same KU, script rewritten at Level 2 with a colour key, LaTeX installed):** 86 s to video, 3/5
 segments right first time, $0.98 (script $0.23 + animation $0.75). The colour key held in every segment (T blue, C orange, κ green, selection bias
 purple), and every formula is typeset with real subscripts. Left over:
-- One formula is still split across three lines (`κ+` / `(Avg[Y₀|T]` / `− Avg[Y₀|C])`), now as separate `MathTex` pieces, which the Text-only check
-  does not see. Catchable the same way: a `MathTex` whose first piece starts, or last piece ends, with an operator.
+- One formula wraps over three lines with each line led by its operator (`κ+` / `(Avg[Y₀|T]` / `− Avg[Y₀|C])`). **Accepted (2026-10-13):** on a
+  9:16 frame a long formula has to wrap, and a line led by its operator reads correctly. What stays rejected is a lone operator as its own piece
+  between two halves, which reads as a fraction bar.
 - A "?" drawn in purple, the selection-bias colour; one segment's diagram runs past the right edge in one beat (flagged by the visual critic, not fixed).
 
 **Machine setup:** LaTeX (BasicTeX) installed 2026-10-13; `generate_shorts` now refuses to animate without it. Spend: ≈ $9.6 of the $10 budget.
 
 ## Next
 
-- Extend the formula check to split `MathTex` pieces (no spend).
 - 3. The cache and the on-demand job (built and tested with stubbed generation, no spend).
 - Further real runs need a new budget.
