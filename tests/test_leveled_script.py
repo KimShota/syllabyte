@@ -89,6 +89,14 @@ class TestPrompts:
         assert f"{lo}-{hi} words" in p
         assert "Visuals must EXPLAIN" in p and "Beats —" in p
 
+    @pytest.mark.parametrize("level", [1, 2, 3])
+    def test_the_example_writer_is_told_to_continue_the_screen_and_not_narrate_the_animation(self, level):
+        p = example_system_prompt(level)
+        assert "continue from the screen as it ended" in p
+        assert "never re-create, re-introduce or re-grow" in p
+        assert "Never narrate the animation" in p
+        assert "Stay with what the slides state" in p
+
     def test_the_levels_ask_for_different_things(self):
         u1 = build_example_prompt(KU, "{}", "M", 1, ["Earlier idea"])
         u2 = build_example_prompt(KU, "{}", "M", 2, ["Earlier idea"])

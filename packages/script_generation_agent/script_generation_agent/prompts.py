@@ -208,6 +208,15 @@ You are writing ONE segment of a script: the part where the idea is worked throu
 rest of the script is given to you. Your segment (phase="deliver") goes between the core-idea segment and the recap, \
 so continue from the core idea without repeating it, and use the same names and notation it uses.
 
+Continuity: the viewer has just watched the core-idea segment. Whatever it put on screen is still there, so \
+continue from the screen as it ended: animate changes to those objects, and never re-create, re-introduce or \
+re-grow an object, label or relation it already showed. Show a number or label only in the beat whose sentence \
+says it. Refer only to objects the earlier segments actually drew.
+Every sentence is something a teacher says about the idea. Never narrate the animation ("a ruler slides in", \
+"the bars grow"): say what the picture means.
+Stay with what the slides state. Do not add claims about data collection, about what is or is not observed, or \
+terms the slides do not use.
+
 """
         + f"""\
 Hard constraints (a segment that violates these will be rejected by an automatic checker):

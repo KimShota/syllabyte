@@ -1,6 +1,6 @@
 # Per-student video generation: plan
 
-Branch: `per-student-video` (from `main` at cb45549). Status: **design started (2026-10-13); one decision settled, nothing built.**
+Branch: `per-student-video` (from `main` at cb45549). Status: **step 2 (level in script generation) built and tried on real output (2026-10-13); steps 3–5 not started.**
 Roadmap item 4 of `plan/per-ku-profiling-plan.md`. Context: the student uploads their own course, each KU's video is made on
 demand at that student's level for that KU, and "fast" means the first video is ready within about 3 minutes of a level being set
 and each later one before the student needs it (per-KU plan D15, D16).
@@ -38,7 +38,7 @@ Implications: the first lever is capping or lowering thinking on codegen, not a 
 
 | # | Decision |
 |---|---|
-| V1 | **What differs between levels (option c):** the **hook (prepare), objective (initiate) and recap/end segments are shared across levels; only the worked-example (deliver) segment is level-specific.** Narration pace and wording follow the level too (140/155/165 words a minute for L1/L2/L3, plan §7.4), but a segment whose script text is identical across levels is the same animation. Segment renders are cached by script content (the existing `segment_render_key`), so shared segments hit the cache across levels and across students. |
+| V1 | **What differs between levels (option c), as built:** the **hook (prepare), objective (initiate) and recap/end segments are shared across levels; only the worked-example (deliver) segment is level-specific.** Narration pace and wording follow the level too (140/155/165 words a minute for L1/L2/L3, plan §7.4), but a segment whose script text is identical across levels is the same animation. Segment renders are cached by script content (the existing `segment_render_key`), so shared segments hit the cache across levels and across students. |
 
 ## Plan
 
@@ -55,5 +55,41 @@ Implications: the first lever is capping or lowering thinking on codegen, not a 
 
 ## Open questions
 
-- Budget and model choice for the speed experiments (each full video ≈ $1 on Opus 5).
+- Model choice for the speed experiments (budget: $10, user-approved; ≈ $2.8 used).
+- **Base prefetch policy:** build a KU's base script and animations lazily (when its level is first needed, slow the first time), for the upcoming
+  lecture(s) ahead of time (recommended), or for the whole course at upload (about $1 per KU, most never watched).
 - Whether the visual critic and layout audit stay on the critical path or run after the video is first made available.
+
+## Step 2 results: level in script generation (built, committed on this branch)
+
+Built: `script_generation_agent/leveled.py` (`BaseScript`, `write_base_with_critique`, `write_example`, `write_leveled_script`, `compose`),
+the base and per-level example prompts, scoped critic prompts, and 38 tests with a stubbed LLM. A script is four shared segments (hook,
+objective, core idea, recap) written **once per KU** plus one worked-example segment **per level**: Level 1 = a recap of the prerequisite (skipped
+when the KU has none) and a full step-by-step example; Level 2 = one example, key steps; Level 3 = a "what if" question. Shared segments are identical
+across levels by construction (verified on real output).
+
+Real runs on `ku-potential-outcomes` (3 levels each, Opus 5, second API key; $0.70 + $0.36 + $0.94 + $0.76 spent, ≈ $2.8 of the $10 budget with the
+ping):
+
+| Iteration | What changed | Level 1 / 2 / 3 critic |
+|---|---|---|
+| 1 | first version | pass (2 rounds) / pass / pass (2 rounds) |
+| 2 | (re-run of L1 after a no-recap fix) | **failed**: the base had unsupported claims the example loop could not fix |
+| 3 | base critiqued once on its own; per-level critic scoped to the example | fail / fail / pass (all in 2 rounds) |
+| 4 | example prompt: continue the screen, never narrate the animation, stay with the slides | **pass in 1 round** / fail (visual alignment 5–6) / **pass in 1 round** |
+
+Findings:
+- **The base needs its own critic loop**, once per KU: a flaw in a shared segment fails every level and no rewrite of the example can fix it.
+- **Critic complaints about the example are mostly continuity** (re-growing bars the base already drew, naming an object it never drew) and
+  **visuals that are text on screen**. Telling the writer to continue the screen as it ended raised first-round passes from 0/3 to 2/3.
+- **Per-call latency is 6–30 s** (write ≈ 12–30 s, critic ≈ 17–28 s); a failed round adds ≈ 40 s. One run took 734 s end to end; per-call timings
+  showed that was API latency, not the pipeline. With a cached base, a level's script costs one example write + one critic round (≈ 40 s) plus
+  rewrites. That is on the critical path to the first video, so step 4 should decide whether the example's critic runs in the background.
+- **Key architectural consequence of V1:** the base is level-independent, so its script **and its four segments' animations** can be made before the
+  student's level is known (at upload, or one lecture ahead). Once a level is set only the example segment remains: one script call, one TTS clip and
+  **one** segment of animation instead of five. That cuts the time to a first video from "all five segments" to "the slowest of one".
+
+## Next
+
+3. The cache and an on-demand job, including **base prefetch** (a policy to decide: see open questions).
+4. Speed experiments on animation code (cap thinking first), within the $10 budget.
