@@ -49,14 +49,19 @@ def codegen_max_tokens(model: str) -> int:
 
 
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
+DEFAULT_CODEGEN_EFFORT = "low"
 
 
-def codegen_effort() -> str | None:
+def codegen_effort(model: str) -> str | None:
     """Thinking effort for the calls that write Manim code (codegen and its
-    repairs), from CODEGEN_EFFORT; unset keeps the model's default. Thinking is
-    most of a codegen call's time (plan/per-student-video-plan.md)."""
-    effort = os.environ.get("CODEGEN_EFFORT") or None
-    if effort is not None and effort not in EFFORTS:
+    repairs): low by default, or CODEGEN_EFFORT. Low made a video in 89 s
+    instead of 535 s at the model's default (high) with comparable visuals
+    (plan/per-student-video-plan.md, step 4). None for models without an
+    effort setting (OpenAI-SDK backends, Haiku 4.5)."""
+    if is_openai_model(model) or model.startswith("claude-haiku-4"):
+        return None
+    effort = os.environ.get("CODEGEN_EFFORT") or DEFAULT_CODEGEN_EFFORT
+    if effort not in EFFORTS:
         raise ValueError(f"CODEGEN_EFFORT={effort!r}; expected one of {EFFORTS}")
     return effort
 
@@ -167,7 +172,7 @@ def generate_scene(
     system, user = build_generation_prompt(segment, beat_durations, class_name)
     code = text(
         content=user, system=system, stage="manim_codegen", model=model,
-        max_tokens=codegen_max_tokens(model), manifest=manifest, effort=codegen_effort(),
+        max_tokens=codegen_max_tokens(model), manifest=manifest, effort=codegen_effort(model),
     )
     return _validated(code)
 
@@ -184,7 +189,7 @@ def repair_scene(
 ) -> str:
     prompt = build_repair_prompt(code, traceback_text, segment, beat_durations, class_name)
     fixed = text(
-        content=prompt, stage="manim_repair", model=model, max_tokens=codegen_max_tokens(model), manifest=manifest, effort=codegen_effort(),
+        content=prompt, stage="manim_repair", model=model, max_tokens=codegen_max_tokens(model), manifest=manifest, effort=codegen_effort(model),
     )
     return _validated(fixed)
 
@@ -203,6 +208,6 @@ def repair_layout(
     LayoutReport.format_for_prompt()."""
     prompt = build_layout_repair_prompt(code, problems, segment, beat_durations, class_name)
     fixed = text(
-        content=prompt, stage="manim_layout_repair", model=model, max_tokens=codegen_max_tokens(model), manifest=manifest, effort=codegen_effort(),
+        content=prompt, stage="manim_layout_repair", model=model, max_tokens=codegen_max_tokens(model), manifest=manifest, effort=codegen_effort(model),
     )
     return _validated(fixed)

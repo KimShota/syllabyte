@@ -6,21 +6,27 @@ from animation_agent.manim_codegen import codegen_effort
 from syllabyte_common import llm
 
 
-def test_unset_keeps_the_model_default(monkeypatch):
+def test_unset_means_low(monkeypatch):
     monkeypatch.delenv("CODEGEN_EFFORT", raising=False)
-    assert codegen_effort() is None
+    assert codegen_effort("claude-opus-5") == "low"
 
 
 @pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh", "max"])
 def test_a_valid_effort_is_passed_on(monkeypatch, effort):
     monkeypatch.setenv("CODEGEN_EFFORT", effort)
-    assert codegen_effort() == effort
+    assert codegen_effort("claude-opus-5") == effort
 
 
 def test_a_typo_fails_loudly(monkeypatch):
     monkeypatch.setenv("CODEGEN_EFFORT", "lo")
     with pytest.raises(ValueError, match="CODEGEN_EFFORT"):
-        codegen_effort()
+        codegen_effort("claude-opus-5")
+
+
+@pytest.mark.parametrize("model", ["gpt-5.5", "gemini-3.8-flash", "local-qwen3.8-27b", "claude-haiku-4-5"])
+def test_models_without_an_effort_setting_get_none(monkeypatch, model):
+    monkeypatch.setenv("CODEGEN_EFFORT", "high")
+    assert codegen_effort(model) is None
 
 
 class _Stream:

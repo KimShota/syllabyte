@@ -175,6 +175,6 @@ Fixes to apply:
 {code}
 """
     fixed = text(
-        content=prompt, stage="visual_repair", model=model, max_tokens=codegen_max_tokens(model), manifest=manifest, effort=codegen_effort(),
+        content=prompt, stage="visual_repair", model=model, max_tokens=codegen_max_tokens(model), manifest=manifest, effort=codegen_effort(model),
     )
     return validate_generated_code(fixed)

@@ -102,7 +102,19 @@ after another on the same machine (`runs/effort-{high,medium,low}/`, local only)
 - Repairs still run at the chosen effort; the visual critic (not code) is unchanged.
 - **Spend:** these three runs $4.72 (the high run alone $2.51, above the $1 estimate); ≈ $8.0 of the $10 budget used in total.
 
+**Second KU, now the default (`runs/effort-low-2/`, `ku-selection-bias-general-formula`, existing script, 66 s of narration):** 72 s to video,
+$0.61, codegen calls 4–11 s, 5/5 real animations, 2 visual issues left (spacing in one segment). Two defects seen in its frames, neither caught by
+the checks:
+- **A formula written as plain text:** `Text("ȳ_T − ȳ_C")` shows a literal underscore instead of a subscript.
+- **Colours disagree between segments:** "treated" is green in one segment and blue in another (each segment is written independently, in parallel).
+
+Not yet known whether high effort avoids either (the earlier render of this KU predates the legibility rules, so it is not a fair comparison).
+
+**Decision (2026-10-13):** low effort is the default for code-writing calls (`DEFAULT_CODEGEN_EFFORT`; `CODEGEN_EFFORT` overrides it; models without
+an effort setting get none). Spend: ≈ $8.6 of the $10 budget.
+
 ## Next
 
-- Confirm low effort on a second KU (≈ $0.8), then make it the default for code-writing calls.
+- The two defects above: a code check that rejects `_`/`^` inside `Text(...)` (sends it to repair, no extra cost when absent), and one colour per
+  key term shared by all of a video's segments.
 - 3. The cache and the on-demand job.
