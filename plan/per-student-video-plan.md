@@ -139,4 +139,6 @@ purple), and every formula is typeset with real subscripts. Left over:
 
 ## Next
 
-- Further real runs need a new budget.
+- Step 5 (the app requests videos and shows their state) waits for the Phase 1 backend; until then the demo keeps simulating "made at level".
+- Further real runs (e.g. a whole playlist through the queue) need a new budget.
+- Then the roadmap in `plan/per-ku-profiling-plan.md`: study instruments → retention/transfer → Condition B → Figma UI.
