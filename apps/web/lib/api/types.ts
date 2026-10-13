@@ -1,7 +1,7 @@
 import type {
-  AppSettings, CalibrationView, Choice, Condition, Confidence, Course, CourseMapView, Difficulty, Item,
-  Jol, LevelProposal, LevelsView, NextSessionCardView, OnboardingResultView, PlaylistDiff, PlaylistView,
-  RecheckSlot, RecheckState, ReportCategory, TopicLevel, VariantView, ApplySnapshot, Level, DemoState,
+  AppSettings, CalibrationView, Choice, Condition, Confidence, Course, CourseMapView, DemoState, Difficulty, Item,
+  Jol, KuLevel, Level, LevelsView, LevelUpdateCard, NextSessionCardView, PlaylistView, ReportCategory, SittingView,
+  StartResultView, VariantView,
 } from "@/lib/types";
 
 /**
@@ -16,15 +16,8 @@ export interface Me {
   week: number;
   now: number;
   settings: AppSettings;
+  /** the Week 0 baseline is done, or the student set their own levels */
   onboarding_done: boolean;
-}
-
-export interface OnboardingItemView {
-  item: Item;
-  topic_title: string;
-  index: number;
-  total: number;
-  answer: Choice | undefined;
 }
 
 export interface CheckpointAnswerInput {
@@ -35,33 +28,6 @@ export interface CheckpointAnswerInput {
   latencyMs: number;
 }
 
-export interface RecheckStatusView {
-  status: RecheckState["status"];
-  week: number;
-  in_window: boolean;
-  invite_seen: boolean;
-  slot: RecheckSlot | null;
-  slot_text: string | null;
-  slots: RecheckSlot[];
-  videos_watched: number;
-  skipped_until_week: number;
-  /** a re-check card should be pinned on the playlist */
-  pinned: boolean;
-}
-
-export interface ProposalRow extends LevelProposal {
-  topic_title: string;
-}
-
-export interface ProposalsView {
-  proposals: ProposalRow[];
-  diff: PlaylistDiff;
-  applied: ApplySnapshot | null;
-  mode: RecheckState["mode"];
-  /** Undo is offered for 24 h after applying */
-  undo_available: boolean;
-}
-
 export interface Api {
   // session / first run
   getMe(): Promise<Me>;
@@ -69,20 +35,26 @@ export interface Api {
   withdrawFromResearch(deletePast: boolean): Promise<void>;
   updateSettings(patch: Partial<AppSettings>): Promise<void>;
 
-  // onboarding
-  getOnboardingItems(): Promise<OnboardingItemView[]>;
-  answerOnboarding(itemId: string, choice: Choice, latencyMs: number): Promise<void>;
-  finishOnboarding(): Promise<void>;
+  // adaptive sittings: the Week 0 baseline ("week0") and the check before a lecture ("lecture-<n>"), plan D8
+  getSitting(id: string): Promise<SittingView>;
+  /** Locks the answer: there is no going back inside a sitting (D9). Must be for the question the sitting is on. */
+  answerSitting(id: string, itemId: string, choice: Choice, latencyMs: number): Promise<void>;
+  /** Ends the sitting and publishes the levels (D11). */
+  finishSitting(id: string): Promise<void>;
+  skipSitting(id: string): Promise<void>;
   pickAllLevels(level: Level, fromQuestion: number): Promise<void>;
-  getOnboardingResult(): Promise<OnboardingResultView>;
+  getStartResult(): Promise<StartResultView>;
   keepLevels(): Promise<void>;
 
   // levels
   getLevels(): Promise<LevelsView>;
-  correctLevel(topicId: string, level: Level, reasonChip: string | null, note: string, sourceScreen: string): Promise<{ previous: TopicLevel }>;
-  restoreLevel(previous: TopicLevel): Promise<void>;
-  useSuggestedLevel(topicId: string): Promise<void>;
+  correctLevel(kuId: string, level: Level, reasonChip: string | null, note: string, sourceScreen: string): Promise<{ previous: KuLevel }>;
+  restoreLevel(previous: KuLevel): Promise<void>;
+  useSuggestedLevel(kuId: string): Promise<void>;
   getCalibration(): Promise<CalibrationView>;
+  /** The "What changed and why" card for the newest unseen lecture boundary, if any. */
+  getLevelUpdates(): Promise<LevelUpdateCard | null>;
+  dismissLevelUpdates(id: string): Promise<void>;
 
   // playlist
   getPlaylist(): Promise<PlaylistView>;
@@ -107,6 +79,8 @@ export interface Api {
   postCheckpointAnswer(a: CheckpointAnswerInput): Promise<{ correct: boolean; queuedForTomorrow: boolean }>;
   skipCheckpoint(videoId: string): Promise<void>;
   markWatched(videoId: string): Promise<void>;
+  /** How far into the video the student has got; drives "pick up where you left off" (D13). */
+  recordProgress(videoId: string, t: number, durationS: number): Promise<void>;
   postJol(videoId: string, jol: Jol): Promise<void>;
   postSelfExplanation(videoId: string, mode: "frame" | "free", blanks: string[], text: string): Promise<void>;
   postDifficulty(videoId: string, d: Difficulty): Promise<void>;
@@ -114,19 +88,6 @@ export interface Api {
   addNote(videoId: string, videoT: number, text: string): Promise<void>;
   postClaimVerdict(videoId: string, claimIdx: number, verdict: "matches" | "mismatch", note: string): Promise<void>;
   postReport(videoId: string, category: ReportCategory, videoT: number, note: string): Promise<void>;
-
-  // week 7
-  getRecheckStatus(): Promise<RecheckStatusView>;
-  markInviteSeen(): Promise<void>;
-  scheduleRecheck(slotId: RecheckSlot["id"]): Promise<{ slot: RecheckSlot; text: string; ics: string }>;
-  skipRecheck(): Promise<void>;
-  getRecheckItems(): Promise<OnboardingItemView[]>;
-  answerRecheck(itemId: string, choice: Choice, latencyMs: number): Promise<void>;
-  finishRecheck(): Promise<void>;
-  getProposals(): Promise<ProposalsView>;
-  decideProposal(topicId: string, decision: "accepted" | "kept" | "disputed", disputeText: string): Promise<void>;
-  applyDecisions(mode: "apply" | "keep_old" | "pick_myself"): Promise<void>;
-  undoApply(): Promise<void>;
 
   // data rights
   exportMyData(): Promise<Record<string, unknown>>;

@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { Loading } from "@/components/AppShell";
-import { getState, useHydrated } from "@/lib/store";
+import { getState, isOnboarded, useHydrated } from "@/lib/store";
 
 export default function Home() {
   const hydrated = useHydrated();
@@ -11,7 +11,7 @@ export default function Home() {
   useEffect(() => {
     if (!hydrated) return;
     const s = getState();
-    router.replace(s.consent === null ? "/welcome" : !s.onboarding.done ? "/onboarding" : "/playlist");
+    router.replace(s.consent === null ? "/welcome" : !isOnboarded(s) ? "/onboarding" : "/playlist");
   }, [hydrated, router]);
   return <Loading />;
 }

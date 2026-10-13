@@ -4,7 +4,7 @@ import { useState } from "react";
 import { api } from "@/lib/api/client";
 import { useQuery } from "@/lib/api/hooks";
 import { LEVEL_BLURBS, LEVEL_NAMES } from "@/lib/logic/levels";
-import type { Level, LevelsView } from "@/lib/types";
+import type { KuLevelRow, Level } from "@/lib/types";
 import { Button, ChoiceCard, SegmentedRow } from "./ui/primitives";
 import { Sheet } from "./ui/Sheet";
 import { useToast } from "./ui/Toast";
@@ -33,27 +33,28 @@ const REASONS = [
 
 /**
  * The one "Change level" sheet (plan Q14), opened from My levels ("Correct this", "Set it myself"),
- * the tailoring receipt ("This level is wrong for me") and the onboarding result ("Change a topic").
+ * the tailoring receipt ("This level is wrong for me") and the start result ("Change a concept").
+ * A level belongs to one Knowledge Unit (plan D2), so that is what a student changes.
  */
-export function ChangeLevelSheet({ topicId, onClose, sourceScreen }: { topicId: string | null; onClose: () => void; sourceScreen: string }) {
+export function ChangeLevelSheet({ kuId, onClose, sourceScreen }: { kuId: string | null; onClose: () => void; sourceScreen: string }) {
   const { data } = useQuery(() => api.getLevels(), []);
-  const row = data?.topics.find((t) => t.topic.id === topicId);
-  if (!topicId || !row) return null;
-  // keyed by topic: each opening starts from that topic's current level, with no reset effect
-  return <ChangeLevelForm key={topicId} row={row} onClose={onClose} sourceScreen={sourceScreen} />;
+  const row = data?.lectures.flatMap((l) => l.rows).find((r) => r.ku.id === kuId);
+  if (!kuId || !row) return null;
+  // keyed by KU: each opening starts from that KU's current level, with no reset effect
+  return <ChangeLevelForm key={kuId} row={row} onClose={onClose} sourceScreen={sourceScreen} />;
 }
 
-function ChangeLevelForm({ row, onClose, sourceScreen }: { row: LevelsView["topics"][number]; onClose: () => void; sourceScreen: string }) {
+function ChangeLevelForm({ row, onClose, sourceScreen }: { row: KuLevelRow; onClose: () => void; sourceScreen: string }) {
   const toast = useToast();
-  const { topic, level: current } = row;
+  const { ku, level: current } = row;
   const [level, setLevel] = useState<Level | null>(current.level);
   const [reason, setReason] = useState<string | null>(null);
   const [note, setNote] = useState("");
-  const title = topic.title;
+  const title = ku.short_title;
 
   async function save() {
     if (!level) return;
-    const { previous } = await api.correctLevel(topic.id, level, reason, note.trim(), sourceScreen);
+    const { previous } = await api.correctLevel(ku.id, level, reason, note.trim(), sourceScreen);
     onClose();
     toast({
       message: `${title} set to Level ${level} by you. Your playlist will update.`,
@@ -101,7 +102,7 @@ function ChangeLevelForm({ row, onClose, sourceScreen }: { row: LevelsView["topi
   );
 }
 
-/** "Pick my own level" / "Pick one level for everything": one level for all topics. */
+/** "Pick my own level" / "Pick one level for everything": one level for every concept. */
 export function LevelPickerSheet({ open, onClose, fromQuestion, onPicked }: { open: boolean; onClose: () => void; fromQuestion: number; onPicked: () => void }) {
   const [level, setLevel] = useState<Level | null>(null);
   return (
@@ -110,7 +111,7 @@ export function LevelPickerSheet({ open, onClose, fromQuestion, onPicked }: { op
       onOpenChange={(o) => !o && onClose()}
       eyebrow="Pick my own level"
       title="Which level suits you?"
-      description="This sets every topic. You can change any topic later."
+      description="This sets every concept. You can change any concept later."
       footer={
         <Button
           disabled={!level}

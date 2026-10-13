@@ -7,19 +7,24 @@ import type { DemoState } from "@/lib/types";
  * read through the API client, so Phase 1 can swap in FastAPI with no component
  * changes. Everything lives in localStorage under one key.
  */
-const KEY = "syllabyte.demo.v1";
+const KEY = "syllabyte.demo.v2";
 const VISIT_KEY = "syllabyte.visit";
 
 export function freshState(now = Date.now()): DemoState {
   return {
-    v: 1,
+    v: 2,
     clock_offset_ms: 0,
     semester_start: startOfWeek(now),
     participant_code: null,
     consent: null,
     condition: "A",
-    onboarding: { answers: {}, done: false, picked_own: false },
+    picked_own: false,
+    sittings: {},
     levels: {},
+    made: {},
+    progress: {},
+    level_updates: [],
+    upcoming_lecture: null,
     responses: [],
     playlist: { entries: [], manual_order: null, built_at_week: 1 },
     watched: {},
@@ -35,10 +40,14 @@ export function freshState(now = Date.now()): DemoState {
     known_videos: [],
     archived_models: [],
     settings: { captions: true, weekly_email: true },
-    recheck: { status: "idle", slot: null, invite_seen_at: null, answers: {}, proposals: [], applied: null, mode: null },
     events: [],
     flags: { log_declined: true },
   };
+}
+
+/** The student has a level for every KU: the Week 0 baseline is done, or they set their own levels. */
+export function isOnboarded(s: DemoState): boolean {
+  return Boolean(s.sittings.week0?.finished_at) || s.picked_own;
 }
 
 let state: DemoState = freshState();
@@ -131,7 +140,7 @@ export function hydrate(): void {
     const raw = window.localStorage.getItem(KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as DemoState;
-      if (parsed.v === 1) state = { ...freshState(), ...parsed };
+      if (parsed.v === 2) state = { ...freshState(), ...parsed };
     }
   } catch {
     /* corrupt or blocked storage: start fresh */

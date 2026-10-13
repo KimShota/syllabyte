@@ -19,7 +19,7 @@ def ku(id_: str, prerequisites: list[str] | None = None, bloom: str = "understan
 def course(*kus: KuEntry) -> Course:
     return Course(
         id="c", code="X", name="Course", eyebrow="COURSE", syllabus_summary="", config=CourseConfig(),
-        topics=[Topic(id="t", title="T", blurb="", ku_ids=[k.id for k in kus], first_lecture=1)],
+        topics=[Topic(id="t", title="T", ku_ids=[k.id for k in kus], first_lecture=1)],
         lectures=[Lecture(n=1, title="L1", week=1, slide_start=1, slide_end=10)],
         kus=list(kus),
     )
@@ -27,7 +27,7 @@ def course(*kus: KuEntry) -> Course:
 
 def item(**extra) -> Item:
     return Item(
-        id="i", topic_id="t", context="onboarding", stem="?", options=["a", "b", "c"], correct_index=1,
+        id="i", topic_id="t", context="assessment", stem="?", options=["a", "b", "c"], correct_index=1,
         allows_not_sure=True, explanation="because", **extra,
     )
 

@@ -118,10 +118,10 @@ class TestValidation:
         items[2].difficulty_prior = items[0].difficulty_prior - 1
         assert any("tier order" in p for p in validate_bank(items, self.KUS))
 
-    def test_rejects_legacy_items(self):
+    def test_rejects_items_that_are_not_bank_items(self):
         from syllabyte_common.learner import Item
 
-        legacy = Item(id="ob-x", topic_id="t", context="onboarding", stem="?", options=["a", "b", "c"], correct_index=0,
+        legacy = Item(id="cp-x", topic_id="t", context="checkpoint", stem="?", options=["a", "b", "c"], correct_index=0,
                       allows_not_sure=True, explanation="e")
         assert any("not a bank item" in p for p in validate_bank([legacy], []))
 

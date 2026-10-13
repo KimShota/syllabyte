@@ -1,4 +1,4 @@
-import type { Course, Item, ItemContext, KuEntry, Level, ResponseRecord } from "@/lib/types";
+import type { Course, Item, ItemContext, KuEntry, Level, LevelUpdate, ResponseRecord } from "@/lib/types";
 import { estimateTheta, readinessLevel, standardError, type Answer, type BankItem } from "./cat";
 
 /**
@@ -61,6 +61,24 @@ export function answersFor(pool: readonly { id: string }[], responses: readonly 
       outcome: r.choice === "not_sure" ? "not_sure" : r.correct ? "correct" : "wrong",
       hinted: r.hint_used,
     }));
+}
+
+export interface KuCounts {
+  right: number;
+  wrong: number;
+  notSure: number;
+}
+
+/** What the student has answered about one KU, across assessment and video items (latest answer per item). */
+export function kuCounts(kuId: string, items: Item[], responses: ResponseRecord[]): KuCounts {
+  const own = items.filter((i) => i.ku_id === kuId && EVIDENCE_CONTEXTS.includes(i.context));
+  const c: KuCounts = { right: 0, wrong: 0, notSure: 0 };
+  for (const a of answersFor(own, responses)) {
+    if (a.outcome === "not_sure") c.notSure += 1;
+    else if (a.outcome === "correct") c.right += 1;
+    else c.wrong += 1;
+  }
+  return c;
 }
 
 export interface Estimate {
@@ -182,15 +200,6 @@ export function kuLevels(input: ProfileInput): Record<string, KuLevelEstimate> {
     };
   }
   return out;
-}
-
-export interface LevelUpdate {
-  ku_id: string;
-  from: Level;
-  to: Level;
-  direction: "up" | "down";
-  /** the "What changed and why" sentence, a template over the stored counts */
-  reason: string;
 }
 
 /** What moved between the published levels and a fresh estimate (the "What changed and why" card, D11). */

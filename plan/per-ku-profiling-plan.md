@@ -1,6 +1,6 @@
 # Per-KU learner profiling with CAT: plan
 
-Branch: `per-ku-profiling` (from `main` at 2d391ce). Status: **decisions settled (2026-10-12); commits 1–5 done; 6 (wiring), 7 (screens), 8 (docs) to go.**
+Branch: `per-ku-profiling` (from `main` at 2d391ce). Status: **decisions settled (2026-10-12); commits 1–6 done; 8 (docs) to go.**
 The Figma redesign waits on this; its plan is `plan/ui-redesign-figma-plan.md` on branch `ui-improvement`.
 
 ## Why
@@ -129,11 +129,16 @@ from a fixed 8-question check, and changes it only at a student-approved Week 7 
    `prereq.ts` (prerequisite ordering and notes), `engagement.ts` (drop-off and replay signals); the adaptive-assessment
    config on `CourseConfig` (Python and TS); 58 new unit tests, including simulated students on the real bank.
    Split from the wiring so the logic is reviewed on its own and HEAD stays green.
-6. **Wiring** *(next)*: state v2 (levels keyed by KU, `made` level, progress, sittings), the mock API, lectures-as-topics
-   in the fixtures and retiring the 14 onboarding/re-check items, Week 7 removal, persona; then the screens below.
-7. **Screens:** CAT quiz (no back), pre-lecture check card, My levels by lecture, "What changed" card, onboarding
-   result; delete `/recheck/*`; e2e + axe.
-8. **Docs:** `ui-ux-implementation-plan.md` (rule 1, rule 2, §3.1, §3.1b, §3.3, §3.8, §3.9–3.10 removed, §4.1,
+6. **Wiring + screens** *(done, one commit: the screens cannot work without the state and API, so splitting them
+   would have left a red commit)*: state v2 (levels keyed by KU, `made` level, watch progress, sittings, pending level
+   updates); the mock API (`getSitting`/`answerSitting`/`finishSitting`, per-KU `correctLevel`, boundary-only
+   `publishLevels`, "What changed and why", `recordProgress`); lectures as topics in the fixtures, the 14
+   onboarding/re-check items retired, tailoring evidence per KU; Week 7 removed (routes, API, config, persona,
+   events); the scripted students rebuilt through the real API with a backdated clock; `AdaptiveQuiz` (no going back),
+   `/check`, start result and My levels by lecture, the check and level-update cards on the playlist. 186 unit tests
+   and all e2e (incl. axe) pass.
+7. ~~Screens~~ (folded into 6).
+8. **Docs** *(next)*: `ui-ux-implementation-plan.md` (rule 1, rule 2, §3.1, §3.1b, §3.3, §3.8, §3.9–3.10 removed, §4.1,
    §4.3, §4.4 removed, §4.6, §5, §6.1 endpoints, traceability), `apps/web/README.md`.
 
 ## Needs the advisor's sign-off (proposed changes to the proposal; OSF pre-registration not filed yet)
@@ -202,3 +207,20 @@ reproduce them, and the parity file pins them.
   later lectures" part cannot be exercised by the 3-lecture dev course; add it when a longer course exists.
 - **Not yet wired:** dropped-early videos go back to the top of the playlist ("pick up where you left off"); replays
   at `refresher_replay_count` queue a refresher; both need the player to record progress (commit 6).
+
+## Wiring notes (found while building commit 6)
+
+- **Prerequisites beat "upcoming lecture first".** The coin-toss video (Lecture 3) builds on two earlier videos, so a
+  student who needs all four now sees those two first. This is D14 working, and it changes the old playlist order and
+  its "why" text (which now names the pair: "“A” comes first because “B” builds on it").
+- **No second check right after the baseline.** A pre-lecture check is skipped when the Week 0 baseline already covered
+  that lecture in the same lecture week; it is due from the next week. The facilitator's "Simulate next week" moves the
+  clock a week, so the flow can be demoed and tested.
+- **A student-set level is never overwritten by a check**; only its suggestion moves ("Use suggested level").
+- **Resetting the model** archives the levels *and the check answers* and clears the check answers, so the retaken
+  baseline starts fresh; watch history, notes and video answers stay.
+- **A video stopped early** returns to the top when the playlist is read once 30 minutes have passed (not at a rebuild),
+  unless the student has set their own order.
+- **Left for later:** the My levels / start-result screens show 20 KU cards in plain styling (the Figma plan's
+  "KU row" frame still needs designing); the "What changed" list repeats the lecture in every sentence and could group
+  by lecture; `README.md` and `ui-ux-implementation-plan.md` still describe Week 7 (commit 8).

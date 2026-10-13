@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { calibrationBlock1, calibrationBlock2 } from "@/lib/logic/calibration";
-import { icsFor } from "@/lib/logic/ics";
 import { createTask, currentNextSession, isEligible } from "@/lib/logic/nextSession";
 import { changesCount, tailoringRows } from "@/lib/logic/receipt";
-import { describeSlot, recheckSlots, startOfWeek, weekOf } from "@/lib/logic/time";
+import { startOfWeek, weekOf } from "@/lib/logic/time";
 import { DAY, HOUR } from "@/lib/util";
-import { course, resp, T0, topics, video } from "./helpers";
+import { course, resp, T0, video } from "./helpers";
+import { answer, items as kuItems, kus } from "./kuHelpers";
 
 describe("next-session check (plan Q13)", () => {
   const v = video("a", "t1", 1, 6);
@@ -63,21 +63,25 @@ describe("calibration (plan Q35)", () => {
 });
 
 describe("tailoring receipt (plan §2 rule 4)", () => {
-  const v = video("a", "t1", 1, 6);
+  const v = video("ku-a", "lecture-1", 1, 6); // its evidence is ku-a: the KU itself for every row
   it("every 'why' is true to the stored answers", () => {
-    const rs = [resp("o1", "t1", "onboarding", 1), resp("o2", "t1", "onboarding", 1)];
-    const rows = tailoringRows(v, 2, topics, rs);
-    expect(rows[0].why).toBe("You answered both questions on “Causal questions” correctly.");
+    const rs = [answer("as-ku-a-basic", "right"), answer("as-ku-a-applied", "right")];
+    const rows = tailoringRows(v, 2, kus, kuItems, rs);
+    expect(rows[0].why).toBe("You answered both questions on “Short ku-a” correctly.");
     expect(rows[1].why).toBe("Standard for Level 2."); // nothing missed, so no extra example is justified
     expect(changesCount(rows)).toBe(2);
   });
   it("explains an added example by a 'Not sure' answer", () => {
-    const rows = tailoringRows(v, 2, topics, [resp("o1", "t1", "onboarding", "not_sure")]);
-    expect(rows[1].why).toBe("You marked “Not sure” on a question on “Causal questions”.");
+    const rows = tailoringRows(v, 2, kus, kuItems, [answer("as-ku-a-basic", "not_sure")]);
+    expect(rows[1].why).toBe("You marked “Not sure” on a question on “Short ku-a”.");
     expect(rows[0].why).toBe("Standard for Level 2.");
   });
+  it("counts a quick-check answer from a video as evidence about its KU, and only that KU", () => {
+    const rows = tailoringRows(v, 2, kus, kuItems, [answer("cp-ku-a", "wrong"), answer("as-ku-b-basic", "wrong")]);
+    expect(rows[1].why).toBe("You missed a question on “Short ku-a”.");
+  });
   it("falls back to 'Standard for Level N' with no evidence", () => {
-    expect(tailoringRows(v, 3, topics, []).every((r) => r.why === "Standard for Level 3.")).toBe(true);
+    expect(tailoringRows(v, 3, kus, kuItems, []).every((r) => r.why === "Standard for Level 3.")).toBe(true);
   });
 });
 
@@ -90,39 +94,5 @@ describe("time helpers", () => {
   it("startOfWeek is Monday 00:00 local", () => {
     const m = new Date(startOfWeek(at("2026-10-08T15:00:00"))); // a Thursday
     expect([m.getDay(), m.getHours()]).toEqual([1, 0]);
-  });
-  it("offers Now, Tonight, Tomorrow and Friday on a Wednesday morning", () => {
-    expect(recheckSlots(at("2026-10-07T10:00:00")).map((s) => s.id)).toEqual(["now", "tonight", "tomorrow", "friday"]);
-  });
-  it("hides 'Tonight' after 7 pm", () => {
-    expect(recheckSlots(at("2026-10-07T19:30:00")).map((s) => s.id)).toEqual(["now", "tomorrow", "friday"]);
-  });
-  it("switches Friday to Monday from Thursday on", () => {
-    for (const d of ["2026-10-08T10:00:00", "2026-10-09T10:00:00", "2026-10-10T10:00:00"]) {
-      expect(recheckSlots(at(d)).map((s) => s.id)).toContain("monday");
-    }
-    expect(recheckSlots(at("2026-10-11T10:00:00")).map((s) => s.id)).toContain("friday"); // Sunday
-  });
-  it("the Monday slot really is a Monday at 9 am", () => {
-    const m = recheckSlots(at("2026-10-09T10:00:00")).find((s) => s.id === "monday")!;
-    const d = new Date(m.at);
-    expect([d.getDay(), d.getHours()]).toEqual([1, 9]);
-  });
-  it("describes a slot in words", () => {
-    const now = at("2026-10-07T10:00:00");
-    const s = recheckSlots(now);
-    expect(describeSlot(s[1], now)).toBe("tonight at 8:00 pm");
-    expect(describeSlot(s[2], now)).toBe("tomorrow at 9:00 am");
-    expect(describeSlot(s[3], now)).toBe("Friday at 9:00 am");
-  });
-});
-
-describe("ics", () => {
-  it("makes a valid one-event file", () => {
-    const ics = icsFor({ title: "Check-in, Week 7", description: "a;b", start: T0, minutes: 5, uid: "x" });
-    expect(ics).toContain("BEGIN:VCALENDAR");
-    expect(ics).toContain("SUMMARY:Check-in\\, Week 7");
-    expect(ics).toMatch(/DTEND:\d{8}T\d{6}Z/);
-    expect(ics.endsWith("\r\n")).toBe(true);
   });
 });

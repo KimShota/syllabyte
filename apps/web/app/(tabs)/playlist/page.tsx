@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { LevelUpdatesCard } from "@/components/LevelUpdatesCard";
 import { NextSessionCard } from "@/components/NextSessionCard";
+import { PrecheckCard } from "@/components/PrecheckCard";
 import { SkipReasonSheet } from "@/components/SkipSheets";
 import { Button, Eyebrow, InfoCard, LinkButton, TextLink, Title } from "@/components/ui/primitives";
 import { Sheet } from "@/components/ui/Sheet";
@@ -17,10 +17,8 @@ import type { VideoCardView } from "@/lib/types";
 import { fmtMinutes, plural } from "@/lib/util";
 
 export default function PlaylistPage() {
-  const router = useRouter();
   const toast = useToast();
   const { data: pl } = useQuery(() => api.getPlaylist(), []);
-  const { data: recheck } = useQuery(() => api.getRecheckStatus(), []);
   const [edit, setEdit] = useState(false);
   const [menu, setMenu] = useState<VideoCardView | null>(null);
   const [skipFor, setSkipFor] = useState<{ entryId: string; title: string } | null>(null);
@@ -30,11 +28,6 @@ export default function PlaylistPage() {
   useEffect(() => {
     track("playlist_viewed", { type: "playlist" });
   }, []);
-
-  // Week 7: the invite opens full-screen once, on the first visit in the window (plan Q16).
-  useEffect(() => {
-    if (recheck && recheck.in_window && !recheck.invite_seen && recheck.status === "idle") router.replace("/recheck");
-  }, [recheck, router]);
 
   if (!pl) return null;
   const todo = pl.cards.filter((c) => c.state === "todo");
@@ -71,16 +64,8 @@ export default function PlaylistPage() {
       </p>
 
       <div className="mt-5 flex flex-col gap-3">
-        {recheck?.pinned && (
-          <InfoCard tone="teal" eyebrow="Week 7 check-in · not graded">
-            <p className="font-bold">Time to re-check your level.</p>
-            <p className="mt-1">6 questions, about 3 minutes.{recheck.slot_text ? ` Scheduled for ${recheck.slot_text}.` : ""}</p>
-            <div className="mt-3 flex flex-wrap items-center gap-4">
-              <LinkButton href="/recheck/quiz" full={false}>Start now</LinkButton>
-              <Link href="/recheck" className="inline-flex min-h-11 items-center font-semibold underline underline-offset-4 decoration-2">Change time</Link>
-            </div>
-          </InfoCard>
-        )}
+        {pl.precheck && <PrecheckCard check={pl.precheck} />}
+        <LevelUpdatesCard />
 
         <NextSessionCard />
 

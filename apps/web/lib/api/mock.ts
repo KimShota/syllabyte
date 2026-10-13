@@ -1,11 +1,12 @@
 import { track } from "@/lib/events";
-import { FIX, itemById, itemsFor, lectureByN, slideText, slideUrl, topicById, videoById } from "@/lib/fixtures";
+import { FIX, itemById, lectureByN, slideText, slideUrl, topicById, videoById } from "@/lib/fixtures";
+import { nextAssessmentItem, prelecturePlan, week0Plan, type AssessmentPlan } from "@/lib/logic/assessment";
 import { calibrationBlock1, calibrationBlock2 } from "@/lib/logic/calibration";
-import { icsFor } from "@/lib/logic/ics";
-import { onboardingLevel, overallLevel } from "@/lib/logic/levels";
+import { droppedEarly } from "@/lib/logic/engagement";
+import { kuLevels, levelUpdates } from "@/lib/logic/kuProfile";
+import { overallLevel } from "@/lib/logic/levels";
 import { createTask, currentNextSession } from "@/lib/logic/nextSession";
 import {
-  buildEntries,
   buildPlaylistState,
   displayOrder,
   servedLevel,
@@ -13,16 +14,15 @@ import {
   whyOrder,
   type BuildInput,
 } from "@/lib/logic/playlist";
-import { changedProposals, proposeLevels } from "@/lib/logic/proposals";
 import { changesCount, tailoringRows } from "@/lib/logic/receipt";
-import { describeSlot, recheckSlots, weekOf } from "@/lib/logic/time";
-import { getState, mutate, now } from "@/lib/store";
+import { weekOf } from "@/lib/logic/time";
+import { getState, isOnboarded, mutate, now } from "@/lib/store";
 import type {
-  ClaimView, Choice, DiffRow, Item, Level, PlaylistDiff, PlaylistEntry, ResponseRecord,
-  ReviewStatus, TopicLevel, Video, VideoCardView, VariantView,
+  Choice, ClaimView, Item, KuLevel, KuLevelRow, Level, LectureLevels, PlaylistEntry, PrecheckView, ResponseRecord,
+  ReviewStatus, SittingState, Video, VideoCardView, VariantView,
 } from "@/lib/types";
-import { DAY, uid } from "@/lib/util";
-import type { Api, OnboardingItemView, ProposalRow } from "./types";
+import { uid } from "@/lib/util";
+import type { Api } from "./types";
 
 // ----------------------------------------------------------------- helpers
 
@@ -31,14 +31,11 @@ const S = () => getState();
 const cfg = () => FIX.course.config;
 const week = () => weekOf(now(), S().semester_start);
 const topicTitle = (id: string) => topicById(id).title;
-
-function roundRobin(context: Item["context"]): Item[] {
-  const per = FIX.course.topics.map((t) => itemsFor(context).filter((i) => i.topic_id === t.id));
-  const out: Item[] = [];
-  const max = Math.max(0, ...per.map((a) => a.length));
-  for (let k = 0; k < max; k++) for (const list of per) if (list[k]) out.push(list[k]);
-  return out;
-}
+const lectureTitle = (n: number) => lectureByN(n).title;
+const profileInput = () => ({ course: FIX.course, items: FIX.items, responses: S().responses });
+/** The lecture whose videos are next: the schedule's, unless the demo moved it. */
+const upcoming = () => S().upcoming_lecture ?? upcomingLecture(FIX.course, week());
+const baselineDone = () => isOnboarded(S());
 
 function addResponse(
   item: Item,
@@ -50,7 +47,7 @@ function addResponse(
     id: uid("r"),
     item_id: item.id,
     topic_id: item.topic_id,
-    video_id: item.context === "onboarding" || item.context === "recheck" ? null : item.ku_id,
+    video_id: item.context === "assessment" ? null : item.ku_id,
     context: item.context,
     choice,
     correct,
@@ -79,12 +76,22 @@ function reviewMap(): Record<string, ReviewStatus> {
   return Object.fromEntries(FIX.videos.map((v) => [v.id, effectiveReview(v.id)]));
 }
 
-function buildInput(prev: PlaylistEntry[], levels = S().levels): BuildInput {
+function buildInput(prev: PlaylistEntry[]): BuildInput {
   const s = S();
   return {
-    course: FIX.course, videos: FIX.videos, items: FIX.items, levels, responses: s.responses, watched: s.watched,
-    review: reviewMap(), prev, known: s.known_videos, added: s.added_videos, week: week(),
+    course: FIX.course, videos: FIX.videos, items: FIX.items, levels: s.levels, responses: s.responses, watched: s.watched,
+    progress: s.progress, review: reviewMap(), prev, known: s.known_videos, added: s.added_videos, week: week(), now: now(),
+    upcoming: s.upcoming_lecture ?? undefined,
   };
+}
+
+const levelOf = (kuId: string): Level => S().levels[kuId]?.level ?? 2;
+
+/** A video is made once, at the KU's level when it is first needed, and never remade (plan D15). */
+function ensureMade(kuId: string): void {
+  mutate((s) => {
+    if (s.made[kuId] === undefined) s.made[kuId] = (s.levels[kuId]?.level ?? 2) as Level;
+  });
 }
 
 function rebuildPlaylist(keepManual = false): void {
@@ -92,16 +99,17 @@ function rebuildPlaylist(keepManual = false): void {
     const next = buildPlaylistState(buildInput(s.playlist.entries));
     next.manual_order = keepManual ? s.playlist.manual_order : null;
     s.playlist = next;
+    for (const e of next.entries) {
+      const ku = videoById(e.video_id).ku_id;
+      if (s.made[ku] === undefined) s.made[ku] = (s.levels[ku]?.level ?? 2) as Level;
+    }
   });
 }
 
-function levelOf(topicId: string): Level {
-  return S().levels[topicId]?.level ?? 2;
-}
-
 function card(video: Video, entry: PlaylistEntry | null): VideoCardView {
-  const level = levelOf(video.topic_id);
-  const served = servedLevel(level, [video.file_level]);
+  const level = levelOf(video.ku_id);
+  const made = S().made[video.ku_id] ?? null;
+  const served = servedLevel(made ?? level, [video.file_level]);
   return {
     entry_id: entry?.id ?? null,
     video_id: video.id,
@@ -111,9 +119,11 @@ function card(video: Video, entry: PlaylistEntry | null): VideoCardView {
     poster_url: video.poster_url,
     tag: entry?.tag ?? null,
     state: entry?.state ?? (S().watched[video.id] ? "watched" : "todo"),
+    ku_id: video.ku_id,
     topic_id: video.topic_id,
     topic_title: topicTitle(video.topic_id),
     level,
+    made_level: made,
     served_level: served.level,
     fallback_note: served.note,
     review_status: effectiveReview(video.id),
@@ -126,48 +136,100 @@ function overall(): Level | null {
   return ls.length ? overallLevel(ls) : null;
 }
 
-function levelsAfterAccepted(): Record<string, TopicLevel> {
-  const out = clone(S().levels);
-  for (const p of S().recheck.proposals) {
-    if ((p.direction === "up" || p.direction === "down") && p.decision === "accepted" && out[p.topic_id]) out[p.topic_id].level = p.to;
-  }
-  return out;
-}
-
-function computeDiff(): PlaylistDiff {
-  const s = S();
-  const accepted = new Set(s.recheck.proposals.filter((p) => p.decision === "accepted" && p.direction !== "same" && p.direction !== "not_enough").map((p) => p.topic_id));
-  const after = buildEntries(buildInput(s.playlist.entries, levelsAfterAccepted())).filter((e) => e.state !== "skipped");
-  const before = s.playlist.entries.filter((e) => e.state !== "skipped");
-  const bIds = new Set(before.map((e) => e.video_id));
-  const aIds = new Set(after.map((e) => e.video_id));
-  const row = (video_id: string, reason: string): DiffRow => ({ video_id, title: videoById(video_id).short_title, topic_title: topicTitle(videoById(video_id).topic_id), reason });
-  const lvl = levelsAfterAccepted();
-  return {
-    new: after.filter((e) => !bIds.has(e.video_id)).map((e) => row(e.video_id, e.tag === "gap" ? "Fills a gap." : e.tag === "refresher" ? "A short refresher." : "New for you.")),
-    swapped: after
-      .filter((e) => bIds.has(e.video_id) && accepted.has(videoById(e.video_id).topic_id))
-      .map((e) => row(e.video_id, `“${topicTitle(videoById(e.video_id).topic_id)}” moves to Level ${lvl[videoById(e.video_id).topic_id].level}.`)),
-    removed: before
-      .filter((e) => !aIds.has(e.video_id))
-      .map((e) => row(e.video_id, `“${topicTitle(videoById(e.video_id).topic_id)}” is at Level ${lvl[videoById(e.video_id).topic_id].level}, which you already know.`)),
-  };
-}
-
-function onboardingViews(items: Item[], answers: Record<string, Choice>): OnboardingItemView[] {
-  return items.map((item, i) => ({ item, topic_title: topicTitle(item.topic_id), index: i, total: items.length, answer: answers[item.id] }));
-}
-
 function entryFor(entryId: string): PlaylistEntry {
   const e = S().playlist.entries.find((x) => x.id === entryId);
   if (!e) throw new Error(`unknown playlist entry ${entryId}`);
   return e;
 }
 
-function describeLevelChange(topic: string, from: Level, to: Level, cause: string, at: number): string {
+// ---- levels: the published level of every KU (plan D6, D11)
+
+function kuRows(lectureN: number): KuLevelRow[] {
+  const s = S();
+  return FIX.course.kus
+    .filter((k) => k.lecture_n === lectureN && s.levels[k.id])
+    .map((ku) => ({ ku, level: s.levels[ku.id], made_level: s.made[ku.id] ?? null }));
+}
+
+function lectureLevels(): LectureLevels[] {
+  return FIX.course.lectures.map((lecture) => ({ lecture, rows: kuRows(lecture.n) })).filter((l) => l.rows.length > 0);
+}
+
+/**
+ * Publish the levels the answers so far support. Called only at a lecture boundary (the baseline, or the end of a
+ * pre-lecture check): levels never move in the middle of a lecture, so queued videos are not cancelled and the
+ * student is not surprised mid-video. A level the student set is not overwritten; only its suggestion moves.
+ * Returns what changed for KUs the model owns.
+ */
+function publishLevels(cause: "baseline" | "lecture_check"): ReturnType<typeof levelUpdates> {
+  const est = kuLevels(profileInput());
+  const before = Object.fromEntries(Object.values(S().levels).filter((l) => l.source === "model").map((l) => [l.ku_id, l.level]));
+  mutate((s) => {
+    for (const ku of FIX.course.kus) {
+      const e = est[ku.id];
+      const cur = s.levels[ku.id];
+      if (!cur) {
+        s.levels[ku.id] = {
+          ku_id: ku.id, level: e.level, source: "model", suggested_level: e.level, reason: e.reason, not_checked: e.not_checked,
+          provisional: e.provisional, history: [{ level: e.level, source: "model", at: now(), cause }],
+        };
+        continue;
+      }
+      cur.suggested_level = e.level;
+      cur.reason = e.reason;
+      cur.not_checked = e.not_checked && cur.source === "model";
+      cur.provisional = e.provisional;
+      if (cur.source === "model" && cur.level !== e.level) {
+        cur.level = e.level;
+        cur.history.push({ level: e.level, source: "model", at: now(), cause });
+      }
+    }
+  });
+  return levelUpdates(before, est, FIX.course.kus, new Map(FIX.course.lectures.map((l) => [l.n, l.title])));
+}
+
+function describeLevelChange(ku: string, from: Level, to: Level, cause: string, at: number): string {
   const wk = weekOf(at, S().semester_start);
-  const when = cause === "week7" ? "at your Week 7 check-in" : cause === "use_suggested" ? `in Week ${wk}, when you went back to our level` : `in Week ${wk}, when you changed it`;
-  return `“${topic}” went from Level ${from} to Level ${to} ${when}.`;
+  const lecture = lectureTitle(FIX.course.kus.find((k) => k.short_title === ku)?.lecture_n ?? 1);
+  const when =
+    cause === "lecture_check" ? `at your “${lecture}” check` : cause === "use_suggested" ? `in Week ${wk}, when you went back to our level` : `in Week ${wk}, when you changed it`;
+  return `“${ku}” went from Level ${from} to Level ${to} ${when}.`;
+}
+
+// ---- adaptive sittings (plan D8, D9)
+
+const sittingKind = (id: string): SittingState["kind"] => (id === "week0" ? "week0" : "lecture");
+const sittingLecture = (id: string): number | null => (id === "week0" ? null : Number(id.split("-")[1]));
+const planOf = (id: string): AssessmentPlan => (id === "week0" ? week0Plan(FIX.course) : prelecturePlan(FIX.course, sittingLecture(id)!));
+const sittingLabel = (id: string) => (id === "week0" ? "Start check" : `${lectureTitle(sittingLecture(id)!)} check`);
+
+function ensureSitting(id: string): void {
+  mutate((s) => {
+    if (!s.sittings[id]) {
+      s.sittings[id] = { id, kind: sittingKind(id), lecture_n: sittingLecture(id), answered_ids: [], started_at: now(), finished_at: null, skipped: false, week: null };
+    }
+  });
+}
+
+function currentOf(id: string) {
+  const st = S().sittings[id];
+  if (st?.finished_at) return null;
+  return nextAssessmentItem(planOf(id), st?.answered_ids.length ?? 0, profileInput());
+}
+
+/** The check before the upcoming lecture's videos, when one is due. */
+function precheck(): PrecheckView | null {
+  const s = S();
+  if (!baselineDone()) return null;
+  const n = upcoming();
+  const id = `lecture-${n}`;
+  const st = s.sittings[id];
+  if (st?.finished_at || st?.skipped) return null;
+  // the baseline just covered this lecture, in this lecture week: no second check yet
+  const w0 = s.sittings.week0;
+  if (w0?.finished_at && w0.week === week() && week0Plan(FIX.course).slots.some((x) => x.lecture_n === n)) return null;
+  if (!currentOf(id)) return null;
+  return { sitting_id: id, lecture_n: n, title: lectureTitle(n), total: planOf(id).slots.length, answered: st?.answered_ids.length ?? 0 };
 }
 
 // --------------------------------------------------------------------- api
@@ -177,7 +239,7 @@ export const mockApi: Api = {
     const s = S();
     return {
       course: FIX.course, participant_code: s.participant_code, consent: s.consent, condition: s.condition, week: week(),
-      now: now(), settings: s.settings, onboarding_done: s.onboarding.done,
+      now: now(), settings: s.settings, onboarding_done: baselineDone(),
     };
   },
 
@@ -204,113 +266,162 @@ export const mockApi: Api = {
     if (patch.captions !== undefined && patch.captions !== before.captions) track("captions_toggled", { type: "setting" }, { on: patch.captions, from: "settings" });
   },
 
-  // ---- onboarding
-  async getOnboardingItems() {
-    return onboardingViews(roundRobin("onboarding"), S().onboarding.answers);
+  // ---- adaptive sittings
+  async getSitting(id) {
+    const plan = planOf(id);
+    const st = S().sittings[id];
+    const next = currentOf(id);
+    return {
+      id, kind: sittingKind(id), lecture_n: sittingLecture(id), label: sittingLabel(id), total: plan.slots.length,
+      answered: st?.answered_ids.length ?? 0, done: Boolean(st?.finished_at) || next === null,
+      current: next ? { item: next.item, lecture_n: next.lecture_n, lecture_title: lectureTitle(next.lecture_n), role: next.role } : null,
+    };
   },
 
-  async answerOnboarding(itemId, choice, latencyMs) {
+  async answerSitting(id, itemId, choice, latencyMs) {
+    const next = currentOf(id);
+    if (!next || next.item.id !== itemId) throw new Error(`"${itemId}" is not the question sitting ${id} is on`);
+    ensureSitting(id);
     const item = itemById(itemId);
+    addResponse(item, choice, { latencyMs });
     mutate((s) => {
-      s.onboarding.answers[itemId] = choice;
+      s.sittings[id].answered_ids.push(itemId);
     });
-    addResponse(item, choice, { latencyMs, replace: true });
-    track("onboarding_answered", { type: "item", id: itemId }, { choice, topic: item.topic_id, correct: choice === "not_sure" ? null : choice === item.correct_index });
+    track("cat_answered", { type: "item", id: itemId }, {
+      sitting: id, lecture: next.lecture_n, role: next.role, tier: item.tier, choice, correct: choice === "not_sure" ? null : choice === item.correct_index,
+    });
   },
 
-  async finishOnboarding() {
+  async finishSitting(id) {
+    const st = S().sittings[id];
+    if (!st || st.finished_at) return;
     mutate((s) => {
-      for (const topic of FIX.course.topics) {
-        const r = onboardingLevel(topic, FIX.items, s.onboarding.answers, lectureByN(topic.first_lecture).title);
-        s.levels[topic.id] = {
-          topic_id: topic.id, level: r.level, source: "model", suggested_level: r.level, reason: r.reason, not_checked: r.notChecked,
-          history: [{ level: r.level, source: "model", at: now(), cause: "onboarding" }],
-        };
-      }
-      s.onboarding.done = true;
+      s.sittings[id].finished_at = now();
+      s.sittings[id].week = week();
     });
-    rebuildPlaylist();
-    for (const t of FIX.course.topics) track("level_suggested", { type: "topic", id: t.id }, { level: S().levels[t.id].level });
+    if (st.kind === "week0") {
+      publishLevels("baseline");
+      rebuildPlaylist();
+      for (const ku of FIX.course.kus) track("level_suggested", { type: "ku", id: ku.id }, { level: S().levels[ku.id].level });
+    } else {
+      const updates = publishLevels("lecture_check");
+      if (updates.length) {
+        mutate((s) => {
+          s.level_updates.push({ id: uid("lu"), lecture_n: st.lecture_n!, at: now(), updates, seen: false });
+        });
+      }
+      rebuildPlaylist();
+      track("levels_updated", { type: "lecture", id: String(st.lecture_n) }, { up: updates.filter((u) => u.direction === "up").length, down: updates.filter((u) => u.direction === "down").length });
+    }
+    track("cat_finished", { type: "sitting", id }, { answered: S().sittings[id].answered_ids.length });
+  },
+
+  async skipSitting(id) {
+    ensureSitting(id);
+    mutate((s) => {
+      s.sittings[id].skipped = true;
+    });
   },
 
   async pickAllLevels(level, fromQuestion) {
+    const est = kuLevels(profileInput());
+    ensureSitting("week0");
     mutate((s) => {
-      for (const topic of FIX.course.topics) {
-        const r = onboardingLevel(topic, FIX.items, s.onboarding.answers, lectureByN(topic.first_lecture).title);
-        s.levels[topic.id] = {
-          topic_id: topic.id, level, source: "student", suggested_level: r.level, reason: r.reason, not_checked: false,
-          history: [{ level, source: "student", at: now(), cause: "pick_all" }],
+      for (const ku of FIX.course.kus) {
+        s.levels[ku.id] = {
+          ku_id: ku.id, level, source: "student", suggested_level: est[ku.id].level, reason: est[ku.id].reason, not_checked: false,
+          provisional: false, history: [{ level, source: "student", at: now(), cause: "pick_all" }],
         };
       }
-      s.onboarding.done = true;
-      s.onboarding.picked_own = true;
+      s.picked_own = true;
+      s.sittings.week0.finished_at = now();
+      s.sittings.week0.week = week();
     });
     rebuildPlaylist();
-    track("level_corrected", { type: "all_topics" }, { to: level, source_screen: "onboarding_pick_own", at_question: fromQuestion });
+    track("level_corrected", { type: "all_kus" }, { to: level, source_screen: "onboarding_pick_own", at_question: fromQuestion });
   },
 
-  async getOnboardingResult() {
+  async getStartResult() {
     const s = S();
-    const topics = FIX.course.topics.map((topic) => ({ topic, level: s.levels[topic.id] }));
-    const checked = topics.filter((t) => t.level && !t.level.not_checked).map((t) => t.level.level);
+    const checked = Object.values(s.levels).filter((l) => !l.not_checked).map((l) => l.level);
+    const answered = s.sittings.week0?.answered_ids ?? [];
     return {
       overall_level: overallLevel(checked),
-      topics,
-      review: roundRobin("onboarding").map((item) => ({ item, choice: s.onboarding.answers[item.id] })),
+      lectures: lectureLevels(),
+      review: answered.map((id) => {
+        const r = [...s.responses].reverse().find((x) => x.item_id === id);
+        return { item: itemById(id), choice: r?.choice };
+      }),
     };
   },
 
   async keepLevels() {
-    for (const t of FIX.course.topics) track("level_kept", { type: "topic", id: t.id }, { level: S().levels[t.id]?.level });
+    track("level_kept", { type: "levels" }, { n: FIX.course.kus.length });
   },
 
   // ---- levels
   async getLevels() {
     const s = S();
-    const topics = FIX.course.topics.filter((t) => s.levels[t.id]).map((topic) => ({ topic, level: s.levels[topic.id] }));
     const lines: string[] = [];
-    for (const { topic, level } of topics) {
-      for (let i = 1; i < level.history.length; i++) lines.push(describeLevelChange(topic.title, level.history[i - 1].level, level.history[i].level, level.history[i].cause, level.history[i].at));
+    for (const l of Object.values(s.levels)) {
+      const ku = FIX.course.kus.find((k) => k.id === l.ku_id)!;
+      for (let i = 1; i < l.history.length; i++) lines.push(describeLevelChange(ku.short_title, l.history[i - 1].level, l.history[i].level, l.history[i].cause, l.history[i].at));
     }
-    const wk = week();
+    const due = precheck();
     return {
-      overall_level: overall(), topics, history_lines: lines, week: wk, recheck_status: s.recheck.status,
-      week7_applied: Boolean(s.recheck.applied) && s.recheck.mode !== "keep_old",
-      recheck_due: s.recheck.status === "skipped" && wk < cfg().recheck_skip_until_week,
+      overall_level: overall(), lectures: lectureLevels(), history_lines: lines, baseline_done: baselineDone(),
+      next_check: due ? { lecture_n: due.lecture_n, title: due.title } : null, week: week(),
     };
   },
 
-  async correctLevel(topicId, level, reasonChip, note, sourceScreen) {
-    const previous = clone(S().levels[topicId]) as TopicLevel;
+  async correctLevel(kuId, level, reasonChip, note, sourceScreen) {
+    const previous = clone(S().levels[kuId]) as KuLevel;
     const from = previous?.level;
     mutate((s) => {
-      const tl = s.levels[topicId] ?? { topic_id: topicId, level, source: "model", suggested_level: 1, reason: "", not_checked: false, history: [] };
+      const tl: KuLevel = s.levels[kuId] ?? { ku_id: kuId, level, source: "model", suggested_level: 1, reason: "", not_checked: false, provisional: false, history: [] };
       tl.level = level;
       tl.source = "student";
       tl.not_checked = false;
+      tl.provisional = false;
       tl.history.push({ level, source: "student", at: now(), cause: "student" });
-      s.levels[topicId] = tl;
+      s.levels[kuId] = tl;
     });
-    track("level_corrected", { type: "topic", id: topicId }, { from, to: level, reason: reasonChip, note, source_screen: sourceScreen });
+    track("level_corrected", { type: "ku", id: kuId }, { from, to: level, reason: reasonChip, note, source_screen: sourceScreen });
     return { previous };
   },
 
   async restoreLevel(previous) {
     mutate((s) => {
-      s.levels[previous.topic_id] = previous;
+      s.levels[previous.ku_id] = previous;
     });
-    track("undo", { type: "level", id: previous.topic_id });
+    track("undo", { type: "level", id: previous.ku_id });
   },
 
-  async useSuggestedLevel(topicId) {
+  async useSuggestedLevel(kuId) {
     mutate((s) => {
-      const tl = s.levels[topicId];
+      const tl = s.levels[kuId];
       if (!tl) return;
       tl.level = tl.suggested_level;
       tl.source = "model";
       tl.history.push({ level: tl.level, source: "model", at: now(), cause: "use_suggested" });
     });
-    track("level_corrected", { type: "topic", id: topicId }, { to: S().levels[topicId]?.level, source_screen: "use_suggested" });
+    track("level_corrected", { type: "ku", id: kuId }, { to: S().levels[kuId]?.level, source_screen: "use_suggested" });
+  },
+
+  async getLevelUpdates() {
+    const c = [...S().level_updates].reverse().find((x) => !x.seen);
+    if (!c) return null;
+    return {
+      id: c.id, lecture_n: c.lecture_n, lecture_title: lectureTitle(c.lecture_n),
+      updates: c.updates.map((u) => ({ ...u, title: FIX.course.kus.find((k) => k.id === u.ku_id)?.short_title ?? u.ku_id })),
+    };
+  },
+
+  async dismissLevelUpdates(id) {
+    mutate((s) => {
+      const c = s.level_updates.find((x) => x.id === id);
+      if (c) c.seen = true;
+    });
   },
 
   async getCalibration() {
@@ -321,11 +432,15 @@ export const mockApi: Api = {
   // ---- playlist
   async getPlaylist() {
     const s = S();
-    const upcoming = upcomingLecture(FIX.course, week());
-    if (!s.onboarding.done) {
-      return { overall_level: null, cards: [], skipped: [], why: "", manual: false, total_seconds: 0, watched_count: 0, upcoming_lecture: upcoming, current_entry_id: null, empty_message: null };
+    const upcomingN = upcoming();
+    if (!baselineDone()) {
+      return { overall_level: null, cards: [], skipped: [], why: "", manual: false, total_seconds: 0, watched_count: 0, upcoming_lecture: upcomingN, current_entry_id: null, empty_message: null, precheck: null };
     }
-    const { active, skipped } = displayOrder(s.playlist);
+    const { active: ordered, skipped } = displayOrder(s.playlist);
+    // A video the student stopped early goes back to the top as soon as the pause has passed, without waiting for a
+    // rebuild (plan D13). A manual order is the student's own and wins.
+    const stopped = new Set(ordered.filter((e) => droppedEarly(s.progress[e.video_id], Boolean(s.watched[e.video_id]), cfg(), now())).map((e) => e.video_id));
+    const active = s.playlist.manual_order ? ordered : [...ordered.filter((e) => stopped.has(e.video_id)), ...ordered.filter((e) => !stopped.has(e.video_id))];
     const current = active.find((e) => e.state === "todo")?.id ?? null;
     const cards = active.map((e) => card(videoById(e.video_id), e));
     const todo = cards.filter((c) => c.state === "todo");
@@ -333,13 +448,17 @@ export const mockApi: Api = {
       overall_level: overall(),
       cards,
       skipped: skipped.map((e) => card(videoById(e.video_id), e)),
-      why: whyOrder({ upcoming, manual: Boolean(s.playlist.manual_order), entries: active, videos: FIX.videos, topicTitle }),
+      why: whyOrder({
+        upcoming: upcomingN, manual: Boolean(s.playlist.manual_order), entries: active, videos: FIX.videos, kus: FIX.course.kus,
+        resumeIds: s.playlist.manual_order ? [] : [...stopped],
+      }),
       manual: Boolean(s.playlist.manual_order),
       total_seconds: todo.reduce((n, c) => n + c.duration_s, 0),
       watched_count: Object.keys(s.watched).length,
-      upcoming_lecture: upcoming,
+      upcoming_lecture: upcomingN,
       current_entry_id: current,
-      empty_message: active.length === 0 && skipped.length === 0 ? `Your Lecture ${upcoming} videos are being made. Check back soon.` : null,
+      empty_message: active.length === 0 && skipped.length === 0 ? `Your Lecture ${upcomingN} videos are being made. Check back soon.` : null,
+      precheck: precheck(),
     };
   },
 
@@ -459,7 +578,7 @@ export const mockApi: Api = {
             else status = "available";
           }
           return {
-            ku, topic_title: topicTitle(ku.topic_id), status,
+            ku, topic_title: lectureTitle(ku.lecture_n), status,
             video: video ? card(video, entry) : null,
             notes: video ? s.notes.filter((n) => n.video_id === video.id) : [],
           };
@@ -479,6 +598,7 @@ export const mockApi: Api = {
       }
       s.known_videos = s.known_videos.filter((id) => id !== videoId);
     });
+    ensureMade(videoById(videoId).ku_id);
     track("course_video_added", { type: "video", id: videoId });
   },
 
@@ -486,9 +606,10 @@ export const mockApi: Api = {
   async getVariant(videoId) {
     const s = S();
     const video = videoById(videoId);
-    const level = levelOf(video.topic_id);
-    const served = servedLevel(level, [video.file_level]);
-    const rows = tailoringRows(video, served.level, FIX.course.topics, s.responses);
+    const level = levelOf(video.ku_id);
+    const made = s.made[video.ku_id] ?? null;
+    const served = servedLevel(made ?? level, [video.file_level]);
+    const rows = tailoringRows(video, served.level, FIX.course.kus, FIX.items, s.responses);
     const { active } = displayOrder(s.playlist);
     const idx = active.findIndex((e) => e.video_id === videoId);
     const after = idx >= 0 ? active.slice(idx + 1).find((e) => e.state === "todo") : undefined;
@@ -505,7 +626,9 @@ export const mockApi: Api = {
     });
     const view: VariantView = {
       video,
+      ku_id: video.ku_id,
       level,
+      made_level: made,
       served_level: served.level,
       fallback_note: served.note,
       prototype_note: video.file_level !== served.level || served.note !== null,
@@ -515,8 +638,8 @@ export const mockApi: Api = {
       tailoring: rows,
       changes_count: changesCount(rows),
       claims,
-      topic_title: topicTitle(video.topic_id),
-      lecture_title: lectureByN(video.lecture_n).title,
+      topic_title: lectureTitle(video.lecture_n),
+      lecture_title: lectureTitle(video.lecture_n),
       position: idx >= 0 ? { index: idx, total: active.length } : null,
       next_video: after ? { id: after.video_id, title: videoById(after.video_id).short_title } : null,
     };
@@ -538,8 +661,16 @@ export const mockApi: Api = {
     track("checkpoint_skipped", { type: "video", id: videoId });
   },
 
+  async recordProgress(videoId, t, durationS) {
+    mutate((s) => {
+      const p = s.progress[videoId];
+      s.progress[videoId] = { max_t: Math.max(p?.max_t ?? 0, t), duration_s: durationS, last_at: now() };
+    });
+  },
+
   async markWatched(videoId) {
     const video = videoById(videoId);
+    ensureMade(video.ku_id);
     const t = now();
     mutate((s) => {
       const w = s.watched[videoId];
@@ -601,171 +732,27 @@ export const mockApi: Api = {
     track("error_reported", { type: "video", id: videoId }, { category, video_t: videoT });
   },
 
-  // ---- week 7
-  async getRecheckStatus() {
-    const s = S();
-    const wk = week();
-    const r = s.recheck;
-    const inWindow = wk >= cfg().recheck_week;
-    return {
-      status: r.status,
-      week: wk,
-      in_window: inWindow,
-      invite_seen: r.invite_seen_at !== null,
-      slot: r.slot,
-      slot_text: r.slot ? describeSlot(r.slot, now()) : null,
-      slots: recheckSlots(now()),
-      videos_watched: Object.keys(s.watched).length,
-      skipped_until_week: cfg().recheck_skip_until_week,
-      pinned: inWindow && r.invite_seen_at !== null && (r.status === "idle" || r.status === "scheduled" || r.status === "in_progress"),
-    };
-  },
-
-  async markInviteSeen() {
-    mutate((s) => {
-      if (s.recheck.invite_seen_at === null) s.recheck.invite_seen_at = now();
-    });
-  },
-
-  async scheduleRecheck(slotId) {
-    const slot = recheckSlots(now()).find((x) => x.id === slotId) ?? recheckSlots(now())[0];
-    mutate((s) => {
-      s.recheck.slot = slot;
-      s.recheck.status = slot.id === "now" ? "in_progress" : "scheduled";
-    });
-    track("recheck_scheduled", { type: "recheck" }, { slot: slot.id });
-    return {
-      slot,
-      text: describeSlot(slot, now()),
-      ics: icsFor({
-        title: `${FIX.course.name}: Week 7 check-in`, description: "6 questions, about 3 minutes. Not graded. It only retunes what comes next.",
-        start: slot.at, minutes: 5, uid: uid("recheck"),
-      }),
-    };
-  },
-
-  async skipRecheck() {
-    mutate((s) => {
-      s.recheck.status = "skipped";
-    });
-  },
-
-  async getRecheckItems() {
-    return onboardingViews(roundRobin("recheck"), S().recheck.answers);
-  },
-
-  async answerRecheck(itemId, choice, latencyMs) {
-    const item = itemById(itemId);
-    mutate((s) => {
-      s.recheck.answers[itemId] = choice;
-      s.recheck.status = "in_progress";
-    });
-    addResponse(item, choice, { latencyMs, replace: true });
-    track("recheck_answered", { type: "item", id: itemId }, { choice, correct: choice === "not_sure" ? null : choice === item.correct_index });
-  },
-
-  async finishRecheck() {
-    const s = S();
-    const proposals = proposeLevels({
-      course: FIX.course, items: FIX.items, videos: FIX.videos, responses: s.responses, levels: s.levels, watched: s.watched,
-      semesterStart: s.semester_start, now: now(),
-    });
-    mutate((st) => {
-      st.recheck.proposals = proposals;
-      st.recheck.status = "done";
-      st.recheck.applied = null;
-      st.recheck.mode = null;
-    });
-  },
-
-  async getProposals() {
-    const s = S();
-    const proposals: ProposalRow[] = s.recheck.proposals.map((p) => ({ ...p, topic_title: topicTitle(p.topic_id) }));
-    const applied = s.recheck.applied;
-    return {
-      proposals,
-      diff: computeDiff(),
-      applied,
-      mode: s.recheck.mode,
-      undo_available: Boolean(applied) && now() - applied!.at < DAY,
-    };
-  },
-
-  async decideProposal(topicId, decision, disputeText) {
-    mutate((s) => {
-      const p = s.recheck.proposals.find((x) => x.topic_id === topicId);
-      if (p) {
-        p.decision = decision;
-        p.dispute_text = decision === "disputed" ? disputeText : "";
-      }
-    });
-  },
-
-  async applyDecisions(mode) {
-    const s0 = S();
-    const changed = changedProposals(s0.recheck.proposals);
-    const diff = computeDiff();
-    const snapshot = {
-      at: now(), levels: clone(s0.levels), playlist: clone(s0.playlist),
-      summary: {
-        accepted: changed.filter((p) => p.decision === "accepted").length,
-        kept: changed.filter((p) => p.decision !== "accepted").length,
-        new: diff.new.length, swapped: diff.swapped.length, removed: diff.removed.length,
-      },
-    };
-    mutate((s) => {
-      for (const p of s.recheck.proposals) {
-        if (p.direction !== "up" && p.direction !== "down") continue;
-        if (mode === "keep_old") p.decision = "kept";
-        else if (p.decision === null) p.decision = "ignored";
-        if (mode !== "keep_old" && p.decision === "accepted") {
-          const tl = s.levels[p.topic_id];
-          if (tl) {
-            tl.level = p.to;
-            tl.suggested_level = p.to;
-            tl.source = "model";
-            tl.history.push({ level: p.to, source: "model", at: now(), cause: "week7" });
-          }
-        }
-      }
-      s.recheck.applied = snapshot;
-      s.recheck.mode = mode;
-    });
-    if (mode === "apply") rebuildPlaylist(false);
-    for (const p of S().recheck.proposals.filter((x) => x.direction === "up" || x.direction === "down")) {
-      track("proposal_decided", { type: "topic", id: p.topic_id }, { decision: p.decision, from: p.from, to: p.to });
-    }
-    track("playlist_applied", { type: "playlist" }, { mode, ...snapshot.summary });
-  },
-
-  async undoApply() {
-    const snap = S().recheck.applied;
-    if (!snap || now() - snap.at >= DAY) return;
-    mutate((s) => {
-      s.levels = snap.levels;
-      s.playlist = snap.playlist;
-      s.recheck.applied = null;
-      s.recheck.mode = null;
-      for (const p of s.recheck.proposals) p.decision = null;
-    });
-    track("undo", { type: "playlist_apply" });
-  },
-
   // ---- data rights
   async exportMyData() {
     const s = S();
     track("data_downloaded", { type: "export" });
     return {
-      profile: { levels: s.levels, overall_level: overall(), consent: s.consent, condition: s.condition },
+      profile: { levels: s.levels, made: s.made, sittings: s.sittings, overall_level: overall(), consent: s.consent, condition: s.condition },
       responses: s.responses, events: s.events, notes: s.notes, self_explanations: s.self_explanations, settings: s.settings,
     };
   },
 
   async resetModel() {
     mutate((s) => {
-      s.archived_models.push({ at: now(), levels: clone(s.levels) });
+      const assessment = s.responses.filter((r) => r.context === "assessment");
+      s.archived_models.push({ at: now(), levels: clone(s.levels), assessment_responses: assessment });
+      // start over: the retaken check draws fresh evidence; watch history, notes and video answers stay
+      s.responses = s.responses.filter((r) => r.context !== "assessment");
       s.levels = {};
-      s.onboarding = { answers: {}, done: false, picked_own: false };
+      s.made = {};
+      s.sittings = {};
+      s.level_updates = [];
+      s.picked_own = false;
       s.playlist = { entries: [], manual_order: null, built_at_week: week() };
     });
     track("model_reset", { type: "model" });

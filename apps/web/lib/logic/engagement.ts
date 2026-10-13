@@ -1,17 +1,10 @@
-import type { CourseConfig, WatchRecord } from "@/lib/types";
+import type { CourseConfig, ProgressRecord, WatchRecord } from "@/lib/types";
 import { MINUTE } from "@/lib/util";
 
 /**
  * Engagement adjusts what is delivered, never the ability estimate (plan/per-ku-profiling-plan.md D13): ability
  * comes from answers only. The thresholds are config values and appear in the plan's traceability table.
  */
-
-/** How far into a video the student has ever got. */
-export interface ProgressRecord {
-  max_t: number;
-  duration_s: number;
-  last_at: number;
-}
 
 /** Someone who stopped watching a minute ago may simply be paused; only count a video as dropped after this. */
 export const DROPOFF_GRACE_MS = 30 * MINUTE;

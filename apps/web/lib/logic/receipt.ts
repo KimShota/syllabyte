@@ -1,19 +1,20 @@
-import type { Level, ResponseRecord, TailoringRow, Topic, Video } from "@/lib/types";
-import { countsFor } from "./levels";
+import type { Item, KuEntry, Level, ResponseRecord, TailoringRow, Video } from "@/lib/types";
+import { kuCounts } from "./kuProfile";
 
 /**
  * The tailoring receipt (screen 5). The *what* comes from the video's per-level
  * skeleton; the *why* is a template over the student's own answers (plan §2 rule 4),
- * so it is true by construction.
+ * so it is true by construction. Evidence is per KU: the prerequisite for the recap rows,
+ * the KU itself for the example rows.
  */
-export function tailoringRows(video: Video, level: Level, topics: Topic[], responses: ResponseRecord[]): TailoringRow[] {
+export function tailoringRows(video: Video, level: Level, kus: KuEntry[], items: Item[], responses: ResponseRecord[]): TailoringRow[] {
   const standard = `Standard for Level ${level}.`;
   return video.tailoring[String(level) as "1" | "2" | "3"].map((row) => {
     let why = standard;
-    if (row.evidence_topic_id) {
-      const topic = topics.find((t) => t.id === row.evidence_topic_id);
-      const t = `“${topic?.title ?? "this topic"}”`;
-      const c = countsFor(row.evidence_topic_id, responses);
+    if (row.evidence_ku_id) {
+      const ku = kus.find((k) => k.id === row.evidence_ku_id);
+      const t = `“${ku?.short_title ?? "this concept"}”`;
+      const c = kuCounts(row.evidence_ku_id, items, responses);
       const total = c.right + c.wrong + c.notSure;
       if (row.kind === "left_out") {
         if (c.right >= 1 && c.wrong === 0 && c.notSure === 0) {

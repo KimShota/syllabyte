@@ -1,10 +1,11 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { LectureLevelList } from "@/components/LectureLevels";
+import { LevelUpdatesCard } from "@/components/LevelUpdatesCard";
 import { ChangeLevelSheet } from "@/components/LevelSheets";
-import { Button, Card, Eyebrow, LevelBar, TextLink, Title } from "@/components/ui/primitives";
+import { Button, Card, Eyebrow, LinkButton, TextLink, Title } from "@/components/ui/primitives";
 import { Sheet } from "@/components/ui/Sheet";
 import { api } from "@/lib/api/client";
 import { downloadText } from "@/lib/api/demo";
@@ -19,56 +20,39 @@ export default function LevelsPage() {
   const [change, setChange] = useState<string | null>(null);
   const [reset, setReset] = useState(false);
   if (!data || !cal) return null;
-  const updated = data.week7_applied;
 
   return (
     <>
       <Eyebrow data-demo-trigger>{FIX.course.eyebrow} · MY LEVELS</Eyebrow>
       <Title className="mt-1">What your videos are based on</Title>
-      <p className="mt-2 text-body text-muted">This is our best guess, not a grade. If a level looks wrong, correct it.</p>
+      <p className="mt-2 text-body text-muted">This is our best guess, not a grade. Each concept has its own level. If one looks wrong, correct it.</p>
 
       <section aria-label="Overall level" className="mt-5 rounded-card bg-ink p-5 text-white">
         <p className="eyebrow !text-white/70">Overall start level</p>
         <p className="mt-1 text-title font-extrabold">{data.overall_level ? levelLabel(data.overall_level) : "Not set yet"}</p>
         <p className="mt-1 text-body text-white/80">
-          {updated ? "Updated at your Week 7 check-in." : `Set from your Week 1 check. Next check-in: Week ${FIX.course.config.recheck_week}.`}
+          {data.next_check
+            ? `Levels update after your check for “${data.next_check.title}”.`
+            : "Levels update after each lecture's check. Videos already made keep the level they were made at."}
         </p>
       </section>
 
-      {data.recheck_due && (
+      <div className="mt-3"><LevelUpdatesCard showLink={false} /></div>
+
+      {data.next_check && (
         <div className="mt-3">
-          <Link href="/recheck/quiz" className="inline-flex min-h-14 w-full items-center justify-center rounded-btn bg-primary px-6 font-bold text-white">
-            Do the Week 7 check-in
-          </Link>
+          <LinkButton href={`/check?l=${data.next_check.lecture_n}`}>Do the check for “{data.next_check.title}”</LinkButton>
         </div>
       )}
 
-      <ul className="mt-4 flex flex-col gap-3">
-        {data.topics.map(({ topic, level }) => (
-          <li key={topic.id}>
-            <Card className={level.not_checked ? "border-dashed border-muted/60" : ""}>
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="text-card font-bold">{topic.title}</h2>
-                <TextLink onClick={() => setChange(topic.id)}>{level.not_checked ? "Set it myself" : "Correct this"}</TextLink>
-              </div>
-              {!level.not_checked && (
-                <div className="mt-2 flex items-center gap-4">
-                  <LevelBar level={level.level} />
-                  <span className="font-bold">Level {level.level}</span>
-                </div>
-              )}
-              {level.source === "student" ? (
-                <p className="mt-3 text-body">
-                  Set by you.{" "}
-                  <TextLink className="!min-h-0" onClick={() => void api.useSuggestedLevel(topic.id)}>Use suggested level (Level {level.suggested_level})</TextLink>
-                </p>
-              ) : (
-                <p className="mt-3 text-body text-ink/85">{level.reason}</p>
-              )}
-            </Card>
-          </li>
-        ))}
-      </ul>
+      <div className="mt-6">
+        <LectureLevelList
+          lectures={data.lectures}
+          action={(r) => (r.level.not_checked ? "Set it myself" : "Correct this")}
+          onAction={setChange}
+          onUseSuggested={(id) => void api.useSuggestedLevel(id)}
+        />
+      </div>
 
       <Card className="mt-3">
         <h2 className="eyebrow mb-2">How sure you were, and how often you were right</h2>
@@ -107,7 +91,7 @@ export default function LevelsPage() {
       )}
 
       <Card className="mt-3">
-        <h2 className="eyebrow mb-2">You, since Week 1</h2>
+        <h2 className="eyebrow mb-2">You, since your first check</h2>
         {data.history_lines.length ? (
           <ul className="flex flex-col gap-1.5 text-body">{data.history_lines.map((l) => <li key={l}>{l}</li>)}</ul>
         ) : (
@@ -120,7 +104,7 @@ export default function LevelsPage() {
         <TextLink tone="ink" onClick={() => setReset(true)}>Reset my model</TextLink>
       </div>
 
-      <ChangeLevelSheet topicId={change} onClose={() => setChange(null)} sourceScreen="my_levels" />
+      <ChangeLevelSheet kuId={change} onClose={() => setChange(null)} sourceScreen="my_levels" />
 
       <Sheet
         open={reset}

@@ -8,7 +8,7 @@ export type Level = 1 | 2 | 3;
 export type Confidence = "guess" | "pretty" | "certain";
 export type Choice = number | "not_sure";
 export type ItemContext =
-  | "onboarding" | "checkpoint" | "recheck" | "next_session" | "prove_it" | "retention"
+  | "checkpoint" | "next_session" | "prove_it" | "retention"
   /** the per-KU item bank: Week 0 baseline, pre-lecture checks and review questions */
   | "assessment";
 /** Bloom's taxonomy level of a Knowledge Unit (mirrors syllabyte_common.models.BloomLevel). */
@@ -46,10 +46,11 @@ export interface Item {
   source_refs: SlideRef[];
 }
 
+/** A topic is a lecture (plan/per-ku-profiling-plan.md D2): the unit one CAT ability is estimated for. */
 export interface Topic {
+  /** "lecture-<n>" */
   id: string;
   title: string;
-  blurb: string;
   ku_ids: string[];
   first_lecture: number;
 }
@@ -75,11 +76,6 @@ export interface KuEntry {
 }
 
 export interface CourseConfig {
-  recheck_week: number;
-  recheck_skip_until_week: number;
-  recheck_up_threshold: number;
-  recheck_down_threshold: number;
-  recheck_min_answers: number;
   playlist_max_videos: number;
   playlist_max_seconds: number;
   next_session_min_hours: number;
@@ -145,7 +141,8 @@ export interface TailoringSkeleton {
   kind: TailoringKind;
   what: string;
   dimension: "recap" | "example" | "support";
-  evidence_topic_id: string | null;
+  /** the KU whose answers the receipt cites for this row */
+  evidence_ku_id: string | null;
 }
 
 export interface SentenceFrame {
@@ -208,7 +205,7 @@ export interface ResponseRecord {
   at: number;
 }
 
-export type LevelCause = "onboarding" | "student" | "week7" | "reset" | "use_suggested" | "pick_all";
+export type LevelCause = "baseline" | "lecture_check" | "student" | "reset" | "use_suggested" | "pick_all";
 
 export interface LevelChange {
   level: Level;
@@ -217,15 +214,19 @@ export interface LevelChange {
   cause: LevelCause;
 }
 
-export interface TopicLevel {
-  topic_id: string;
+/** One Knowledge Unit's level (plan D6): published at lecture boundaries, correctable by the student any time. */
+export interface KuLevel {
+  ku_id: string;
   level: Level;
   source: "model" | "student";
-  /** what the model proposed; used by "Use suggested level" */
+  /** what the model would set now; used by "Use suggested level" */
   suggested_level: Level;
+  /** a template over the stored answers (plan §2 rule 4) */
   reason: string;
-  /** no onboarding evidence yet (dashed card on My levels) */
+  /** nothing answered anywhere yet (dashed card on My levels) */
   not_checked: boolean;
+  /** the level rests on other lectures' answers: this lecture has not been asked about yet */
+  provisional: boolean;
   history: LevelChange[];
 }
 
@@ -300,46 +301,43 @@ export interface SelfExplanationRecord {
 
 export type Difficulty = "too_easy" | "just_right" | "too_hard";
 
-export type ProposalDirection = "up" | "down" | "same" | "not_enough";
-export type ProposalDecision = "accepted" | "kept" | "disputed" | "ignored";
+/** How far into a video the student has ever got (drives "pick up where you left off", plan D13). */
+export interface ProgressRecord {
+  max_t: number;
+  duration_s: number;
+  last_at: number;
+}
 
-export interface LevelProposal {
-  topic_id: string;
+/** One adaptive sitting: the Week 0 baseline or a pre-lecture check (plan D8). */
+export interface SittingState {
+  id: string;
+  kind: "week0" | "lecture";
+  lecture_n: number | null;
+  /** ids of the items answered so far, in order; a sitting is just its plan and these */
+  answered_ids: string[];
+  started_at: number;
+  finished_at: number | null;
+  skipped: boolean;
+  /** the lecture week it was finished in */
+  week: number | null;
+}
+
+/** A KU level that moved at a lecture boundary: one row of the "What changed and why" card. */
+export interface LevelUpdate {
+  ku_id: string;
   from: Level;
   to: Level;
-  direction: ProposalDirection;
-  score: number | null;
-  answered: number;
-  correct: number;
-  not_sure: number;
+  direction: "up" | "down";
+  /** a template over the stored counts */
   reason: string;
-  /** "You set this level in Week 3" */
-  note: string | null;
-  decision: ProposalDecision | null;
-  dispute_text: string;
 }
 
-export interface RecheckSlot {
-  id: "now" | "tonight" | "tomorrow" | "friday" | "monday";
-  label: string;
+export interface PendingLevelUpdates {
+  id: string;
+  lecture_n: number;
   at: number;
-}
-
-export interface ApplySnapshot {
-  at: number;
-  levels: Record<string, TopicLevel>;
-  playlist: PlaylistState;
-  summary: { accepted: number; kept: number; new: number; swapped: number; removed: number };
-}
-
-export interface RecheckState {
-  status: "idle" | "scheduled" | "in_progress" | "done" | "skipped";
-  slot: RecheckSlot | null;
-  invite_seen_at: number | null;
-  answers: Record<string, Choice>;
-  proposals: LevelProposal[];
-  applied: ApplySnapshot | null;
-  mode: "apply" | "keep_old" | "pick_myself" | null;
+  updates: LevelUpdate[];
+  seen: boolean;
 }
 
 export interface PlaylistState {
@@ -354,14 +352,13 @@ export interface AppSettings {
 }
 
 export type EventVerb =
-  | "consent_given" | "onboarding_answered" | "level_suggested" | "level_kept" | "level_corrected"
+  | "consent_given" | "cat_answered" | "cat_finished" | "level_suggested" | "levels_updated" | "level_kept" | "level_corrected"
   | "playlist_viewed" | "reordered" | "skipped" | "skip_reason" | "undo" | "prove_it_result"
   | "video_play" | "video_pause" | "video_seek" | "video_ended" | "speed_changed" | "captions_toggled"
   | "transcript_opened" | "note_saved" | "checkpoint_shown" | "checkpoint_answered" | "checkpoint_skipped"
   | "hint_used" | "rewatch_part" | "receipt_opened" | "full_version_requested" | "about_opened"
   | "claim_slide_viewed" | "claim_verdict" | "error_reported" | "difficulty_rated" | "jol_answered"
-  | "self_explanation_saved" | "next_session_answered" | "course_video_added" | "recheck_scheduled"
-  | "recheck_answered" | "proposal_decided" | "playlist_applied" | "data_downloaded" | "model_reset";
+  | "self_explanation_saved" | "next_session_answered" | "course_video_added" | "data_downloaded" | "model_reset";
 
 export interface AppEvent {
   id: string;
@@ -380,14 +377,25 @@ export interface AppEvent {
 }
 
 export interface DemoState {
-  v: 1;
+  v: 2;
   clock_offset_ms: number;
   semester_start: number;
   participant_code: string | null;
   consent: null | "research" | "no_research";
   condition: Condition;
-  onboarding: { answers: Record<string, Choice>; done: boolean; picked_own: boolean };
-  levels: Record<string, TopicLevel>;
+  /** the student set one level for everything instead of taking the baseline ("Pick my own level") */
+  picked_own: boolean;
+  /** adaptive sittings by id: "week0" and "lecture-<n>" */
+  sittings: Record<string, SittingState>;
+  /** the published level of every KU; changes only at lecture boundaries or when the student corrects it */
+  levels: Record<string, KuLevel>;
+  /** the level each KU's video was made at for this student; a video is made once and never remade (D15) */
+  made: Record<string, Level>;
+  progress: Record<string, ProgressRecord>;
+  /** "What changed and why" cards, newest last */
+  level_updates: PendingLevelUpdates[];
+  /** demo override: the lecture treated as upcoming (null = from the schedule) */
+  upcoming_lecture: number | null;
   responses: ResponseRecord[];
   playlist: PlaylistState;
   watched: Record<string, WatchRecord>;
@@ -403,9 +411,8 @@ export interface DemoState {
   /** videos skipped as "I already know this" with the prove-it passed */
   known_videos: string[];
   /** models archived by "Reset my model" (kept for the study, plan Q30) */
-  archived_models: { at: number; levels: Record<string, TopicLevel> }[];
+  archived_models: { at: number; levels: Record<string, KuLevel>; assessment_responses: ResponseRecord[] }[];
   settings: AppSettings;
-  recheck: RecheckState;
   events: AppEvent[];
   /** one-time UI flags */
   flags: Record<string, boolean>;
@@ -424,10 +431,14 @@ export interface VideoCardView {
   poster_url: string;
   tag: PlaylistTag | null;
   state: "todo" | "watched" | "skipped";
+  ku_id: string;
+  /** the lecture (topic) this video belongs to */
   topic_id: string;
   topic_title: string;
-  /** the level the student's topic is at */
+  /** the level the student's KU is at now */
   level: Level;
+  /** the level this video was made at for the student; null until it has been made (a video is made once, D15) */
+  made_level: Level | null;
   /** the level of the file actually served (fallback toward more support) */
   served_level: Level;
   fallback_note: string | null;
@@ -446,6 +457,8 @@ export interface PlaylistView {
   upcoming_lecture: number;
   current_entry_id: string | null;
   empty_message: string | null;
+  /** the check before the upcoming lecture's videos, when one is due */
+  precheck: PrecheckView | null;
 }
 
 export interface TailoringRow {
@@ -464,7 +477,9 @@ export interface ClaimView extends Claim {
 
 export interface VariantView {
   video: Video;
+  ku_id: string;
   level: Level;
+  made_level: Level | null;
   served_level: Level;
   fallback_note: string | null;
   prototype_note: boolean;
@@ -480,21 +495,67 @@ export interface VariantView {
   next_video: { id: string; title: string } | null;
 }
 
-export interface OnboardingResultView {
+/** One KU on My levels / the start result: its published level and the level its video was made at. */
+export interface KuLevelRow {
+  ku: KuEntry;
+  level: KuLevel;
+  made_level: Level | null;
+}
+
+export interface LectureLevels {
+  lecture: Lecture;
+  rows: KuLevelRow[];
+}
+
+export interface StartResultView {
   overall_level: Level;
-  topics: { topic: Topic; level: TopicLevel }[];
+  lectures: LectureLevels[];
   review: { item: Item; choice: Choice | undefined }[];
 }
 
 export interface LevelsView {
   overall_level: Level | null;
-  topics: { topic: Topic; level: TopicLevel }[];
+  lectures: LectureLevels[];
   history_lines: string[];
-  recheck_due: boolean;
-  recheck_status: RecheckState["status"];
-  /** the student applied Week 7 level changes (not just took the re-check) */
-  week7_applied: boolean;
+  baseline_done: boolean;
+  /** the lecture whose check updates the levels next, if one is coming */
+  next_check: { lecture_n: number; title: string } | null;
   week: number;
+}
+
+/** The question a sitting is on, or nothing when it is over. */
+export interface SittingView {
+  id: string;
+  kind: SittingState["kind"];
+  lecture_n: number | null;
+  /** "Lecture 3 check" */
+  label: string;
+  total: number;
+  answered: number;
+  done: boolean;
+  current: {
+    item: Item;
+    lecture_n: number;
+    lecture_title: string;
+    role: "new" | "review";
+  } | null;
+}
+
+/** The check before the upcoming lecture's videos, shown at the top of the playlist when it is due. */
+export interface PrecheckView {
+  sitting_id: string;
+  lecture_n: number;
+  title: string;
+  total: number;
+  answered: number;
+}
+
+/** The "What changed and why" card (plan D11). */
+export interface LevelUpdateCard {
+  id: string;
+  lecture_n: number;
+  lecture_title: string;
+  updates: (LevelUpdate & { title: string })[];
 }
 
 export interface CalibrationView {
@@ -527,17 +588,4 @@ export interface CourseMapRow {
 
 export interface CourseMapView {
   lectures: { lecture: Lecture; rows: CourseMapRow[] }[];
-}
-
-export interface DiffRow {
-  video_id: string;
-  title: string;
-  topic_title: string;
-  reason: string;
-}
-
-export interface PlaylistDiff {
-  new: DiffRow[];
-  swapped: DiffRow[];
-  removed: DiffRow[];
 }

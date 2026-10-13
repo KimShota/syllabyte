@@ -17,15 +17,15 @@ export async function jump(page: Page, label: string) {
 /** Verbs of every event stored so far (the demo's local log). Persistence is debounced, so wait for it. */
 export async function loggedVerbs(page: Page): Promise<string[]> {
   await page.waitForTimeout(150);
-  return page.evaluate(() => (JSON.parse(localStorage.getItem("syllabyte.demo.v1") ?? "{}").events ?? []).map((e: { verb: string }) => e.verb));
+  return page.evaluate(() => (JSON.parse(localStorage.getItem("syllabyte.demo.v2") ?? "{}").events ?? []).map((e: { verb: string }) => e.verb));
 }
 
 export async function stateOf(page: Page) {
   await page.waitForTimeout(120); // persistence is debounced
-  return page.evaluate(() => JSON.parse(localStorage.getItem("syllabyte.demo.v1") ?? "{}"));
+  return page.evaluate(() => JSON.parse(localStorage.getItem("syllabyte.demo.v2") ?? "{}"));
 }
 
-/** Fast-forwards onboarding (mixed answers) and lands on the playlist. */
+/** Fast-forwards the Week 0 baseline (a mixed student) and lands on the playlist. */
 export async function toPlaylist(page: Page) {
   await jump(page, "Playlist");
   await expect(page.getByRole("heading", { name: "Your playlist" })).toBeVisible();
@@ -56,4 +56,18 @@ export async function finishVideo(page: Page, videoId: string) {
   await toEnd();
   await page.getByRole("button", { name: "Skip this check" }).click();
   await expect(page).toHaveURL(/watch\/done/, { timeout: 20000 });
+}
+
+/** Opens the demo menu on any screen and runs one tool (e.g. "Simulate next week (+7 days)"). */
+export async function demoTool(page: Page, label: string, path = "/playlist") {
+  await page.goto(`${path}${path.includes("?") ? "&" : "?"}demo=1`);
+  await page.getByRole("button", { name: label, exact: true }).click();
+  await page.waitForLoadState("networkidle");
+}
+
+/** Answers the question a sitting is on with its first option (or "Not sure yet"), then presses the footer button. */
+export async function answerCurrent(page: Page, how: "first" | "not_sure" = "first") {
+  if (how === "not_sure") await page.getByRole("button", { name: "Not sure yet" }).click();
+  else await page.locator('section[aria-labelledby="q-stem"] [role=group] button').first().click();
+  await page.getByRole("button", { name: /^(Next|See my levels|Start the lecture)$/ }).click();
 }

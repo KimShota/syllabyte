@@ -24,7 +24,11 @@ export function ReceiptSheet({ variant, onClose, onFull, onWrongLevel }: { varia
       onOpenChange={(o) => !o && onClose()}
       eyebrow="How this video was tailored"
       title={`${variant.video.short_title}, for Level ${variant.served_level}`}
-      description={`Made from your “${variant.topic_title}” level and your last answers. You can undo any of it.`}
+      description={
+        variant.made_level !== null && variant.made_level !== variant.level
+          ? `Made when you were at Level ${variant.made_level} on this concept. You are now Level ${variant.level}. A video is made once, so it keeps its level; new videos use your new one.`
+          : `Made from your Level ${variant.level} on this concept and your last answers. You can undo any of it.`
+      }
       footer={
         <div className="flex flex-col gap-2.5">
           <Button onClick={onFull}>Show the full version ({fmtMinutes(variant.video.duration_s)})</Button>

@@ -29,8 +29,10 @@ test("first-run screens", async ({ page }) => {
 });
 
 test("the tabs, the result screen and their sheets", async ({ page }) => {
-  await jump(page, "Onboarding result");
+  await jump(page, "Start result");
   await clean(page, "/onboarding/result");
+  await page.getByRole("button", { name: "See each concept" }).first().click();
+  await clean(page, "/onboarding/result, a lecture open");
   await toPlaylist(page);
   await clean(page, "/playlist");
   await page.getByRole("button", { name: /^More options for/ }).first().click();
@@ -38,7 +40,7 @@ test("the tabs, the result screen and their sheets", async ({ page }) => {
   await page.keyboard.press("Escape");
   await page.goto("/levels");
   await clean(page, "/levels");
-  await page.getByRole("button", { name: "Correct this" }).first().click();
+  await page.getByRole("button", { name: /^Correct this/ }).first().click();
   await clean(page, "change level sheet");
   await page.keyboard.press("Escape");
   await page.goto("/course");
@@ -81,19 +83,19 @@ test("the quick check, unanswered and revealed", async ({ page }) => {
   await clean(page, "quick check, revealed");
 });
 
-test("Week 7 screens", async ({ page }) => {
-  await jump(page, "Week 7 invite");
-  await clean(page, "/recheck");
-  await page.goto("/recheck/quiz");
-  await clean(page, "/recheck/quiz");
-  await jump(page, "Week 7 results");
-  await clean(page, "/recheck/results");
-  await page.getByRole("button", { name: "Tell us why we are wrong" }).first().click();
-  await clean(page, "/recheck/results dispute field");
-  await page.goto("/recheck/changes");
-  await clean(page, "/recheck/changes");
-  await jump(page, "My levels, Week 7 student");
-  await clean(page, "/levels (Week 7)");
+test("the lecture check, its card, and the card that says what changed", async ({ page }) => {
+  await jump(page, "Check due");
+  await expect(page.getByText("A quick check before this lecture.")).toBeVisible();
+  await clean(page, "/playlist with the check card");
+  await jump(page, "Lecture 3 check quiz");
+  await clean(page, "/check");
+  await page.getByRole("button", { name: "Not sure yet" }).click();
+  await clean(page, "/check answered");
+  await jump(page, "Levels changed");
+  await expect(page.getByText("What changed and why")).toBeVisible();
+  await clean(page, "/playlist with the what-changed card");
+  await jump(page, "My levels, mid-course student");
+  await clean(page, "/levels (mid-course)");
 });
 
 test("the facilitator pages", async ({ page }) => {

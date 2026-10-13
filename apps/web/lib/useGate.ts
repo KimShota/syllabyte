@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
-import { getState, useHydrated } from "@/lib/store";
+import { getState, isOnboarded, useHydrated } from "@/lib/store";
 
 /**
  * Sends the student to the first-run screen they still owe (Welcome → Consent → Onboarding)
@@ -13,7 +13,7 @@ export function useGate(need: "consent" | "onboarded"): boolean {
   const hydrated = useHydrated();
   const router = useRouter();
   const s = getState();
-  const ok = need === "consent" ? s.consent !== null : s.consent !== null && s.onboarding.done;
+  const ok = need === "consent" ? s.consent !== null : s.consent !== null && isOnboarded(s);
   useEffect(() => {
     if (!hydrated || ok) return;
     router.replace(s.consent === null ? "/welcome" : "/onboarding");

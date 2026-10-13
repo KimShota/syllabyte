@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { nextAssessmentItem, prelecturePlan, week0Plan, type AssessmentPlan } from "@/lib/logic/assessment";
@@ -13,9 +13,8 @@ const have = existsSync(resolve(dir, "bank.json")) && existsSync(resolve(dir, "c
 
 describe.skipIf(!have)("per-KU profiling on the real bank", () => {
   async function load() {
-    const { FIX } = await import("@/lib/fixtures");
-    const bank: Item[] = JSON.parse(readFileSync(resolve(dir, "bank.json"), "utf8"));
-    return { course: FIX.course as Course, items: [...FIX.items, ...bank] };
+    const { FIX } = await import("@/lib/fixtures"); // the item list already includes the bank
+    return { course: FIX.course as Course, items: FIX.items };
   }
 
   /** A deterministic student: right exactly when their ability reaches the item's difficulty. */

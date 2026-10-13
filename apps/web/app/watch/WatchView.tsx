@@ -41,7 +41,7 @@ function WatchBody({ vid, initialSheet }: { vid: string | null; initialSheet: Sh
   const [phase, setPhase] = useState<"watching" | "check">("watching");
   const [armed, setArmed] = useState(true);
   const [sheet, setSheet] = useState<Sheet>(initialSheet);
-  const [changeTopic, setChangeTopic] = useState<string | null>(null);
+  const [changeKu, setChangeKu] = useState<string | null>(null);
   const [fullNote, setFullNote] = useState(false);
   const ended = useRef(false);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -57,6 +57,26 @@ function WatchBody({ vid, initialSheet }: { vid: string | null; initialSheet: Sh
     setTime(t);
     setPlaying(p);
   }, []);
+
+  // How far the student has got, every 5 s of playback and when they leave: a video stopped early goes back to
+  // the top of the playlist to pick up again (plan D13).
+  const latest = useRef({ t: 0, id: "", dur: 0 });
+  const recorded = useRef(-1);
+  useEffect(() => {
+    if (!variant) return;
+    latest.current = { t: time, id: variant.video.id, dur: variant.video.duration_s };
+    const bucket = Math.floor(time / 5);
+    if (!playing || bucket === recorded.current) return;
+    recorded.current = bucket;
+    void api.recordProgress(variant.video.id, time, variant.video.duration_s);
+  }, [time, playing, variant]);
+  useEffect(
+    () => () => {
+      const { t, id, dur } = latest.current;
+      if (id && t > 0) void api.recordProgress(id, t, dur);
+    },
+    [],
+  );
 
   const toggle = useCallback(() => {
     if (!frame.current) return;
@@ -241,7 +261,7 @@ function WatchBody({ vid, initialSheet }: { vid: string | null; initialSheet: Sh
           }}
           onWrongLevel={() => {
             setSheet(null);
-            setChangeTopic(v.topic_id);
+            setChangeKu(v.ku_id);
           }}
         />
       )}
@@ -267,7 +287,7 @@ function WatchBody({ vid, initialSheet }: { vid: string | null; initialSheet: Sh
       {sheet === "report" && <ReportSheet variant={variant} time={frame.current?.time() ?? time} onClose={() => setSheet(null)} />}
       {sheet === "transcript" && <TranscriptSheet variant={variant} time={time} onSeek={(t) => frame.current?.seek(t)} onClose={() => setSheet(null)} />}
       {sheet === "notes" && <NotesSheet variant={variant} time={time} onSeek={(t) => { frame.current?.seek(t); setSheet(null); }} onClose={() => setSheet(null)} />}
-      <ChangeLevelSheet topicId={changeTopic} onClose={() => setChangeTopic(null)} sourceScreen="receipt" />
+      <ChangeLevelSheet kuId={changeKu} onClose={() => setChangeKu(null)} sourceScreen="receipt" />
     </Screen>
   );
 }

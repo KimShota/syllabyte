@@ -65,7 +65,7 @@ export function SkipReasonSheet({ entryId, title, onClose }: { entryId: string |
         <ChoiceCard notSure selected={reason === "rather_not_say"} onClick={() => setReason("rather_not_say")}>Rather not say</ChoiceCard>
       </div>
       <InfoCard tone="grey" title="If you pick “I already know this”" className="mt-4">
-        We will offer a one-question check so you can prove it and drop the topic&apos;s level work. You can say no.
+        We will offer a one-question check so you can prove it and drop this concept&apos;s level work. You can say no.
       </InfoCard>
     </Sheet>
   );

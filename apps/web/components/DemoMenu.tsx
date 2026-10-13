@@ -3,9 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api/client";
-import { downloadText, fastOnboard, loadPersona, resetDemo, sessionLogJson, setLogDeclined, setParticipantCode, showEmptyPlaylist, simulateNextDay } from "@/lib/api/demo";
+import { downloadText, fastOnboard, loadPersona, resetDemo, sessionLogJson, setLogDeclined, setParticipantCode, showEmptyPlaylist, simulateNextDay, simulateNextWeek } from "@/lib/api/demo";
 import { FIX } from "@/lib/fixtures";
-import { getState, useEventCount, useStoreVersion } from "@/lib/store";
+import { getState, isOnboarded, useEventCount, useStoreVersion } from "@/lib/store";
 import { Button, SegmentedRow, TextLink } from "./ui/primitives";
 import { Sheet } from "./ui/Sheet";
 
@@ -70,7 +70,7 @@ function DemoMenu({ onClose }: { onClose: () => void }) {
     if (getState().consent === null) await api.postConsent(true);
   };
   const onboarded = async () => {
-    if (!getState().onboarding.done) await fastOnboard();
+    if (!isOnboarded(getState())) await fastOnboard();
   };
   const first = FIX.videos[0];
 
@@ -80,8 +80,8 @@ function DemoMenu({ onClose }: { onClose: () => void }) {
       items: [
         { label: "Welcome", run: () => go("/welcome") },
         { label: "Consent", run: () => go("/consent") },
-        { label: "Onboarding quiz", run: () => go("/onboarding", ensureConsent) },
-        { label: "Onboarding result", run: () => go("/onboarding/result", onboarded) },
+        { label: "Baseline check", run: () => go("/onboarding", ensureConsent) },
+        { label: "Start result", run: () => go("/onboarding/result", onboarded) },
       ],
     },
     {
@@ -104,12 +104,12 @@ function DemoMenu({ onClose }: { onClose: () => void }) {
       ],
     },
     {
-      title: "Week 7 (scripted student)",
+      title: "Lecture checks (scripted student)",
       items: [
-        { label: "Week 7 invite", run: () => go("/recheck", () => loadPersona("invite")) },
-        { label: "Week 7 re-check quiz", run: () => go("/recheck/quiz", () => loadPersona("invite")) },
-        { label: "Week 7 results", run: () => go("/recheck/results", () => loadPersona("results")) },
-        { label: "My levels, Week 7 student", run: () => go("/levels", () => loadPersona("results")) },
+        { label: "Check due", run: () => go("/playlist", () => loadPersona("precheck")) },
+        { label: "Lecture 3 check quiz", run: () => go("/check?l=3", () => loadPersona("precheck")) },
+        { label: "Levels changed", run: () => go("/playlist", () => loadPersona("midcourse")) },
+        { label: "My levels, mid-course student", run: () => go("/levels", () => loadPersona("midcourse")) },
       ],
     },
   ];
@@ -142,6 +142,7 @@ function DemoMenu({ onClose }: { onClose: () => void }) {
         <section aria-label="Tools" className="flex flex-col gap-3">
           <h3 className="eyebrow">Tools</h3>
           <Button variant="secondary" onClick={() => { simulateNextDay(); onClose(); }}>Simulate next day (+24 h)</Button>
+          <Button variant="secondary" onClick={() => { simulateNextWeek(); onClose(); }}>Simulate next week (+7 days)</Button>
           <div>
             <p className="mb-1 font-bold">Log events even if consent was declined</p>
             <SegmentedRow label="Log declined" value={s.flags.log_declined ? "on" : "off"} onChange={(v) => setLogDeclined(v === "on")} options={[{ value: "on", label: "On (usability sessions)" }, { value: "off", label: "Off (research rule)" }]} />

@@ -16,7 +16,7 @@ from syllabyte_common.models import BloomLevel, SlideRef
 
 Level = Literal[1, 2, 3]
 ItemContext = Literal[
-    "onboarding", "checkpoint", "recheck", "next_session", "prove_it", "retention",
+    "checkpoint", "next_session", "prove_it", "retention",
     # the per-KU item bank: Week 0 baseline, pre-lecture checks and review questions (plan D4, D8)
     "assessment",
 ]
@@ -75,9 +75,10 @@ class Item(BaseModel):
 
 
 class Topic(BaseModel):
-    id: str
+    """A topic is a lecture (plan D2): the unit one CAT ability is estimated for."""
+
+    id: str  # "lecture-<n>"
     title: str
-    blurb: str
     ku_ids: list[str]
     first_lecture: int
 
@@ -106,11 +107,6 @@ class KuEntry(BaseModel):
 
 
 class CourseConfig(BaseModel):
-    recheck_week: int = 7
-    recheck_skip_until_week: int = 9
-    recheck_up_threshold: float = 0.8
-    recheck_down_threshold: float = 0.4
-    recheck_min_answers: int = 3
     playlist_max_videos: int = 6
     playlist_max_seconds: int = 600
     next_session_min_hours: int = 12
@@ -211,7 +207,7 @@ class TailoringSkeleton(BaseModel):
     kind: TailoringKind
     what: str
     dimension: Literal["recap", "example", "support"]
-    evidence_topic_id: str | None = None
+    evidence_ku_id: str | None = None
 
 
 class SentenceFrame(BaseModel):

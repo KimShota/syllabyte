@@ -1,17 +1,20 @@
 import type {
   Course,
   Item,
+  KuEntry,
   Level,
   PlaylistEntry,
   PlaylistState,
   PlaylistTag,
+  ProgressRecord,
   ResponseRecord,
   ReviewStatus,
-  TopicLevel,
   Video,
   WatchRecord,
 } from "@/lib/types";
 import { joinAnd } from "@/lib/util";
+import { droppedEarly, replayedMany } from "./engagement";
+import { orderByPrerequisites, prerequisiteNotes } from "./prereq";
 
 /** The lecture whose videos are "new". Phase 0 pins it (the fixture has 3 lectures). */
 export function upcomingLecture(course: Course, week: number): number {
@@ -25,15 +28,20 @@ export interface BuildInput {
   course: Course;
   videos: Video[];
   items: Item[];
-  levels: Record<string, TopicLevel>;
+  /** the published level of every KU */
+  levels: Record<string, { level: Level }>;
   responses: ResponseRecord[];
   watched: Record<string, WatchRecord>;
+  progress: Record<string, ProgressRecord>;
   review: Record<string, ReviewStatus>;
   prev: PlaylistEntry[];
   /** videos skipped as "I already know this" with the prove-it passed */
   known: string[];
   added: string[];
   week: number;
+  now: number;
+  /** the lecture treated as upcoming, when not taken from the schedule (the demo's "next lecture") */
+  upcoming?: number;
 }
 
 function firstSlide(v: Video): number {
@@ -52,21 +60,22 @@ export function missedVideo(video: Video, responses: ResponseRecord[]): boolean 
 }
 
 /**
- * Plan §4.3. Tags:
- *   gap        unwatched, and the topic is at Level 1
- *   new        unwatched, from the upcoming lecture
- *   refresher  watched, and the topic is a gap or the student missed it — but only
- *              once every gap/new video has been watched or skipped (first pass first)
+ * Plan §4.3, with per-KU levels (plan/per-ku-profiling-plan.md D13, D14). Tags:
+ *   gap        unwatched, and the video's KU is at Level 1
+ *   new        unwatched, from the upcoming lecture (or one the student started and left, to pick up again)
+ *   refresher  watched, and the KU is at Level 1, or the student missed it, or watched it several times (it did
+ *              not stick): only added once every gap/new video is watched or skipped (first pass first)
  *   you_added  put there from the Course map
- * Order: gaps (upcoming lecture first, then earlier slides = prerequisites first) →
- * new → refreshers → you_added. Cap: 6 videos or 600 s, whichever comes first.
+ * Order inside a group: prerequisites first (the KU graph), then the upcoming lecture's gaps, then earlier slides.
+ * A video the student stopped watching early goes to the very top. Cap: 6 videos or 600 s, whichever comes first.
  */
 export function buildEntries(input: BuildInput): PlaylistEntry[] {
-  const { course, videos, levels, responses, watched, review, prev } = input;
-  const upcoming = upcomingLecture(course, input.week);
+  const { course, videos, levels, responses, watched, review, prev, progress } = input;
+  const upcoming = input.upcoming ?? upcomingLecture(course, input.week);
   const eligibleLectures = new Set([upcoming, upcoming - 1, upcoming - 2].filter((n) => n >= 1));
   const prevSkipped = new Map(prev.filter((e) => e.state === "skipped").map((e) => [e.video_id, e]));
-  const levelOf = (topicId: string) => levels[topicId]?.level ?? 1;
+  const levelOf = (v: Video) => levels[v.ku_id]?.level ?? 1;
+  const dropped = (v: Video) => droppedEarly(progress[v.id], Boolean(watched[v.id]), course.config, input.now);
 
   const candidates = videos.filter(
     (v) => eligibleLectures.has(v.lecture_n) && review[v.id] !== "hidden" && !input.known.includes(v.id) && !prevSkipped.has(v.id),
@@ -75,24 +84,25 @@ export function buildEntries(input: BuildInput): PlaylistEntry[] {
   const byTag: Record<Exclude<PlaylistTag, "you_added">, Video[]> = { gap: [], new: [], refresher: [] };
   for (const v of candidates) {
     const isWatched = Boolean(watched[v.id]);
-    const weak = levelOf(v.topic_id) === 1 || missedVideo(v, responses);
-    if (!isWatched && levelOf(v.topic_id) === 1) byTag.gap.push(v);
-    else if (!isWatched && v.lecture_n === upcoming) byTag.new.push(v);
+    const weak = levelOf(v) === 1 || missedVideo(v, responses) || replayedMany(watched[v.id], course.config);
+    if (!isWatched && levelOf(v) === 1) byTag.gap.push(v);
+    else if (!isWatched && (v.lecture_n === upcoming || dropped(v))) byTag.new.push(v);
     else if (isWatched && weak) byTag.refresher.push(v);
   }
 
   const bySlide = (a: Video, b: Video) => firstSlide(a) - firstSlide(b);
-  byTag.gap.sort((a, b) => Number(b.lecture_n === upcoming) - Number(a.lecture_n === upcoming) || bySlide(a, b));
-  byTag.new.sort(bySlide);
-  byTag.refresher.sort(bySlide);
+  const gapOrder = (a: Video, b: Video) => Number(b.lecture_n === upcoming) - Number(a.lecture_n === upcoming) || bySlide(a, b);
+  const prereqFirst = (list: Video[], cmp: (a: Video, b: Video) => number) => orderByPrerequisites(list, (v) => v.ku_id, course.kus, cmp);
 
   // First pass first: refreshers wait until every gap/new video is watched or skipped.
   const firstPassDone = [...byTag.gap, ...byTag.new].every((v) => watched[v.id]);
-  const ordered: { video: Video; tag: PlaylistTag }[] = [
-    ...byTag.gap.map((video) => ({ video, tag: "gap" as const })),
-    ...byTag.new.map((video) => ({ video, tag: "new" as const })),
-    ...(firstPassDone ? byTag.refresher.map((video) => ({ video, tag: "refresher" as const })) : []),
+  const grouped: { video: Video; tag: PlaylistTag }[] = [
+    ...prereqFirst(byTag.gap, gapOrder).map((video) => ({ video, tag: "gap" as const })),
+    ...prereqFirst(byTag.new, bySlide).map((video) => ({ video, tag: "new" as const })),
+    ...(firstPassDone ? prereqFirst(byTag.refresher, bySlide).map((video) => ({ video, tag: "refresher" as const })) : []),
   ];
+  // Left a video early: it goes back to the top, ahead of the cap, to pick up where it stopped.
+  const ordered = [...grouped.filter((o) => dropped(o.video)), ...grouped.filter((o) => !dropped(o.video))];
 
   // Cap: 6 videos or max_seconds, whichever first (always keep at least one).
   const capped: typeof ordered = [];
@@ -149,7 +159,9 @@ export function whyOrder(args: {
   manual: boolean;
   entries: PlaylistEntry[];
   videos: Video[];
-  topicTitle: (id: string) => string;
+  kus: KuEntry[];
+  /** videos the student stopped partway: they are back at the top */
+  resumeIds?: string[];
 }): string {
   if (args.manual) return "You set this order. Use “Reset to suggested order” to go back to ours.";
   const byVideo = (e: PlaylistEntry) => args.videos.find((v) => v.id === e.video_id)!;
@@ -157,15 +169,21 @@ export function whyOrder(args: {
   const hasNew = args.entries.some((e) => e.tag === "new");
   const hasRefresher = args.entries.some((e) => e.tag === "refresher");
   if (args.entries.length === 0) return `Lecture ${args.upcoming} is next.`;
-  const gapTopics = [...new Set(gaps.map((e) => args.topicTitle(byVideo(e).topic_id)))];
+  const gapNames = [...new Set(gaps.map((e) => byVideo(e).short_title))];
+  const shown = gapNames.length > 3 ? `${gapNames.slice(0, 3).join(", ")} and ${gapNames.length - 3} more` : joinAnd(gapNames);
   let text = `Lecture ${args.upcoming} is next`;
-  if (gapTopics.length) text += `, and your levels show ${joinAnd(gapTopics)} ${gapTopics.length === 1 ? "as a gap" : "as gaps"}`;
+  if (gapNames.length) text += `, and your levels show ${shown} ${gapNames.length === 1 ? "as a gap" : "as gaps"}`;
   text += ".";
   if (gaps.length && hasNew) text += ` We put those first, then new videos from Lecture ${args.upcoming}`;
   else if (gaps.length) text += " We put those first";
   else if (hasNew) text += ` Here are its new videos`;
   if (hasRefresher) text += gaps.length || hasNew ? ", then a short refresher" : " Here is a short refresher";
   if (gaps.length || hasNew || hasRefresher) text += ".";
+  const resumed = (args.resumeIds ?? []).map((id) => args.videos.find((v) => v.id === id)?.short_title).filter(Boolean) as string[];
+  if (resumed.length) text += ` You stopped ${joinAnd(resumed.map((t) => `“${t}”`))} partway, so ${resumed.length === 1 ? "it is" : "they are"} back at the top.`;
+  const ku = (id: string) => args.kus.find((k) => k.id === id)?.short_title ?? id;
+  const notes = prerequisiteNotes(args.entries.filter((e) => e.state !== "skipped").map(byVideo), (v) => v.ku_id, args.kus, ku, 1);
+  if (notes.length) text += ` ${notes[0]}`;
   return text;
 }
 

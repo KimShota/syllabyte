@@ -24,8 +24,8 @@ describe("evidence for a lecture", () => {
     expect(bankItems(course, items, 1).every((i) => i.context === "assessment")).toBe(true);
   });
 
-  it("ignores contexts that are not about a KU (retention, onboarding)", () => {
-    const stray = { ...bank[0], id: "x", context: "onboarding" as const };
+  it("ignores contexts that are not about a KU (retention)", () => {
+    const stray = { ...bank[0], id: "x", context: "retention" as const };
     expect(evidenceItems(course, [...items, stray], 1).map((i) => i.id)).not.toContain("x");
   });
 });

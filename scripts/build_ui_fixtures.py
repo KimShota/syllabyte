@@ -8,14 +8,14 @@ Build the Phase 0 UI fixtures (plan §10) from a finished pipeline run.
 What it does
   1. UI manifest per rendered video (poster, VTT, segment spans, checkpoint time,
      transcript) — no LLM (animation_agent/ui_manifest.py).
-  2. Course structure: the topic grouping and the invented 3-lecture schedule are
-     AUTHOR DECISIONS written below (TOPICS / LECTURES), not LLM output.
-  3. Items and claims via the LLM, grounded only in the cited slides, then checked by
-     a critic pass; one regeneration if the critic objects:
-       per topic  -> onboarding items + re-check items
+  2. Course structure: the invented 3-lecture schedule (LECTURES below) is an AUTHOR DECISION, not LLM output.
+     A topic is a lecture (plan/per-ku-profiling-plan.md D2): one per lecture, holding that lecture's KUs.
+  3. Video items and claims via the LLM, grounded only in the cited slides, then checked by a critic pass;
+     one regeneration if the critic objects:
        per video  -> checkpoint, next-session and prove-it items, a sentence
                      frame for screen 7, and one claim per deliver/end segment.
      Results are cached in <run>/ui_cache/ so re-running costs nothing (--regen to redo).
+     The adaptive-assessment items (three per KU) are made by scripts/build_item_bank.py into bank.json.
   4. Writes apps/web/fixtures/{course,items,videos,slides}.json and _review.md.
 
 The persona's history (levels, calibration, Week 7 story) is hand-written in the web
@@ -30,7 +30,7 @@ import json
 import sys
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -71,30 +71,6 @@ SYLLABUS_SUMMARY = (
     "and are meant to sit alongside the lectures, not replace them."
 )
 
-# topic id -> (title, blurb, [KU ids]). Onboarding: 2 items per topic. Re-check: 6 total.
-TOPICS: dict[str, tuple[str, str, list[str]]] = {
-    "causal-questions": (
-        "Causal questions", "Turning a question about cause into something you can measure.",
-        ["ku-random-assignment-origin", "ku-health-insurance-question",
-         "ku-outcome-measure-health-index", "ku-treatment-control-sample",
-         "ku-reading-difference-table", "ku-apples-oranges-confounders"],
-    ),
-    "potential-outcomes": (
-        "Potential outcomes", "The two worlds behind every cause-and-effect claim.",
-        ["ku-potential-outcomes", "ku-individual-causal-effect",
-         "ku-fundamental-problem-observable-outcome", "ku-naive-comparison-timmy-spike"],
-    ),
-    "selection-bias": (
-        "Selection bias", "Why comparing the insured with the uninsured misleads.",
-        ["ku-selection-bias-decomposition", "ku-selection-bias-general-formula",
-         "ku-law-of-large-numbers", "ku-lln-eliminates-selection-bias"],
-    ),
-    "randomization": (
-        "Randomization in practice", "How a coin toss fixes selection bias, and how to check it did.",
-        ["ku-coin-toss-average-causal-effect", "ku-balance-checking", "ku-rand-hie-design",
-         "ku-rand-hie-balance-tables", "ku-rand-hie-results", "ku-summary-avoiding-selection-bias"],
-    ),
-}
 # Short names for cards, headers and receipts (the full KU title is a sentence).
 SHORT_TITLES: dict[str, str] = {
     "ku-random-assignment-origin": "Random assignment",
@@ -118,9 +94,6 @@ SHORT_TITLES: dict[str, str] = {
     "ku-rand-hie-results": "RAND results",
     "ku-summary-avoiding-selection-bias": "Avoiding selection bias: summary",
 }
-
-RECHECK_PER_TOPIC = {"causal-questions": 1, "potential-outcomes": 2, "selection-bias": 2, "randomization": 1}
-ONBOARDING_PER_TOPIC = 2
 
 # Invented schedule: the single deck is split into three "lectures".
 LECTURES = [
@@ -148,16 +121,6 @@ Rules:
 - difficulty_prior: your estimate on a logit scale, -2 (very easy) to 2 (hard); 0 is medium.
 - Write math as plain text (for example "Y1 - Y0"), never LaTeX.
 - Keep options short (under 14 words each)."""
-
-
-class TopicMCQ(MCQ):
-    ku_id: str
-    slides: list[int]
-
-
-class TopicGen(BaseModel):
-    onboarding: list[TopicMCQ]
-    recheck: list[TopicMCQ]
 
 
 class ClaimGen(BaseModel):
@@ -188,23 +151,6 @@ CRITIC_SYSTEM = """You check quiz items and factual claims against course materi
 For every item verify: (1) the keyed answer is correct according to the material; (2) no other option is also defensible; (3) the wrong options are not secretly correct; (4) the stem is self-contained and unambiguous.
 For every claim verify it is a statement the cited narration actually makes and the slides support, with no added facts.
 Return one verdict per id. Set ok=false only for a real problem and say what it is in one sentence."""
-
-
-def topic_prompt(topic_id: str, kus: list[KnowledgeUnit], slide_text: str, extra: str = "") -> str:
-    title = TOPICS[topic_id][0]
-    ku_lines = "\n".join(f"- {k.id}: {k.title} — {k.summary} (slides {[r.slide_number for r in k.source_refs]})" for k in kus)
-    return f"""Topic: "{title}".
-
-Knowledge units in this topic:
-{ku_lines}
-
-Return exactly {ONBOARDING_PER_TOPIC} questions in the `onboarding` list and exactly {RECHECK_PER_TOPIC[topic_id]} question(s) in the `recheck` list. The `recheck` list must not be empty.
-- Onboarding questions find out what a student might already know BEFORE the lecture: the first is foundational, the second a little harder. They must be answerable by someone who has seen the idea before, not trick questions.
-- Re-check questions come mid-semester, after the videos: they test understanding of this topic and must not repeat an onboarding question.
-- For each question set ku_id (the knowledge unit it is grounded in) and slides (the slide numbers that support it).
-
-Slides (text and images follow):
-{slide_text}{extra}"""
 
 
 def video_prompt(ku: KnowledgeUnit, script: dict, slide_text: str, claim_segments: list[int], last_deliver: int, extra: str = "") -> str:
@@ -312,26 +258,28 @@ def balance_positions(items: list[Item]) -> None:
 # --------------------------------------------------------------------------
 
 
-def tailoring_for(ku: KnowledgeUnit, topic_id: str, kus: dict[str, KnowledgeUnit], ku_topic: dict[str, str]) -> dict[str, list[TailoringSkeleton]]:
+def tailoring_for(ku: KnowledgeUnit, kus: dict[str, KnowledgeUnit]) -> dict[str, list[TailoringSkeleton]]:
+    """What differs at each level. The evidence is per KU (plan D2): the first prerequisite for the recap rows, the
+    KU itself for the example rows, so the receipt can cite the student's own answers about exactly those concepts."""
     prereq = kus.get(ku.prerequisites[0]) if ku.prerequisites else None
-    prereq_topic = ku_topic.get(prereq.id, topic_id) if prereq else topic_id
+    prereq_ku = prereq.id if prereq else ku.id
     recap = f"The full recap of “{SHORT_TITLES[prereq.id]}”" if prereq else "A recap of the basics"
     short_recap = f"A short recap of “{SHORT_TITLES[prereq.id]}”" if prereq else "A short recap of the basics"
     S = TailoringSkeleton
     return {
         "1": [
-            S(kind="added", what=short_recap, dimension="recap", evidence_topic_id=prereq_topic),
-            S(kind="added", what="A full, step-by-step worked example", dimension="example", evidence_topic_id=topic_id),
+            S(kind="added", what=short_recap, dimension="recap", evidence_ku_id=prereq_ku),
+            S(kind="added", what="A full, step-by-step worked example", dimension="example", evidence_ku_id=ku.id),
             S(kind="set_to", what=f"Hint shown with the question, about {PACE_WPM[1]} words a minute", dimension="support"),
         ],
         "2": [
-            S(kind="left_out", what=recap, dimension="recap", evidence_topic_id=prereq_topic),
-            S(kind="added", what="One worked example", dimension="example", evidence_topic_id=topic_id),
+            S(kind="left_out", what=recap, dimension="recap", evidence_ku_id=prereq_ku),
+            S(kind="added", what="One worked example", dimension="example", evidence_ku_id=ku.id),
             S(kind="set_to", what=f"Hints on request, about {PACE_WPM[2]} words a minute", dimension="support"),
         ],
         "3": [
-            S(kind="left_out", what=recap, dimension="recap", evidence_topic_id=prereq_topic),
-            S(kind="left_out", what="The worked example, replaced by a “what if” question", dimension="example", evidence_topic_id=topic_id),
+            S(kind="left_out", what=recap, dimension="recap", evidence_ku_id=prereq_ku),
+            S(kind="left_out", what="The worked example, replaced by a “what if” question", dimension="example", evidence_ku_id=ku.id),
             S(kind="set_to", what=f"No hints, about {PACE_WPM[3]} words a minute", dimension="support"),
         ],
     }
@@ -363,15 +311,6 @@ def main() -> None:
     kus = {k.id: k for k in kus_list}
 
     # -- structure checks ------------------------------------------------------
-    ku_topic: dict[str, str] = {}
-    for tid, (_, _, ids) in TOPICS.items():
-        for kid in ids:
-            if kid not in kus:
-                sys.exit(f"TOPICS references unknown KU {kid}")
-            ku_topic[kid] = tid
-    missing = set(kus) - set(ku_topic)
-    if missing:
-        sys.exit(f"KUs not assigned to a topic: {sorted(missing)}")
     no_short = set(kus) - set(SHORT_TITLES)
     if no_short:
         sys.exit(f"KUs without a short title: {sorted(no_short)}")
@@ -379,6 +318,9 @@ def main() -> None:
     def lecture_of(ku: KnowledgeUnit) -> int:
         first = min(r.slide_number for r in ku.source_refs)
         return next(l.n for l in LECTURES if l.slide_start <= first <= l.slide_end)
+
+    def topic_of(ku: KnowledgeUnit) -> str:
+        return f"lecture-{lecture_of(ku)}"  # a topic is a lecture (plan D2)
 
     # -- 1. manifests ----------------------------------------------------------
     video_kus = sorted(p.parent.name for p in run.glob("ku-*/final.mp4"))
@@ -393,49 +335,6 @@ def main() -> None:
     def need_llm(path: Path):
         if args.skip_llm and not path.exists():
             sys.exit(f"--skip-llm but no cache at {path}")
-
-    topic_gen: dict[str, tuple[TopicGen, list[dict]]] = {}
-    for tid, (title, _, ku_ids) in TOPICS.items():
-        path = cache / f"topic-{tid}.json"
-        need_llm(path)
-
-        def make_topic(tid=tid, ku_ids=ku_ids):
-            tkus = [kus[i] for i in ku_ids]
-            slides = sorted({r.slide_number for k in tkus for r in k.source_refs})
-            material = slide_material(corpus, slides)
-            log(f"topic {tid}: generating (slides {slides[0]}–{slides[-1]})")
-
-            def make(extra: str) -> TopicGen:
-                want = (ONBOARDING_PER_TOPIC, RECHECK_PER_TOPIC[tid])
-                for _ in range(2):
-                    g = structured(
-                        schema=TopicGen, content=[text_block(topic_prompt(tid, tkus, material[0], extra)), *material[1]],
-                        system=ITEM_SYSTEM, stage="ui_topic_items", model=args.model, max_tokens=16000, manifest=manifest,
-                    )
-                    got = (len(g.onboarding), len(g.recheck))
-                    if got == want:
-                        return g
-                    log(f"  topic {tid}: got {got[0]} onboarding / {got[1]} recheck, need {want[0]} / {want[1]} — retrying")
-                    extra += f"\n\nYour previous answer had {got[0]} onboarding and {got[1]} recheck questions. I need exactly {want[0]} onboarding and {want[1]} recheck."
-                sys.exit(f"topic {tid}: could not get the requested item counts")
-
-            def describe(g: TopicGen) -> str:
-                return "\n\n".join(
-                    [mcq_text(f"ob-{tid}-{i+1}", m) for i, m in enumerate(g.onboarding)]
-                    + [mcq_text(f"rc-{tid}-{i+1}", m) for i, m in enumerate(g.recheck)]
-                )
-
-            def ids_of(g: TopicGen) -> list[str]:
-                return [f"ob-{tid}-{i+1}" for i in range(len(g.onboarding))] + [f"rc-{tid}-{i+1}" for i in range(len(g.recheck))]
-
-            gen, flags = generate_with_critic(make=make, describe=describe, ids_of=ids_of, material=material,
-                                              stage=f"topic_{tid}", model=critic_model, manifest=manifest)
-            if len(gen.onboarding) != ONBOARDING_PER_TOPIC or len(gen.recheck) != RECHECK_PER_TOPIC[tid]:
-                sys.exit(f"topic {tid}: wrong item counts ({len(gen.onboarding)}/{len(gen.recheck)})")
-            return {"gen": gen.model_dump(), "flags": flags}
-
-        data = cached(path, args.regen, make_topic)
-        topic_gen[tid] = (TopicGen.model_validate(data["gen"]), data["flags"])
 
     video_gen: dict[str, tuple[VideoGen, list[dict]]] = {}
     for dirname in video_kus:
@@ -498,21 +397,10 @@ def main() -> None:
     def refs(slides: list[int]) -> list[SlideRef]:
         return [SlideRef(deck_name="slides", slide_number=n) for n in slides]
 
-    for tid, (g, flags) in topic_gen.items():
-        for kind, ctx, allow in (("onboarding", "onboarding", True), ("recheck", "recheck", True)):
-            prefix = "ob" if kind == "onboarding" else "rc"
-            for i, m in enumerate(getattr(g, kind), 1):
-                items.append(Item(id=f"{prefix}-{tid}-{i}", ku_id=m.ku_id, topic_id=tid, context=ctx, stem=m.stem,
-                                  options=m.options, correct_index=m.correct_index, allows_not_sure=allow,
-                                  explanation=m.explanation, hint=m.hint, difficulty_prior=m.difficulty_prior,
-                                  source_refs=refs(m.slides)))
-        for f in flags:
-            flags_by_id[f["id"]] = f["issue"]
-
     videos: list[VideoFixture] = []
     for dirname in video_kus:
         ku = kus[dirname]
-        tid = ku_topic[ku.id]
+        tid = topic_of(ku)
         g, flags = video_gen[ku.id]
         m = manifests[dirname]
         script = json.loads((run / dirname / "script.json").read_text())
@@ -538,7 +426,7 @@ def main() -> None:
             checkpoint=checkpoint_for(m, f"cp-{ku.id}"),
             next_session_item_id=f"ns-{ku.id}", prove_it_item_id=f"pi-{ku.id}",
             sentence_frame=SentenceFrame(template=g.sentence_frame_template, answers=g.sentence_frame_answers),
-            claims=claims, tailoring={k: v for k, v in tailoring_for(ku, tid, kus, ku_topic).items()},
+            claims=claims, tailoring=tailoring_for(ku, kus),
             transcript=[TranscriptRow(**r) for r in m["transcript"]], source_slides=m["source_slides"],
             prerequisite_titles=[SHORT_TITLES[p] for p in ku.prerequisites if p in kus],
         ))
@@ -546,13 +434,13 @@ def main() -> None:
     balance_positions(items)
 
     topics = [
-        Topic(id=tid, title=title, blurb=blurb, ku_ids=ids, first_lecture=min(lecture_of(kus[i]) for i in ids))
-        for tid, (title, blurb, ids) in TOPICS.items()
+        Topic(id=f"lecture-{l.n}", title=l.title, ku_ids=[k.id for k in kus_list if lecture_of(k) == l.n], first_lecture=l.n)
+        for l in LECTURES
     ]
     video_by_ku = {v.ku_id: v.id for v in videos}
     ku_entries = [
         KuEntry(
-            id=k.id, title=k.title, short_title=SHORT_TITLES[k.id], topic_id=ku_topic[k.id], lecture_n=lecture_of(k),
+            id=k.id, title=k.title, short_title=SHORT_TITLES[k.id], topic_id=topic_of(k), lecture_n=lecture_of(k),
             video_id=video_by_ku.get(k.id), bloom_level=k.bloom_level,
             # the pipeline's graph can name a KU that was dropped from the run; the Course validator rejects those
             prerequisites=list(k.prerequisites),

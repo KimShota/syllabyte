@@ -54,6 +54,9 @@ export function VideoCard({
           {card.review_status !== "unreviewed" && <StatusBadge status={card.review_status} />}
         </div>
         {card.fallback_note && <p className="mt-2 text-[13px] leading-[18px] text-muted">{card.fallback_note}</p>}
+        {card.made_level !== null && card.made_level !== card.level && (
+          <p className="mt-2 text-[13px] leading-[18px] text-muted">Made at Level {card.made_level} · you are now Level {card.level}</p>
+        )}
         {children}
       </div>
 

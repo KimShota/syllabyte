@@ -38,7 +38,7 @@ for (const [name, viewport] of Object.entries(sizes)) {
   await page.getByRole("button", { name: "Not sure yet" }).click();
   await shot("04-onboarding-q1-answered");
 
-  await jump("Onboarding result", "05-onboarding-result");
+  await jump("Start result", "05-start-result");
   await jump("Playlist", "06-playlist");
   await jump("My levels", "07-levels-fresh");
   await jump("Course", "08-course");
@@ -47,10 +47,10 @@ for (const [name, viewport] of Object.entries(sizes)) {
   await jump("About this video", "11-about");
   await jump("Claim check", "12-claims");
   await jump("Before you move on", "13-done");
-  await jump("Week 7 invite", "14-week7-invite");
-  await jump("Week 7 re-check quiz", "15-week7-quiz");
-  await jump("Week 7 results", "16-week7-results");
-  await jump("My levels, Week 7 student", "17-levels-week7");
+  await jump("Check due", "14-playlist-check-due");
+  await jump("Lecture 3 check quiz", "15-lecture-check");
+  await jump("Levels changed", "16-playlist-levels-changed");
+  await jump("My levels, mid-course student", "17-levels-midcourse");
   await jump("Empty playlist", "18-empty-playlist");
   if (errors.length) console.log(`[${name}] browser errors:\n  ` + [...new Set(errors)].join("\n  "));
   await ctx.close();

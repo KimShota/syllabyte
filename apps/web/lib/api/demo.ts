@@ -1,5 +1,8 @@
-import { getState, mutate, replaceState, resetState } from "@/lib/store";
+import { FIX } from "@/lib/fixtures";
+import { getState, isOnboarded, mutate, replaceState, resetState } from "@/lib/store";
+import type { Item } from "@/lib/types";
 import { DAY } from "@/lib/util";
+import { api } from "./client";
 import { makePersonaState } from "./persona";
 
 /** Facilitator controls for the Phase 0 demo menu (plan §3.17). Not part of the API contract. */
@@ -7,9 +10,9 @@ export function resetDemo(): void {
   resetState();
 }
 
-export function loadPersona(variant: "invite" | "results"): void {
+export async function loadPersona(variant: "midcourse" | "precheck"): Promise<void> {
   const code = getState().participant_code;
-  const next = makePersonaState(variant);
+  const next = await makePersonaState(variant);
   next.participant_code = code;
   replaceState(next);
 }
@@ -17,6 +20,13 @@ export function loadPersona(variant: "invite" | "results"): void {
 export function simulateNextDay(): void {
   mutate((s) => {
     s.clock_offset_ms += DAY;
+  });
+}
+
+/** A week later: the next lecture's check becomes due. */
+export function simulateNextWeek(): void {
+  mutate((s) => {
+    s.clock_offset_ms += 7 * DAY;
   });
 }
 
@@ -48,33 +58,36 @@ export function downloadText(filename: string, text: string, type = "application
   URL.revokeObjectURL(url);
 }
 
-import { api } from "./client";
-import { FIX, itemById } from "@/lib/fixtures";
+/** A scripted student: right exactly when their ability on the item's lecture reaches the item's difficulty. */
+export function scriptedStudent(ability: Record<number, number>, otherwise = 0): (item: Item) => "right" | "wrong" {
+  return (item) => {
+    const n = Number(item.topic_id.split("-")[1]);
+    return (ability[n] ?? otherwise) >= item.difficulty_prior ? "right" : "wrong";
+  };
+}
 
-/** Skip onboarding with a mixed set of answers (one Level 3, 2, 1, 2 topic) so every later screen has data. */
+/** Answer every question of a sitting with `how`, then finish it, through the real API. */
+export async function runSitting(id: string, how: (item: Item) => "right" | "wrong" | "not_sure"): Promise<void> {
+  for (;;) {
+    const v = await api.getSitting(id);
+    if (!v.current) break;
+    const it = v.current.item;
+    const o = how(it);
+    await api.answerSitting(id, it.id, o === "not_sure" ? "not_sure" : o === "right" ? it.correct_index : (it.correct_index + 1) % 3, 1500);
+  }
+  await api.finishSitting(id);
+}
+
+/** Skip the baseline with a mixed student (strong on lecture 1, middling on 2, weak on 3) so every later screen has data. */
 export async function fastOnboard(): Promise<void> {
   if (getState().consent === null) await api.postConsent(true);
-  const plan: Record<string, ("right" | "wrong" | "not_sure")[]> = {
-    "causal-questions": ["right", "right"],
-    "potential-outcomes": ["right", "wrong"],
-    "selection-bias": ["wrong", "not_sure"],
-    randomization: ["right", "not_sure"],
-  };
-  for (const topic of FIX.course.topics) {
-    const hows = plan[topic.id] ?? ["right", "right"];
-    const items = FIX.items.filter((i) => i.context === "onboarding" && i.topic_id === topic.id).sort((a, b) => a.id.localeCompare(b.id));
-    for (let k = 0; k < items.length; k++) {
-      const it = itemById(items[k].id);
-      const how = hows[k] ?? "right";
-      await api.answerOnboarding(it.id, how === "not_sure" ? "not_sure" : how === "right" ? it.correct_index : (it.correct_index + 1) % 3, 1500);
-    }
-  }
-  await api.finishOnboarding();
+  if (isOnboarded(getState())) return;
+  await runSitting("week0", scriptedStudent({ 1: 1.4, 2: -0.2, 3: -1.4 }));
 }
 
 /** Hide every video so the playlist is empty ("videos are being made"). Reset demo undoes it. */
 export async function showEmptyPlaylist(): Promise<void> {
-  if (!getState().onboarding.done) await fastOnboard();
+  if (!isOnboarded(getState())) await fastOnboard();
   mutate((s) => {
     for (const v of FIX.videos) s.review[v.id] = "hidden";
     s.playlist = { entries: [], manual_order: null, built_at_week: s.playlist.built_at_week };
