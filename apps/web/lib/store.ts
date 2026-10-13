@@ -41,6 +41,7 @@ export function freshState(now = Date.now()): DemoState {
     archived_models: [],
     settings: { captions: true, weekly_email: true },
     events: [],
+    study: {},
     flags: { log_declined: true },
   };
 }

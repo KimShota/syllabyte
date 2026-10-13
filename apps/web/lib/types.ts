@@ -103,6 +103,31 @@ export interface CourseConfig {
   /** watched this many times: queue it as a refresher */
   refresher_replay_count: number;
   upcoming_lecture_override: number | null;
+  /** the study's modules (plan/study-instruments-plan.md I2); null or absent = the lectures split in two */
+  study_modules?: StudyModule[] | null;
+}
+
+/** A group of lectures; its questionnaire battery opens once the schedule has moved past its last lecture. */
+export interface StudyModule {
+  id: string;
+  title: string;
+  lectures: number[];
+}
+
+/** One questionnaire battery's answers (plan/study-instruments-plan.md): the baseline or a module's end. */
+export interface BatteryRecord {
+  id: string;
+  kind: "baseline" | "module";
+  /** INSTRUMENTS_VERSION the answers were given under */
+  version: string;
+  /** when it became due: sign-up for the baseline, the module's end for a module battery */
+  opened_at: number;
+  started_at: number | null;
+  submitted_at: number | null;
+  /** "Not now" hides it until the next visit (I9) */
+  snoozed_visit: string | null;
+  /** item id -> answer; null = skipped on purpose (I10); absent = not reached */
+  answers: Record<string, number | string | null>;
 }
 
 export interface Course {
@@ -358,7 +383,8 @@ export type EventVerb =
   | "transcript_opened" | "note_saved" | "checkpoint_shown" | "checkpoint_answered" | "checkpoint_skipped"
   | "hint_used" | "rewatch_part" | "receipt_opened" | "full_version_requested" | "about_opened"
   | "claim_slide_viewed" | "claim_verdict" | "error_reported" | "difficulty_rated" | "jol_answered"
-  | "self_explanation_saved" | "next_session_answered" | "course_video_added" | "data_downloaded" | "model_reset";
+  | "self_explanation_saved" | "next_session_answered" | "course_video_added" | "data_downloaded" | "model_reset"
+  | "study_shown" | "study_started" | "study_submitted" | "study_snoozed";
 
 export interface AppEvent {
   id: string;
@@ -414,6 +440,8 @@ export interface DemoState {
   archived_models: { at: number; levels: Record<string, KuLevel>; assessment_responses: ResponseRecord[] }[];
   settings: AppSettings;
   events: AppEvent[];
+  /** questionnaire batteries by id ("baseline", "module-1", ...), research participants only */
+  study: Record<string, BatteryRecord>;
   /** one-time UI flags */
   flags: Record<string, boolean>;
 }
