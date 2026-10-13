@@ -106,6 +106,15 @@ class KuEntry(BaseModel):
     prerequisites: list[str] = Field(default_factory=list)  # other KU ids
 
 
+class StudyModule(BaseModel):
+    """A group of lectures; its questionnaire battery opens once the schedule has moved past its last lecture
+    (plan/study-instruments-plan.md I2)."""
+
+    id: str
+    title: str
+    lectures: list[int] = Field(min_length=1)
+
+
 class CourseConfig(BaseModel):
     playlist_max_videos: int = 6
     playlist_max_seconds: int = 600
@@ -130,6 +139,9 @@ class CourseConfig(BaseModel):
     # Phase 0 only: the fixture has 3 lectures, so pin "the upcoming lecture"
     # instead of deriving it from the clock.
     upcoming_lecture_override: int | None = None
+    # The study's modules (plan/study-instruments-plan.md I2): None = the lectures split in two. The study's length is
+    # not decided, so questionnaires follow modules, never calendar weeks.
+    study_modules: list[StudyModule] | None = None
 
 
 class Course(BaseModel):

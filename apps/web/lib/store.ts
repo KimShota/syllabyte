@@ -111,9 +111,10 @@ export function replaceState(next: DemoState): void {
 }
 
 export function resetState(): void {
-  const keepCode = state.participant_code;
+  const { participant_code, condition } = state;
   state = freshState();
-  state.participant_code = keepCode;
+  state.participant_code = participant_code;
+  state.condition = condition;
   state.visit = { id: currentVisitId(), handled: 0 };
   persist();
   notify();

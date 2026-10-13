@@ -1,6 +1,6 @@
 import { FIX } from "@/lib/fixtures";
 import { getState, isOnboarded, mutate, replaceState, resetState } from "@/lib/store";
-import type { Item } from "@/lib/types";
+import type { Condition, Item } from "@/lib/types";
 import { DAY } from "@/lib/util";
 import { api } from "./client";
 import { makePersonaState } from "./persona";
@@ -11,9 +11,10 @@ export function resetDemo(): void {
 }
 
 export async function loadPersona(variant: "midcourse" | "precheck"): Promise<void> {
-  const code = getState().participant_code;
+  const { participant_code, condition } = getState();
   const next = await makePersonaState(variant);
-  next.participant_code = code;
+  next.participant_code = participant_code;
+  next.condition = condition;
   replaceState(next);
 }
 
@@ -33,6 +34,13 @@ export function simulateNextWeek(): void {
 export function setParticipantCode(code: string): void {
   mutate((s) => {
     s.participant_code = code.trim() || null;
+  });
+}
+
+/** The participant's study condition (plan I11): set by the researcher, kept across Reset demo. */
+export function setCondition(condition: Condition): void {
+  mutate((s) => {
+    s.condition = condition;
   });
 }
 

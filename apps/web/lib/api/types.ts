@@ -1,5 +1,6 @@
+import type { Instrument } from "@/content/instruments";
 import type {
-  AppSettings, CalibrationView, Choice, Condition, Confidence, Course, CourseMapView, DemoState, Difficulty, Item,
+  AppSettings, BatteryRecord, CalibrationView, Choice, Condition, Confidence, Course, CourseMapView, DemoState, Difficulty, Item,
   Jol, KuLevel, Level, LevelsView, LevelUpdateCard, NextSessionCardView, PlaylistView, ReportCategory, SittingView,
   StartResultView, VariantView,
 } from "@/lib/types";
@@ -18,6 +19,24 @@ export interface Me {
   settings: AppSettings;
   /** the Week 0 baseline is done, or the student set their own levels */
   onboarding_done: boolean;
+}
+
+/** A questionnaire battery that is due (plan/study-instruments-plan.md I9). */
+export interface StudyTaskView {
+  battery_id: string;
+  title: string;
+  minutes: number;
+  started: boolean;
+}
+
+export interface BatteryView {
+  id: string;
+  kind: BatteryRecord["kind"];
+  title: string;
+  /** what this participant is asked, in order (trust only for Condition A) */
+  instruments: Instrument[];
+  answers: BatteryRecord["answers"];
+  submitted: boolean;
 }
 
 export interface CheckpointAnswerInput {
@@ -88,6 +107,18 @@ export interface Api {
   addNote(videoId: string, videoT: number, text: string): Promise<void>;
   postClaimVerdict(videoId: string, claimIdx: number, verdict: "matches" | "mismatch", note: string): Promise<void>;
   postReport(videoId: string, category: ReportCategory, videoT: number, note: string): Promise<void>;
+
+  // study questionnaires (plan/study-instruments-plan.md): research participants only
+  /** batteries due and not yet submitted, minus any put off with "Not now" this visit */
+  getStudyTasks(): Promise<StudyTaskView[]>;
+  getBattery(id: string): Promise<BatteryView>;
+  /** merges answers (null = skipped on purpose) */
+  saveBatteryAnswers(id: string, answers: BatteryRecord["answers"]): Promise<void>;
+  /** items never answered are recorded as skipped */
+  submitBattery(id: string): Promise<void>;
+  snoozeBattery(id: string): Promise<void>;
+  /** the researcher export (I12) */
+  exportStudyCsv(): Promise<string>;
 
   // data rights
   exportMyData(): Promise<Record<string, unknown>>;

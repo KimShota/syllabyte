@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEMOGRAPHICS, EFFICACY, INSTRUMENTS, PREFER_NOT, SUS, TLX, TRUST } from "@/content/instruments";
 import {
-  batteryInstruments, CSV_COLUMNS, dueModules, moduleEnded, newBattery, scoreBattery, scoreInstrument, studyCsv, studyModules,
+  batteryInstruments, CSV_COLUMNS, dueModules, moduleEnded, moduleEndTime, newBattery, scoreBattery, scoreInstrument, studyCsv, studyModules,
   visibleItems,
 } from "@/lib/logic/instruments";
 import type { BatteryRecord, Course } from "@/lib/types";
@@ -77,11 +77,19 @@ describe("modules (plan I2)", () => {
     expect(dueModules(c, 5, null).map((m) => m.id)).toEqual(["module-1", "module-2"]);
   });
 
-  it("follow the demo's upcoming-lecture override instead of the week", () => {
+  it("can be ended sooner by the demo's upcoming-lecture override, and the weeks still end them", () => {
     const c = withLectures(4);
     const [m1] = studyModules(c);
-    expect(moduleEnded(c, m1, 99, 2)).toBe(false);
     expect(moduleEnded(c, m1, 1, 3)).toBe(true);
+    expect(moduleEnded(c, m1, 1, 2)).toBe(false);
+    expect(moduleEnded(c, m1, 3, 2)).toBe(true);
+  });
+
+  it("date a module's end to the start of the week after its last lecture, or now if the demo ended it sooner", () => {
+    const c = withLectures(4);
+    const [m1] = studyModules(c); // last lecture in week 2
+    expect(moduleEndTime(c, m1, 0, 30 * DAY)).toBe(14 * DAY);
+    expect(moduleEndTime(c, m1, 0, 3 * DAY)).toBe(3 * DAY);
   });
 });
 

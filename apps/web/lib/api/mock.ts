@@ -1,9 +1,13 @@
+import { INSTRUMENTS_VERSION } from "@/content/instruments";
 import { track } from "@/lib/events";
 import { FIX, itemById, lectureByN, slideText, slideUrl, topicById, videoById } from "@/lib/fixtures";
 import { nextAssessmentItem, prelecturePlan, week0Plan, type AssessmentPlan } from "@/lib/logic/assessment";
 import { calibrationBlock1, calibrationBlock2 } from "@/lib/logic/calibration";
 import { droppedEarly } from "@/lib/logic/engagement";
 import { kuLevels, levelUpdates } from "@/lib/logic/kuProfile";
+import {
+  batteryInstruments, dueModules, moduleEndTime, newBattery, studyCsv, studyModules, visibleItems,
+} from "@/lib/logic/instruments";
 import { overallLevel } from "@/lib/logic/levels";
 import { createTask, currentNextSession } from "@/lib/logic/nextSession";
 import {
@@ -22,7 +26,7 @@ import type {
   ReviewStatus, SittingState, Video, VideoCardView, VariantView,
 } from "@/lib/types";
 import { uid } from "@/lib/util";
-import type { Api } from "./types";
+import type { Api, BatteryView, StudyTaskView } from "./types";
 
 // ----------------------------------------------------------------- helpers
 
@@ -36,6 +40,36 @@ const profileInput = () => ({ course: FIX.course, items: FIX.items, responses: S
 /** The lecture whose videos are next: the schedule's, unless the demo moved it. */
 const upcoming = () => S().upcoming_lecture ?? upcomingLecture(FIX.course, week());
 const baselineDone = () => isOnboarded(S());
+const research = () => S().consent === "research";
+
+/** Creates the record of every battery that is due (plan I2): the baseline from consent, each module from its end. */
+function openDueBatteries(): void {
+  if (!research()) return;
+  const s = S();
+  const missing: { id: string; at: number }[] = [];
+  if (!s.study.baseline) missing.push({ id: "baseline", at: now() });
+  for (const m of dueModules(FIX.course, week(), s.upcoming_lecture)) {
+    if (!s.study[m.id]) missing.push({ id: m.id, at: moduleEndTime(FIX.course, m, s.semester_start, now()) });
+  }
+  if (!missing.length) return;
+  mutate((st) => {
+    for (const { id, at } of missing) st.study[id] = newBattery(id, INSTRUMENTS_VERSION, at);
+  });
+}
+
+function batteryTitle(id: string): string {
+  if (id === "baseline") return "About you";
+  const m = studyModules(FIX.course).find((x) => x.id === id);
+  return `${m?.title ?? id} questionnaire`;
+}
+
+function studyRecord(id: string) {
+  if (!research()) throw new Error("study questionnaires are for research participants only");
+  openDueBatteries();
+  const r = S().study[id];
+  if (!r) throw new Error(`questionnaire ${id} is not due`);
+  return r;
+}
 
 function addResponse(
   item: Item,
@@ -244,17 +278,21 @@ export const mockApi: Api = {
   },
 
   async postConsent(research) {
+    // The condition is the researcher's (plan I11), so consent leaves it alone.
     mutate((s) => {
       s.consent = research ? "research" : "no_research";
-      s.condition = "A";
     });
+    openDueBatteries();
     track("consent_given", { type: "consent" }, { research });
   },
 
   async withdrawFromResearch(deletePast) {
     mutate((s) => {
       s.consent = "no_research";
-      if (deletePast) s.events = [];
+      if (deletePast) {
+        s.events = [];
+        s.study = {};
+      }
     });
   },
 
@@ -732,6 +770,67 @@ export const mockApi: Api = {
     track("error_reported", { type: "video", id: videoId }, { category, video_t: videoT });
   },
 
+  // ---- study questionnaires
+  async getStudyTasks() {
+    if (!research()) return [];
+    openDueBatteries();
+    const s = S();
+    const order = (id: string) => (id === "baseline" ? -1 : studyModules(FIX.course).findIndex((m) => m.id === id));
+    return Object.values(s.study)
+      .filter((r) => r.submitted_at === null && r.snoozed_visit !== s.visit.id)
+      .sort((a, b) => order(a.id) - order(b.id))
+      .map((r): StudyTaskView => {
+        const items = batteryInstruments(r.id, s.condition).reduce((n, i) => n + visibleItems(i, r.answers).length, 0);
+        return { battery_id: r.id, title: batteryTitle(r.id), minutes: Math.max(1, Math.round((items * 9) / 60)), started: r.started_at !== null };
+      });
+  },
+
+  async getBattery(id) {
+    const r = studyRecord(id);
+    const view: BatteryView = {
+      id, kind: r.kind, title: batteryTitle(id), instruments: batteryInstruments(id, S().condition),
+      answers: clone(r.answers), submitted: r.submitted_at !== null,
+    };
+    return view;
+  },
+
+  async saveBatteryAnswers(id, answers) {
+    const first = studyRecord(id).started_at === null;
+    mutate((s) => {
+      const r = s.study[id];
+      r.answers = { ...r.answers, ...answers };
+      r.started_at ??= now();
+    });
+    if (first) track("study_started", { type: "battery", id });
+  },
+
+  async submitBattery(id) {
+    const r = studyRecord(id);
+    if (r.submitted_at !== null) return;
+    const asked = batteryInstruments(id, S().condition).flatMap((i) => visibleItems(i, r.answers));
+    const skipped = asked.filter((it) => r.answers[it.id] === undefined || r.answers[it.id] === null).length;
+    mutate((s) => {
+      const rec = s.study[id];
+      for (const it of asked) if (rec.answers[it.id] === undefined) rec.answers[it.id] = null;
+      rec.started_at ??= now();
+      rec.submitted_at = now();
+    });
+    track("study_submitted", { type: "battery", id }, { asked: asked.length, skipped });
+  },
+
+  async snoozeBattery(id) {
+    studyRecord(id);
+    mutate((s) => {
+      s.study[id].snoozed_visit = s.visit.id;
+    });
+    track("study_snoozed", { type: "battery", id });
+  },
+
+  async exportStudyCsv() {
+    const s = S();
+    return studyCsv([{ participant_code: s.participant_code, condition: s.condition, study: s.study }]);
+  },
+
   // ---- data rights
   async exportMyData() {
     const s = S();
@@ -739,6 +838,7 @@ export const mockApi: Api = {
     return {
       profile: { levels: s.levels, made: s.made, sittings: s.sittings, overall_level: overall(), consent: s.consent, condition: s.condition },
       responses: s.responses, events: s.events, notes: s.notes, self_explanations: s.self_explanations, settings: s.settings,
+      study: s.study,
     };
   },
 

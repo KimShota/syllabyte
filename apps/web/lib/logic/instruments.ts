@@ -25,14 +25,26 @@ export function studyModules(course: Course): StudyModule[] {
 
 /**
  * A module has ended once the schedule has moved past the week of its last lecture: the same moment for every student,
- * whatever they watched. `upcomingOverride` is the demo's "treat lecture N as upcoming".
+ * whatever they watched. The demo's "treat lecture N as upcoming" (`upcomingOverride`) can end it sooner. The course
+ * config's `upcoming_lecture_override` pins only the playlist (Phase 0), so it does not count here.
  */
 export function moduleEnded(course: Course, module: StudyModule, week: number, upcomingOverride: number | null): boolean {
   if (!module.lectures.length) return false;
   const last = Math.max(...module.lectures);
-  if (upcomingOverride !== null) return upcomingOverride > last;
   const lecture = course.lectures.find((l) => l.n === last);
-  return lecture !== undefined && week > lecture.week;
+  return (lecture !== undefined && week > lecture.week) || (upcomingOverride !== null && upcomingOverride > last);
+}
+
+/**
+ * When a module's battery became due: the start of the week after its last lecture's week, or `now` when the demo's
+ * override ended it before then (there is no schedule moment to point at).
+ */
+export function moduleEndTime(course: Course, module: StudyModule, semesterStart: number, now: number): number {
+  const last = Math.max(...module.lectures);
+  const lecture = course.lectures.find((l) => l.n === last);
+  if (!lecture) return now;
+  const scheduled = semesterStart + lecture.week * 7 * DAY;
+  return scheduled <= now ? scheduled : now;
 }
 
 /** Module batteries that are due now, in module order. */
