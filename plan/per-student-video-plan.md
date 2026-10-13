@@ -113,8 +113,17 @@ Not yet known whether high effort avoids either (the earlier render of this KU p
 **Decision (2026-10-13):** low effort is the default for code-writing calls (`DEFAULT_CODEGEN_EFFORT`; `CODEGEN_EFFORT` overrides it; models without
 an effort setting get none). Spend: ≈ $8.6 of the $10 budget.
 
+**After the fixes (`runs/fix-check/`, same KU, script rewritten at Level 2 with a colour key, LaTeX installed):** 86 s to video, 3/5
+segments right first time, $0.98 (script $0.23 + animation $0.75). The colour key held in every segment (T blue, C orange, κ green, selection bias
+purple), and every formula is typeset with real subscripts. Left over:
+- One formula is still split across three lines (`κ+` / `(Avg[Y₀|T]` / `− Avg[Y₀|C])`), now as separate `MathTex` pieces, which the Text-only check
+  does not see. Catchable the same way: a `MathTex` whose first piece starts, or last piece ends, with an operator.
+- A "?" drawn in purple, the selection-bias colour; one segment's diagram runs past the right edge in one beat (flagged by the visual critic, not fixed).
+
+**Machine setup:** LaTeX (BasicTeX) installed 2026-10-13; `generate_shorts` now refuses to animate without it. Spend: ≈ $9.6 of the $10 budget.
+
 ## Next
 
-- The two defects above: a code check that rejects `_`/`^` inside `Text(...)` (sends it to repair, no extra cost when absent), and one colour per
-  key term shared by all of a video's segments.
-- 3. The cache and the on-demand job.
+- Extend the formula check to split `MathTex` pieces (no spend).
+- 3. The cache and the on-demand job (built and tested with stubbed generation, no spend).
+- Further real runs need a new budget.
