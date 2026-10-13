@@ -1,6 +1,6 @@
 # Per-student video generation: plan
 
-Branch: `per-student-video` (from `main` at cb45549). Status: **step 2 (level in script generation) built and tried on real output (2026-10-13), revised the same day; steps 3–5 not started.**
+Branch: `per-student-video` (from `main` at cb45549). Status: **step 2 (level in script generation) built and tried on real output (2026-10-13), revised the same day; step 4 (speed) first measurement done; steps 3 and 5 not started.**
 Roadmap item 4 of `plan/per-ku-profiling-plan.md`. Context: the student uploads their own course, each KU's video is made on
 demand at that student's level for that KU, and "fast" means the first video is ready within about 3 minutes of a level being set
 and each later one before the student needs it (per-KU plan D15, D16).
@@ -83,8 +83,26 @@ with what the slides state; a reviewed shared part cannot be fixed by rewriting 
 
 Per call: writing 19–58 s, the critic 26–30 s. Spent on dry runs so far: ≈ $3.3 of the $10 budget (including the dropped design's runs).
 
+## Step 4 results: thinking effort on animation code
+
+`CODEGEN_EFFORT` sets the effort of the four code-writing calls (codegen, crash repair, layout repair, visual repair); unset keeps the model's default
+(`high` on Opus 5). Same Level 1 script for `ku-potential-outcomes` (78 s of narration), Opus 5, 5 segments in parallel, low render quality, run one
+after another on the same machine (`runs/effort-{high,medium,low}/`, local only):
+
+| effort | time to video | LLM cost | codegen tokens (5 segments) | segments with a real animation | visual issues left |
+|---|---|---|---|---|---|
+| high (today's default) | **535 s** | $2.51 | 54 893 (5.4k–25.2k each) | 5/5 | 0 |
+| medium | **253 s** | $1.38 | 21 183 (1.1k–10.9k) | 5/5 | 0 |
+| low | **89 s** | $0.83 | 5 449 (0.7k–1.4k) | 5/5 | 2 (both in the recap: diagram in a thin band, edge to edge) |
+
+- **Low effort takes the slowest segment from 507 s to 73 s.** At high effort one segment thought for 25k tokens (329 s) before writing code; at low
+  effort no codegen call took over 14 s, and the slowest segment's time is now its repair chain (codegen, 2 repairs, visual critic, visual repair).
+- **The pictures are comparable.** A frame strip of the three videos shows the same structure (Timmy's choice, the two outcome boxes, the bar
+  comparison, "4 ← Timmy → 3"); first-try renders went from 0/5 (high) to 2/5 (low). One KU only, so this is a first reading, not a result.
+- Repairs still run at the chosen effort; the visual critic (not code) is unchanged.
+- **Spend:** these three runs $4.72 (the high run alone $2.51, above the $1 estimate); ≈ $8.0 of the $10 budget used in total.
+
 ## Next
 
-4. **Speed of animation code** (before the job queue): cap or lower thinking on codegen and repair, measure time per segment, render success and cost on
-   one KU first, within the remaining budget.
-3. Then the cache and the on-demand job.
+- Confirm low effort on a second KU (≈ $0.8), then make it the default for code-writing calls.
+- 3. The cache and the on-demand job.
