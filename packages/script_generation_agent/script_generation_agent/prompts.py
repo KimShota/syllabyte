@@ -108,145 +108,61 @@ Write the 5-segment CLT-bLM script for this Knowledge Unit now.
 # --------------------------------------------------------------------------
 # Level-aware scripts (plan/per-student-video-plan.md V1)
 #
-# A video is the hook, the objective, the core idea and the recap, which are the same for every viewer (the BASE),
-# plus ONE worked-example segment that depends on the viewer's level for that KU. Writing the base once and the
-# example per level makes the shared segments identical by construction, so their animations are made once and
-# reused across levels and across students.
+# Each video is written for one student's level on one KU, the moment that level is known, and the level shapes
+# every segment: the language, how much is explained, and what the second deliver segment does. (Proposal §3.3:
+# "novice scripts use Remember/Understand-level language with simple analogies; proficient scripts include
+# Analyze/Evaluate tasks and comparative framing".)
 # --------------------------------------------------------------------------
 
-# word budgets (the composed script must still land in 150-220 words)
-BASE_WORDS = (115, 135)
-EXAMPLE_WORDS = {1: (65, 80), 2: (50, 65), 3: (40, 55)}
+LEVEL_NAMES = {1: "Foundations", 2: "Core", 3: "Advanced"}
 
-_BASE_STRUCTURE = """\
-Structure every script as exactly 4 segments following the CLT-bLM \
-four-phase instructional cycle, compressed for short-form. This is the part \
-of the video that every viewer sees. A worked example, which differs from \
-viewer to viewer, is added between segment 3 and segment 4 by a later step:
-  1. PREPARE (phase="prepare"): a punchy 1-sentence hook that activates \
-prior knowledge or poses the question this video answers. This is the \
-first ~2 seconds — it must grab attention immediately, short-form style.
-  2. INITIATE (phase="initiate"): state the learning objective in plain \
-language — what will the viewer be able to do/understand after this video?
-  3. DELIVER (phase="deliver", exactly 1 segment): the core idea in ONE \
-digestible chunk, anchored to one specific idea and one specific visual. \
-State the idea and show it. Do not work through an example or numbers: \
-the worked example comes right after this segment.
-  4. END (phase="end"): a crisp recap of the one big idea, in a form that's \
-easy to remember. It must stand on its own: do not refer to any example, \
-number, case, or name that would appear only in a worked example, because \
-the example the viewer sees differs from viewer to viewer.
-
-"""
-
-_BASE_HARD = f"""\
-Hard constraints (a script that violates these will be rejected by an \
-automatic checker before it even reaches a human):
-  - Total narration across all 4 segments: {BASE_WORDS[0]}-{BASE_WORDS[1]} words (a worked example of 40-80 words \
-is added later, which brings the whole video to 60-90 seconds).
-  - Every segment's `source_refs` must cite at least one slide from the \
-material you were given — do not cite a slide that doesn't contain the \
-claim you're attributing to it.
-  - Write narration as natural spoken language — contractions are fine, \
-no bullet-point phrasing, no "Slide 3 shows...".
-
-"""
-
-BASE_SYSTEM_PROMPT = _INTRO + _BASE_STRUCTURE + _BASE_HARD + _BEATS_AND_VISUALS
-
-
-def build_base_prompt(ku: KnowledgeUnit, source_material: str) -> str:
-    return f"""\
-Knowledge Unit to script:
-  id: {ku.id}
-  title: {ku.title}
-  summary: {ku.summary}
-  bloom_level: {ku.bloom_level}
-  cognitive_load: {ku.cognitive_load}
-  visual_idea (suggestion, not mandatory): {ku.visual_idea}
-
-Source material (the ONLY facts you may draw on):
-{source_material}
-
-Write the 4-segment base script (prepare, initiate, deliver, end) for this Knowledge Unit now.
-"""
-
-
-# What the worked-example segment is at each level. Level 1: a recap of what this idea builds on, then the full
-# worked example. Level 2: one worked example, key steps only. Level 3: no example, a "what if" question.
-LEVEL_EXAMPLE_BRIEF: dict[int | str, str] = {
-    1: (
-        "This viewer is new to the idea (Level 1, foundations). Open with ONE short beat that recaps, in plain words, "
-        "the earlier idea this one builds on: {prereqs}. Then give a FULL, step-by-step worked example in 3 or 4 beats, "
-        "one small step per beat, naming each quantity as you use it. Go slowly."
-    ),
-    # Level 1 for a KU that builds on nothing: there is no earlier idea to recap, and recapping the core idea would
-    # only repeat the segment just before this one.
-    "1_no_prerequisite": (
-        "This viewer is new to the idea (Level 1, foundations). This idea builds on nothing earlier, so do not recap; "
-        "the core idea was just stated. Give a FULL, step-by-step worked example in 4 or 5 beats, one small step per beat, "
-        "naming each quantity as you use it. Go slowly."
-    ),
-    2: (
-        "This viewer has the core of the idea (Level 2). Give ONE worked example in 3 or 4 beats, key steps only. "
-        "Do not recap earlier ideas."
-    ),
-    3: (
-        "This viewer already knows the basics (Level 3). Do not work an example. Instead, in the first beat pose ONE "
-        "'what if' question about the idea (change a condition and ask what happens), then reason through it in 2 or "
-        "3 more beats."
-    ),
+LEVEL_BRIEF = {
+    1: """\
+This viewer is new to the idea (Level 1, Foundations). In every segment:
+  - Use plain, everyday words. Define every technical term the moment you first use it, in the same sentence. Use \
+one simple analogy to make the idea concrete.
+  - The objective (initiate) is at Remember/Understand level: what the viewer will be able to describe or explain.
+  - {prereq_line}
+  - The second DELIVER segment is a FULL, step-by-step worked example from the slides: one small step per beat, \
+naming each quantity as you use it.
+""",
+    2: """\
+This viewer has the core of the idea (Level 2, Core). In every segment:
+  - Use the course's terms, with a short gloss the first time a key term appears. No analogy unless it saves time.
+  - The objective (initiate) is at Apply/Analyze level: what the viewer will be able to use or compare.
+  - Do not recap earlier ideas.
+  - The second DELIVER segment is ONE worked example from the slides with the key steps only.
+""",
+    3: """\
+This viewer already knows the basics (Level 3, Advanced). In every segment:
+  - Use precise terms without glossing the basics. Frame the idea comparatively: how it differs from, or limits, \
+a naive reading.
+  - The objective (initiate) is at Evaluate/Create level: what the viewer will be able to judge or predict.
+  - Do not recap earlier ideas and do not walk through a worked example.
+  - The second DELIVER segment poses ONE "what if" question (change a condition from the slides and ask what \
+happens), then reasons through it.
+""",
 }
 
-
-def example_system_prompt(level: int) -> str:
-    lo, hi = EXAMPLE_WORDS[level]
-    return (
-        _INTRO
-        + """\
-You are writing ONE segment of a script: the part where the idea is worked through for this particular viewer. The \
-rest of the script is given to you. Your segment (phase="deliver") goes between the core-idea segment and the recap, \
-so continue from the core idea without repeating it, and use the same names and notation it uses.
-
-Continuity: the viewer has just watched the core-idea segment. Whatever it put on screen is still there, so \
-continue from the screen as it ended: animate changes to those objects, and never re-create, re-introduce or \
-re-grow an object, label or relation it already showed. Show a number or label only in the beat whose sentence \
-says it. Refer only to objects the earlier segments actually drew.
+_LEVEL_RULES = """\
 Every sentence is something a teacher says about the idea. Never narrate the animation ("a ruler slides in", \
 "the bars grow"): say what the picture means.
 Stay with what the slides state. Do not add claims about data collection, about what is or is not observed, or \
 terms the slides do not use.
 
 """
-        + f"""\
-Hard constraints (a segment that violates these will be rejected by an automatic checker):
-  - Exactly one segment, phase="deliver", 3 to 5 beats, {lo}-{hi} words of narration in total.
-  - `source_refs` must cite at least one slide from the material you were given that contains what you use.
-  - Use only facts, names and numbers from the material. Natural spoken language, no "Slide 3 shows...".
 
-"""
-        + _BEATS_AND_VISUALS
+
+def level_system_prompt(level: int, prereq_titles: list[str] | None = None) -> str:
+    """SCRIPT_SYSTEM_PROMPT with the viewer's level written into it, before the beat and visual rules."""
+    prereqs = "; ".join(f"“{t}”" for t in prereq_titles or [])
+    prereq_line = (
+        f"This idea builds on {prereqs}: recap it in one plain sentence, in the PREPARE segment or at the start of the first DELIVER segment."
+        if prereqs
+        else "This idea builds on nothing earlier in the course, so do not add a recap."
     )
-
-
-def build_example_prompt(ku: KnowledgeUnit, base_script_json: str, source_material: str, level: int, prereq_titles: list[str]) -> str:
-    prereqs = "; ".join(f"“{t}”" for t in prereq_titles)
-    key = "1_no_prerequisite" if level == 1 and not prereq_titles else level
-    brief = LEVEL_EXAMPLE_BRIEF[key].format(prereqs=prereqs)
-    return f"""\
-Knowledge Unit: {ku.title}
-Summary: {ku.summary}
-
-The rest of the script (your segment goes after its "deliver" segment and before its "end" segment):
-{base_script_json}
-
-Source material (the ONLY facts you may draw on):
-{source_material}
-
-{brief}
-
-Write the segment now.
-"""
+    brief = LEVEL_BRIEF[level].format(prereq_line=prereq_line)
+    return _INTRO + _STRUCTURE_FULL + _HARD_FULL + "The viewer's level\n" + brief + "\n" + _LEVEL_RULES + _BEATS_AND_VISUALS
 
 
 CRITIQUE_SYSTEM_PROMPT = """\
@@ -276,22 +192,19 @@ specific — cite the segment (by phase), the beat number, and what's wrong.
 """
 
 
-# The critic reviews the shared base once, then each level's worked example on its own: a problem in a segment that
-# is shared by every level can only be fixed in the base, and a rewrite of the example cannot fix it.
-CRITIQUE_BASE_SYSTEM_PROMPT = CRITIQUE_SYSTEM_PROMPT + """\
+LEVEL_CRITIQUE_NOTE = {
+    1: "plain words with every technical term defined on first use, one simple analogy, and a full step-by-step worked example",
+    2: "the course's terms with a short gloss, no recap, and one worked example with the key steps",
+    3: "precise terms and comparative framing, no recap and no worked example: the second deliver segment poses and reasons through a 'what if' question",
+}
 
-This script is the shared part of a video: four segments (prepare, initiate, deliver, end). A worked-example \
-segment that differs per viewer is inserted between the deliver and end segments later, so do not penalize the \
-missing example or the length. Judge the four phases in order, and flag any claim, term or number in these \
-segments that the source does not support.
-"""
 
-CRITIQUE_EXAMPLE_SYSTEM_PROMPT = CRITIQUE_SYSTEM_PROMPT + """\
+def critique_system_prompt(level: int) -> str:
+    return CRITIQUE_SYSTEM_PROMPT + f"""\
 
-The first, third... segments other than the worked example (the SECOND "deliver" segment, which is the one \
-written for this particular viewer) were already reviewed and accepted: they are shared by every viewer. Score \
-and report issues ONLY for the worked-example segment, judged in the context of the whole script. Do not \
-report issues in any other segment.
+This script is written for a Level {level} ({LEVEL_NAMES[level]}) viewer: {LEVEL_CRITIQUE_NOTE[level]}. Judge \
+learner_appropriateness against that level, and do not penalize what the level asks for (for Level 3, the \
+missing worked example).
 """
 
 

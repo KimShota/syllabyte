@@ -11,7 +11,7 @@ a revision instruction, up to MAX_ROUNDS total attempts.
 
 from __future__ import annotations
 
-from script_generation_agent.prompts import CRITIQUE_SYSTEM_PROMPT, build_critique_prompt
+from script_generation_agent.prompts import CRITIQUE_SYSTEM_PROMPT, build_critique_prompt, critique_system_prompt
 from script_generation_agent.script_writer import gather_source_material, write_script
 from syllabyte_common.llm import DEFAULT_MODEL, structured, text_block
 from syllabyte_common.models import (
@@ -60,23 +60,30 @@ def write_script_with_critique(
     model: str = DEFAULT_MODEL,
     manifest: RunManifest | None = None,
     skip_critic: bool = False,
+    level: int | None = None,
+    prereq_titles: list[str] | None = None,
 ) -> tuple[Script, CritiqueResult]:
     """Writes a script, critiques it, and regenerates (up to MAX_ROUNDS-1
-    additional times) if any critique score falls below threshold."""
+    additional times) if any critique score falls below threshold. With
+    `level`, both the script and the critic's idea of "appropriate" are for
+    that level."""
     result = CritiqueResult(ku_id=ku.id)
     extra_instruction = ""
     script: Script | None = None
+    system = CRITIQUE_SYSTEM_PROMPT if level is None else critique_system_prompt(level)
+    stage = "critique" if level is None else f"critique_l{level}"
 
     for round_num in range(1, MAX_ROUNDS + 1):
         script = write_script(
-            ku, corpus, model=model, manifest=manifest, extra_instruction=extra_instruction
+            ku, corpus, model=model, manifest=manifest, extra_instruction=extra_instruction,
+            level=level, prereq_titles=prereq_titles,
         )
 
         if skip_critic:
             result.passed = True
             return script, result
 
-        score = critique(script, corpus, ku, model=model, manifest=manifest)
+        score = critique(script, corpus, ku, model=model, manifest=manifest, system=system, stage=stage)
         result.rounds.append(score)
 
         if score.min_score >= CRITIQUE_THRESHOLD:
@@ -109,6 +116,7 @@ if __name__ == "__main__":
     parser.add_argument("--kus", required=True)
     parser.add_argument("--ku-id", required=True)
     parser.add_argument("--out-dir", required=True)
+    parser.add_argument("--level", type=int, choices=[1, 2, 3], default=None, help="write for one student's level on this KU")
     args = parser.parse_args()
 
     corpus = _Corpus.model_validate_json(Path(args.corpus).read_text())
@@ -116,14 +124,22 @@ if __name__ == "__main__":
     ku = next(k for k in kus.knowledge_units if k.id == args.ku_id)
 
     manifest = RunManifest(run_id="cli")
-    script, result = write_script_with_critique(ku, corpus, manifest=manifest)
+    prereqs = [k.title for k in kus.knowledge_units if k.id in ku.prerequisites]
+    script, result = write_script_with_critique(ku, corpus, manifest=manifest, level=args.level, prereq_titles=prereqs)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "script.json").write_text(script.model_dump_json(indent=2))
-    (out_dir / "critique.json").write_text(result.model_dump_json(indent=2))
+    suffix = f".L{args.level}" if args.level else ""
+    (out_dir / f"script{suffix}.json").write_text(script.model_dump_json(indent=2))
+    (out_dir / f"critique{suffix}.json").write_text(result.model_dump_json(indent=2))
+    (out_dir / f"manifest{suffix}.json").write_text(manifest.model_dump_json(indent=2))
 
     print(f"Script for {ku.id}: {script.word_count} words, passed={result.passed}")
     for i, r in enumerate(result.rounds, 1):
         print(f"  round {i}: coherence={r.pedagogical_coherence} accuracy={r.conceptual_accuracy} "
               f"appropriateness={r.learner_appropriateness} visual_alignment={r.visual_alignment}")
+    for c in manifest.llm_calls:
+        print(f"  {c.stage:18s} {c.wall_seconds:6.1f}s  out {c.output_tokens:>6,} tokens")
+    from syllabyte_common.llm import PRICE_PER_MTOK
+
+    print(f"LLM cost ≈ ${manifest.total_cost_usd(PRICE_PER_MTOK):.2f}")

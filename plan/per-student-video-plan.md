@@ -1,6 +1,6 @@
 # Per-student video generation: plan
 
-Branch: `per-student-video` (from `main` at cb45549). Status: **step 2 (level in script generation) built and tried on real output (2026-10-13); steps 3–5 not started.**
+Branch: `per-student-video` (from `main` at cb45549). Status: **step 2 (level in script generation) built and tried on real output (2026-10-13), revised the same day; steps 3–5 not started.**
 Roadmap item 4 of `plan/per-ku-profiling-plan.md`. Context: the student uploads their own course, each KU's video is made on
 demand at that student's level for that KU, and "fast" means the first video is ready within about 3 minutes of a level being set
 and each later one before the student needs it (per-KU plan D15, D16).
@@ -38,7 +38,8 @@ Implications: the first lever is capping or lowering thinking on codegen, not a 
 
 | # | Decision |
 |---|---|
-| V1 | **What differs between levels (option c), as built:** the **hook (prepare), objective (initiate) and recap/end segments are shared across levels; only the worked-example (deliver) segment is level-specific.** Narration pace and wording follow the level too (140/155/165 words a minute for L1/L2/L3, plan §7.4), but a segment whose script text is identical across levels is the same animation. Segment renders are cached by script content (the existing `segment_render_key`), so shared segments hit the cache across levels and across students. |
+| V1 | **A video is generated for one student's level on one KU, as soon as that level is known, and the level shapes the whole video** (revised 2026-10-13, superseding a shared-base design). Every segment is written for the level: Level 1 = plain words with every term defined on first use, one analogy, a recap of the prerequisite when there is one, a Remember/Understand objective and a full step-by-step worked example; Level 2 = course terms with a short gloss, an Apply/Analyze objective, one worked example; Level 3 = precise terms and comparative framing, an Evaluate/Create objective, and a "what if" question in place of the worked example (proposal §3.3). Nothing is generated for levels nobody needs. Videos are cached by (slide content, KU, level, pipeline version), so a second student with the same slides and level gets it instantly. |
+| V2 | **Speed comes from the pipeline itself**, not from building parts before the level is known: time to the first video is the whole pipeline, so step 4 (animation-code speed) comes before the job queue (step 3), with real numbers reported first. |
 
 ## Plan
 
@@ -56,40 +57,34 @@ Implications: the first lever is capping or lowering thinking on codegen, not a 
 ## Open questions
 
 - Model choice for the speed experiments (budget: $10, user-approved; ≈ $2.8 used).
-- **Base prefetch policy:** build a KU's base script and animations lazily (when its level is first needed, slow the first time), for the upcoming
-  lecture(s) ahead of time (recommended), or for the whole course at upload (about $1 per KU, most never watched).
 - Whether the visual critic and layout audit stay on the critical path or run after the video is first made available.
 
-## Step 2 results: level in script generation (built, committed on this branch)
+## Step 2 results: level in script generation
 
-Built: `script_generation_agent/leveled.py` (`BaseScript`, `write_base_with_critique`, `write_example`, `write_leveled_script`, `compose`),
-the base and per-level example prompts, scoped critic prompts, and 38 tests with a stubbed LLM. A script is four shared segments (hook,
-objective, core idea, recap) written **once per KU** plus one worked-example segment **per level**: Level 1 = a recap of the prerequisite (skipped
-when the KU has none) and a full step-by-step example; Level 2 = one example, key steps; Level 3 = a "what if" question. Shared segments are identical
-across levels by construction (verified on real output).
+**Built:** `write_script(..., level=, prereq_titles=)` and `write_script_with_critique(..., level=)`, with `level_system_prompt(level)` (the original
+5-segment prompt with the level written in) and `critique_system_prompt(level)` (the critic judges appropriateness against the level). With a level, a
+script the code-side checks reject is rewritten once with the reasons; without one the pipeline behaves exactly as before (the original prompts' text is
+pinned by hash in the tests). 21 tests with a stubbed LLM.
 
-Real runs on `ku-potential-outcomes` (3 levels each, Opus 5, second API key; $0.70 + $0.36 + $0.94 + $0.76 spent, ≈ $2.8 of the $10 budget with the
-ping):
+**First tried and dropped (same day):** a shared base (hook, objective, core idea, recap written once per KU) plus a per-level example segment. It worked
+(shared segments were identical across levels, verified on real output), but it kept the language the same for every level, which the proposal does not,
+and its only purpose was building parts before the level is known. Lessons that carried over: tell the writer never to narrate the animation and to stay
+with what the slides state; a reviewed shared part cannot be fixed by rewriting the part that varies.
 
-| Iteration | What changed | Level 1 / 2 / 3 critic |
+**Real output, `ku-potential-outcomes`, Opus 5, second API key:**
+
+| | Level 1 | Level 3 |
 |---|---|---|
-| 1 | first version | pass (2 rounds) / pass / pass (2 rounds) |
-| 2 | (re-run of L1 after a no-recap fix) | **failed**: the base had unsupported claims the example loop could not fix |
-| 3 | base critiqued once on its own; per-level critic scoped to the example | fail / fail / pass (all in 2 rounds) |
-| 4 | example prompt: continue the screen, never narrate the animation, stay with the slides | **pass in 1 round** / fail (visual alignment 5–6) / **pass in 1 round** |
+| language | defines each term as it appears ("Let Y-zero-i be…"), "picture two copies of Timmy" | precise notation, "the structure is in the subscripts, not the values" |
+| objective | "explain potential outcomes" | "judge exactly what a claim about person i asserts" |
+| second deliver | the worked example, step by step (4 with insurance, 3 without) | "what if both outcomes had come out at four?" |
+| critic | passed in 1 round (one checker rewrite first) | passed in 2 rounds |
+| time / cost | ≈ 76 s / $0.20 | ≈ 130 s / $0.32 |
 
-Findings:
-- **The base needs its own critic loop**, once per KU: a flaw in a shared segment fails every level and no rewrite of the example can fix it.
-- **Critic complaints about the example are mostly continuity** (re-growing bars the base already drew, naming an object it never drew) and
-  **visuals that are text on screen**. Telling the writer to continue the screen as it ended raised first-round passes from 0/3 to 2/3.
-- **Per-call latency is 6–30 s** (write ≈ 12–30 s, critic ≈ 17–28 s); a failed round adds ≈ 40 s. One run took 734 s end to end; per-call timings
-  showed that was API latency, not the pipeline. With a cached base, a level's script costs one example write + one critic round (≈ 40 s) plus
-  rewrites. That is on the critical path to the first video, so step 4 should decide whether the example's critic runs in the background.
-- **Key architectural consequence of V1:** the base is level-independent, so its script **and its four segments' animations** can be made before the
-  student's level is known (at upload, or one lecture ahead). Once a level is set only the example segment remains: one script call, one TTS clip and
-  **one** segment of animation instead of five. That cuts the time to a first video from "all five segments" to "the slowest of one".
+Per call: writing 19–58 s, the critic 26–30 s. Spent on dry runs so far: ≈ $3.3 of the $10 budget (including the dropped design's runs).
 
 ## Next
 
-3. The cache and an on-demand job, including **base prefetch** (a policy to decide: see open questions).
-4. Speed experiments on animation code (cap thinking first), within the $10 budget.
+4. **Speed of animation code** (before the job queue): cap or lower thinking on codegen and repair, measure time per segment, render success and cost on
+   one KU first, within the remaining budget.
+3. Then the cache and the on-demand job.

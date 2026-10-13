@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from script_generation_agent.prompts import SCRIPT_SYSTEM_PROMPT, build_script_prompt
+from script_generation_agent.prompts import SCRIPT_SYSTEM_PROMPT, build_script_prompt, level_system_prompt
 from syllabyte_common.llm import DEFAULT_MODEL, image_block, structured, text_block
 from syllabyte_common.models import CourseCorpus, KnowledgeUnit, RunManifest, Script, Slide
 
@@ -93,32 +93,44 @@ def write_script(
     model: str = DEFAULT_MODEL,
     manifest: RunManifest | None = None,
     extra_instruction: str = "",
+    level: int | None = None,
+    prereq_titles: list[str] | None = None,
 ) -> Script:
+    """Writes the 5-segment script for `ku`. With `level` (1-3) the script is written for one student's level on this
+    KU (plan/per-student-video-plan.md V1): the level shapes the language, the objective and the second deliver
+    segment, and a script the code-side checks reject is rewritten once with the problems fed back."""
     text_context, image_blocks = gather_source_material(corpus, ku)
     if not text_context:
         raise ScriptValidationError(
             f"KU {ku.id} cites slides that don't resolve in the corpus: {ku.source_refs}"
         )
 
-    prompt = build_script_prompt(ku, text_context)
-    if extra_instruction:
-        prompt += f"\n\nRevision instructions from a previous review round:\n{extra_instruction}"
+    system = SCRIPT_SYSTEM_PROMPT if level is None else level_system_prompt(level, prereq_titles)
+    stage = "write_script" if level is None else f"write_script_l{level}"
+    attempts = 1 if level is None else 2
+    problems: list[str] = []
+    feedback = ""
+    for _ in range(attempts):
+        prompt = build_script_prompt(ku, text_context)
+        if extra_instruction:
+            prompt += f"\n\nRevision instructions from a previous review round:\n{extra_instruction}"
+        if feedback:
+            prompt += f"\n\n{feedback}"
 
-    content = [text_block(prompt), *image_blocks]
+        script = structured(
+            schema=Script,
+            content=[text_block(prompt), *image_blocks],
+            system=system,
+            stage=stage,
+            ku_id=ku.id,
+            model=model,
+            max_tokens=8000,
+            manifest=manifest,
+        )
 
-    script = structured(
-        schema=Script,
-        content=content,
-        system=SCRIPT_SYSTEM_PROMPT,
-        stage="write_script",
-        ku_id=ku.id,
-        model=model,
-        max_tokens=8000,
-        manifest=manifest,
-    )
+        problems = validate_script(script)
+        if not problems:
+            return script
+        feedback = "Your previous attempt was rejected by the automatic checker: " + "; ".join(problems) + ". Fix these."
 
-    problems = validate_script(script)
-    if problems:
-        raise ScriptValidationError(f"KU {ku.id}: {'; '.join(problems)}")
-
-    return script
+    raise ScriptValidationError(f"KU {ku.id}: {'; '.join(problems)}")
