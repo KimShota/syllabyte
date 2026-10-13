@@ -146,19 +146,24 @@ from a fixed 8-question check, and changes it only at a student-approved Week 7 
   initial profile" to "continuous per-lecture adaptation vs a static Week 0 profile", with a per-KU readiness
   trajectory across lectures.
 - **Week 7** stays only as the study's midterm measurement (retention quiz, NASA-TLX, SUS, Likert, trust scale,
-  focus groups), not a level update.
+  focus groups), not a level update. **Updated by `study-instruments-plan.md`:** the study's length is not decided, so
+  "Week 7 / Week 14" become "end of module 1 / module 2" (configured lecture groups).
+- **Instruments (`study-instruments-plan.md`):** the 16-item trust scale is Jian et al.'s 12 plus 4 study-specific
+  items (ReelEd's own 4 are unpublished), asked of Condition A only; SUS is asked of both conditions about "this app";
+  NASA-TLX is Raw TLX; the efficacy questionnaire is 12 items (ReelEd's comparisons to lectures removed, relevance and
+  pacing added); demographics are 8 questions. Check the Jian wording against the original paper before IRB submission.
 - **Limitations:** item parameters are LLM priors with α fixed at 1 until calibration; SE(θ) ≈ 1 logit at these test
   lengths; engagement adjusts delivery, not ability.
 - **Videos:** generated on demand at the student's level and cached (roadmap 4), instead of "per readiness level"
   ahead of time (§3.3 wording).
 
 ## Roadmap after this branch (separate branches, in order)
-1. **Study instruments:** NASA-TLX per module, SUS, learning-efficacy Likert, trust-in-automation scale; the Week 0,
-   Week 7 (midterm) and Week 14 batteries. Needed for H1–H4 and the IRB package.
+1. **Study instruments** *(built on `study-instruments`, see `plan/study-instruments-plan.md`)*: consent, demographics,
+   and Raw TLX, SUS, learning efficacy and trust at the end of each module, in the app; researcher CSV export.
 2. **Condition B:** the control experience ("unmodified lecture recordings uploaded to the LMS") and its logging.
 3. **Retention and transfer:** module quizzes immediately and two weeks later (forgetting curve, H1); final-exam
    transfer items; kept separate from the items that set levels.
-4. **Pipeline:** on-demand generation at the student's KU level, cached by (slide content, KU, level); replaces
+4. **Pipeline** *(built on `per-student-video`, see `plan/per-student-video-plan.md`)*: on-demand generation at the student's KU level, cached by (slide content, KU, level); replaces
    "three versions per KU" (plan §7.4). Target: first video ≈ 3 min after a check, each later one ready before the
    student needs it (today ≈ 8 min per video). Item banks generated per upload.
 5. **Figma UI redesign** (`ui-improvement`): resumes with My Levels grouped by lecture and the Week 7 banner

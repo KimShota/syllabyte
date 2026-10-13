@@ -1,6 +1,6 @@
 # Study instruments: plan
 
-Branch: `study-instruments` (from `main` at 4369192). Status: **planned 2026-10-14; building.**
+Branch: `study-instruments` (from `main` at 4369192). Status: **built 2026-10-14** (commits 1-3 below; tests: 218 unit, 108 e2e with axe, 157 Python).
 Roadmap item 1 of `plan/per-ku-profiling-plan.md`. Source: the proposal §4.2 (outcome measures) and §5 (timeline batteries).
 Supersedes `plan/ui-ux-implementation-plan.md` §3.18's "questionnaires open in Qualtrics" (Q27): they are now in the app.
 
@@ -103,3 +103,21 @@ Ergonomics* 4(1)); it was taken from secondary sources that agree on the items a
 3. Screens: the study route, the playlist card, demographics after consent, consent text, demo menu; e2e tests with axe.
 4. Docs: this plan's status, the per-KU plan's roadmap, the advisor sign-off items (Week 7/14 wording; the 16-item trust scale's
    composition).
+
+## Built (2026-10-14)
+
+- **Behaviour checked end to end** (`tests/e2e/study.spec.ts`, mobile and desktop): "About you" right after research consent, with
+  the gender self-description appearing only when chosen and the skip confirmation; a decliner never sees a questionnaire; the
+  module 1 card appears once the schedule passes lecture 2, and the battery runs TLX → efficacy → SUS → trust (Condition B: three
+  pages); "Not now" and resuming mid-way. axe runs on every questionnaire page, the skip sheet and the playlist with its cards.
+- **Found while building:** a tap on the middle of an unanswered TLX line moves nothing, so the browser sends no change event; the
+  line answers on the tap itself. Research participants who close "About you" keep its card on the playlist, so a playlist can carry
+  two "Not now" buttons (the lecture-check test now scopes to its card).
+- **The course config's `upcoming_lecture_override`** (Phase 0's pin so all videos show) does not end modules; only the weeks or
+  the demo's own upcoming-lecture override do. Otherwise every demo would open with module 1's questionnaire due.
+
+## Open
+
+- Condition B's own experience (roadmap item 2) will need the same cards on its home screen.
+- Phase 1: `exportStudyCsv` over all participants, from the backend.
+- Advisor sign-off: the Week 7/14 wording and the trust scale's composition (listed in `per-ku-profiling-plan.md`).
