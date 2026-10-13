@@ -1,7 +1,6 @@
 """Which Anthropic key the shared client uses: ANTHROPIC_KEY_NAME names the environment variable that holds it."""
 
 import pytest
-
 from syllabyte_common import llm
 
 
