@@ -5,6 +5,8 @@ Thin Anthropic wrapper shared by every LLM-calling stage of the pipeline
 Responsibilities:
   - Load ANTHROPIC_API_KEY from .env (falls back to the SDK's own credential
     resolution — ANTHROPIC_AUTH_TOKEN / `ant auth login` profile — if unset).
+    ANTHROPIC_KEY_NAME names which environment variable holds the key to use
+    (default ANTHROPIC_API_KEY), so a second key can be switched on in .env.
   - Wrap client.messages.parse() for structured (Pydantic) outputs and
     client.messages.create() for plain text (used for Manim code generation,
     which doesn't fit a JSON schema).
@@ -146,12 +148,21 @@ def _record_openai_usage(
     )
 
 
+def anthropic_api_key() -> str | None:
+    """The key named by ANTHROPIC_KEY_NAME (default ANTHROPIC_API_KEY). None means "let the SDK resolve credentials"."""
+    name = os.environ.get("ANTHROPIC_KEY_NAME", "ANTHROPIC_API_KEY")
+    key = os.environ.get(name) or None
+    if key is None and name != "ANTHROPIC_API_KEY":
+        raise RuntimeError(f"ANTHROPIC_KEY_NAME={name} but {name} is not set (check .env)")
+    return key
+
+
 def get_client() -> anthropic.Anthropic:
     global _client
     if _client is None:
         # Segments render concurrently, so expect occasional 429s; the SDK
         # retries them with backoff (its default is 2 retries).
-        _client = anthropic.Anthropic(max_retries=6)
+        _client = anthropic.Anthropic(api_key=anthropic_api_key(), max_retries=6)
     return _client
 
 
