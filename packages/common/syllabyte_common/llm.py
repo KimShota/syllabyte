@@ -307,9 +307,12 @@ def text(
     model: str = DEFAULT_MODEL,
     max_tokens: int = 8000,
     manifest: RunManifest | None = None,
+    effort: str | None = None,
 ) -> str:
     """Call the model and return its plain text response (used for Manim
-    code generation, where the output is Python source, not JSON)."""
+    code generation, where the output is Python source, not JSON). `effort`
+    (low/medium/high/xhigh/max) sets how much an Anthropic model thinks; None
+    keeps the model's default."""
     if is_openai_model(model):
         start = time.monotonic()
         response = get_openai_client(model).chat.completions.create(
@@ -330,6 +333,8 @@ def text(
     }
     if system is not None:
         kwargs["system"] = system
+    if effort is not None:
+        kwargs["output_config"] = {"effort": effort}
 
     # Streamed so callers can give thinking a large max_tokens: the SDK
     # refuses non-streaming requests big enough to risk an HTTP timeout.

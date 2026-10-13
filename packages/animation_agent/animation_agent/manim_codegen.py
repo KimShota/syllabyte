@@ -20,6 +20,7 @@ Risks/notes section).
 from __future__ import annotations
 
 import ast
+import os
 import re
 
 from syllabyte_common.llm import DEFAULT_MODEL, is_openai_model, text
@@ -45,6 +46,19 @@ def codegen_max_tokens(model: str) -> int:
     model can think past 20k before writing any code (text() streams, so a
     large budget is safe). Other backends keep 20k."""
     return 20000 if is_openai_model(model) else 64000
+
+
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
+
+def codegen_effort() -> str | None:
+    """Thinking effort for the calls that write Manim code (codegen and its
+    repairs), from CODEGEN_EFFORT; unset keeps the model's default. Thinking is
+    most of a codegen call's time (plan/per-student-video-plan.md)."""
+    effort = os.environ.get("CODEGEN_EFFORT") or None
+    if effort is not None and effort not in EFFORTS:
+        raise ValueError(f"CODEGEN_EFFORT={effort!r}; expected one of {EFFORTS}")
+    return effort
 
 
 class UnsafeCodeError(Exception):
@@ -153,7 +167,7 @@ def generate_scene(
     system, user = build_generation_prompt(segment, beat_durations, class_name)
     code = text(
         content=user, system=system, stage="manim_codegen", model=model,
-        max_tokens=codegen_max_tokens(model), manifest=manifest,
+        max_tokens=codegen_max_tokens(model), manifest=manifest, effort=codegen_effort(),
     )
     return _validated(code)
 
@@ -170,7 +184,7 @@ def repair_scene(
 ) -> str:
     prompt = build_repair_prompt(code, traceback_text, segment, beat_durations, class_name)
     fixed = text(
-        content=prompt, stage="manim_repair", model=model, max_tokens=codegen_max_tokens(model), manifest=manifest,
+        content=prompt, stage="manim_repair", model=model, max_tokens=codegen_max_tokens(model), manifest=manifest, effort=codegen_effort(),
     )
     return _validated(fixed)
 
@@ -189,6 +203,6 @@ def repair_layout(
     LayoutReport.format_for_prompt()."""
     prompt = build_layout_repair_prompt(code, problems, segment, beat_durations, class_name)
     fixed = text(
-        content=prompt, stage="manim_layout_repair", model=model, max_tokens=codegen_max_tokens(model), manifest=manifest,
+        content=prompt, stage="manim_layout_repair", model=model, max_tokens=codegen_max_tokens(model), manifest=manifest, effort=codegen_effort(),
     )
     return _validated(fixed)

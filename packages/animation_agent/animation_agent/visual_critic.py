@@ -35,7 +35,7 @@ from syllabyte_common.llm import DEFAULT_MODEL, image_block, structured, text, t
 from syllabyte_common.models import RunManifest
 
 from animation_agent.layout import GRID_DIAGRAM, format_occupancy_table, parse_grid_calls
-from animation_agent.manim_codegen import codegen_max_tokens, validate_generated_code
+from animation_agent.manim_codegen import codegen_effort, codegen_max_tokens, validate_generated_code
 
 
 class LayoutIssue(BaseModel):
@@ -175,6 +175,6 @@ Fixes to apply:
 {code}
 """
     fixed = text(
-        content=prompt, stage="visual_repair", model=model, max_tokens=codegen_max_tokens(model), manifest=manifest,
+        content=prompt, stage="visual_repair", model=model, max_tokens=codegen_max_tokens(model), manifest=manifest, effort=codegen_effort(),
     )
     return validate_generated_code(fixed)
