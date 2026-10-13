@@ -27,6 +27,8 @@ export const course: Course = {
     recheck_min_answers: 3, playlist_max_videos: 6, playlist_max_seconds: 600, next_session_min_hours: 12,
     next_session_max_per_visit: 2, next_session_expiry_days: 7, retention_due_days: 3, retention_delay_days: 14,
     reveal_retention_scores_after_week_14: false, upcoming_lecture_override: 3,
+    cat_start_theta: 0, cat_items_per_topic: 4, cat_week0_length: 16, cat_week0_lectures: 4, cat_prelecture_new: 4,
+    cat_prelecture_review: 2, irt_hint_beta_shift: 1, refresher_dropoff_fraction: 0.6, refresher_replay_count: 3,
   },
 };
 

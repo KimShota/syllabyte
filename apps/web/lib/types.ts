@@ -88,6 +88,24 @@ export interface CourseConfig {
   retention_due_days: number;
   retention_delay_days: number;
   reveal_retention_scores_after_week_14: boolean;
+  // Adaptive assessment (plan/per-ku-profiling-plan.md D7-D13); mirrors CourseConfig in learner.py.
+  cat_start_theta: number;
+  /** a topic is a lecture */
+  cat_items_per_topic: number;
+  /** the baseline before any video */
+  cat_week0_length: number;
+  /** how many of the first lectures the baseline covers */
+  cat_week0_lectures: number;
+  /** items on the lecture about to start */
+  cat_prelecture_new: number;
+  /** items from earlier lectures, aimed where theta is least certain */
+  cat_prelecture_review: number;
+  /** an answer given after a hint is scored as the item made this much easier */
+  irt_hint_beta_shift: number;
+  /** left a video before this share of it: it goes back to the top of the playlist */
+  refresher_dropoff_fraction: number;
+  /** watched this many times: queue it as a refresher */
+  refresher_replay_count: number;
   upcoming_lecture_override: number | null;
 }
 

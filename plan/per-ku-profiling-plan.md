@@ -1,6 +1,6 @@
 # Per-KU learner profiling with CAT: plan
 
-Branch: `per-ku-profiling` (from `main` at 2d391ce). Status: **decisions settled (2026-10-12); commits 1–3 of 7 done, 4 coded.**
+Branch: `per-ku-profiling` (from `main` at 2d391ce). Status: **decisions settled (2026-10-12); commits 1–5 done; 6 (wiring), 7 (screens), 8 (docs) to go.**
 The Figma redesign waits on this; its plan is `plan/ui-redesign-figma-plan.md` on branch `ui-improvement`.
 
 ## Why
@@ -123,12 +123,17 @@ from a fixed 8-question check, and changes it only at a student-approved Week 7 
    60 stems with no question (mostly advanced "claim" statements), so the system prompt now allows a setup before the
    question, and `stem_problems` checks every stem and asks once more; the 8 affected KUs are still to be redone
    (`--kus … --regen`, ≈ $0.2). Hand-validation of the bank is still the user's job (plan: ≥ 2 items per topic).
-5. **Profile and delivery:** state v2, Week 0 CAT, pre-lecture checks with review items, continuous evidence,
-   lecture-boundary updates, made-level tracking, prerequisite ordering, engagement refreshers, per-KU "Correct
-   this", Week 7 removal, persona; unit tests.
-6. **Screens:** CAT quiz (no back), pre-lecture check card, My levels by lecture, "What changed" card, onboarding
+5. **Per-KU profile logic** *(done; pure modules, nothing wired in yet)*: `lib/logic/lectures.ts` (a topic is a
+   lecture), `kuProfile.ts` (per-lecture θ from all answers, KU levels, templated reasons, level updates),
+   `assessment.ts` (Week 0 and pre-lecture plans, the next item, review aimed at the least certain lecture),
+   `prereq.ts` (prerequisite ordering and notes), `engagement.ts` (drop-off and replay signals); the adaptive-assessment
+   config on `CourseConfig` (Python and TS); 58 new unit tests, including simulated students on the real bank.
+   Split from the wiring so the logic is reviewed on its own and HEAD stays green.
+6. **Wiring** *(next)*: state v2 (levels keyed by KU, `made` level, progress, sittings), the mock API, lectures-as-topics
+   in the fixtures and retiring the 14 onboarding/re-check items, Week 7 removal, persona; then the screens below.
+7. **Screens:** CAT quiz (no back), pre-lecture check card, My levels by lecture, "What changed" card, onboarding
    result; delete `/recheck/*`; e2e + axe.
-7. **Docs:** `ui-ux-implementation-plan.md` (rule 1, rule 2, §3.1, §3.1b, §3.3, §3.8, §3.9–3.10 removed, §4.1,
+8. **Docs:** `ui-ux-implementation-plan.md` (rule 1, rule 2, §3.1, §3.1b, §3.3, §3.8, §3.9–3.10 removed, §4.1,
    §4.3, §4.4 removed, §4.6, §5, §6.1 endpoints, traceability), `apps/web/README.md`.
 
 ## Needs the advisor's sign-off (proposed changes to the proposal; OSF pre-registration not filed yet)
@@ -177,3 +182,23 @@ reproduce them, and the parity file pins them.
   can use it directly.
 - catsim prints a blank line on every item-bank validation, so items are validated in `BankItem` and `ItemBank` is
   built with `validate=False`.
+
+## Logic notes (found while building commit 5)
+
+- **One estimation pool per lecture:** the lecture's bank items plus its videos' quick-check, next-day and prove-it
+  items (difficulty = the item's `difficulty_prior`, discrimination 1). A repeated item (Watch again) counts once, by
+  its latest answer. Items answered in any sitting are never asked again.
+- **Provisional levels:** a lecture nobody has asked about borrows the θ pooled over every answer so far, read against
+  that KU's own applied/advanced difficulties; the reason says it has not been asked yet. A lecture answered entirely
+  "Not sure" is novice; with no answers anywhere a KU is "not checked".
+- **Fallback:** when a lecture runs out of unseen items the sitting takes the next item from another lecture rather than
+  ending early. (The dev course's lecture 3 has 18 bank items; a lecture with fewer than the baseline asks would show it.)
+- **Review items** go to the earlier lecture with the largest standard error (an unmeasured one counts as infinite,
+  ties to the earlier lecture); with no earlier lecture left they become one more item on the lecture itself.
+- **Simulated students on the real bank** (right exactly when ability ≥ difficulty): θ = −2 → 20 KUs at Level 1;
+  θ = 0 → 11/9/0 at Levels 1/2/3; θ = 2 → 0/4/16. A θ = 0 student never reaches Level 3 because advanced items sit up
+  to +1.5; that is the tier rule working as designed, and a reason to look at the tier offsets after the pilot.
+- **Deferred from D8:** the baseline covers the first `cat_week0_lectures` lectures only. The "prerequisite roots of
+  later lectures" part cannot be exercised by the 3-lecture dev course; add it when a longer course exists.
+- **Not yet wired:** dropped-early videos go back to the top of the playlist ("pick up where you left off"); replays
+  at `refresher_replay_count` queue a refresher; both need the player to record progress (commit 6).

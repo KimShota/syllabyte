@@ -119,6 +119,18 @@ class CourseConfig(BaseModel):
     retention_due_days: int = 3
     retention_delay_days: int = 14
     reveal_retention_scores_after_week_14: bool = False
+    # Adaptive assessment (plan/per-ku-profiling-plan.md D7-D13). Every sitting has a fixed length whatever the
+    # course size; tune these by simulation before the pilot.
+    cat_start_theta: float = 0.0
+    cat_items_per_topic: int = 4  # a topic is a lecture
+    cat_week0_length: int = 16  # the baseline, before any video
+    cat_week0_lectures: int = 4  # how many of the first lectures the baseline covers
+    cat_prelecture_new: int = 4  # items on the lecture about to start
+    cat_prelecture_review: int = 2  # items from earlier lectures, aimed where theta is least certain
+    irt_hint_beta_shift: float = 1.0  # an answer given after a hint is scored as the item made this much easier
+    # Engagement adjusts what is delivered, never theta (D13).
+    refresher_dropoff_fraction: float = 0.6  # left a video before this share of it: it goes back to the top
+    refresher_replay_count: int = 3  # watched this many times: queue it as a refresher
     # Phase 0 only: the fixture has 3 lectures, so pin "the upcoming lecture"
     # instead of deriving it from the clock.
     upcoming_lecture_override: int | None = None
