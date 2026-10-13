@@ -117,6 +117,12 @@ from a fixed 8-question check, and changes it only at a student-approved Week 7 
    **Lectures-as-topics and retiring the 14 onboarding/re-check items moved to commit 5**, which rebuilds the flow
    that depends on them. Estimated cost of the full dev bank (20 KUs): ≈ $1.16 on claude-opus-5, ≈ $0.46 on
    claude-sonnet-5; lecture 1 alone (10 KUs) ≈ $0.57 / $0.23.
+   **Generated 2026-10-13 on claude-sonnet-5** (user-approved): lecture 1 first ($0.25), reviewed, prompt tightened
+   (stay inside the slides, no distractor that restates the claim, tiers need different kinds of thinking), then all
+   20 KUs regenerated ($0.56; the estimate runs ~20% low on image-heavy slides). Total spent: $0.81. Review found 9 of
+   60 stems with no question (mostly advanced "claim" statements), so the system prompt now allows a setup before the
+   question, and `stem_problems` checks every stem and asks once more; the 8 affected KUs are still to be redone
+   (`--kus … --regen`, ≈ $0.2). Hand-validation of the bank is still the user's job (plan: ≥ 2 items per topic).
 5. **Profile and delivery:** state v2, Week 0 CAT, pre-lecture checks with review items, continuous evidence,
    lecture-boundary updates, made-level tracking, prerequisite ordering, engagement refreshers, per-KU "Correct
    this", Week 7 removal, persona; unit tests.

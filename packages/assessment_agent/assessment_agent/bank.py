@@ -79,6 +79,16 @@ def order_tiers(betas: Mapping[ItemTier, float]) -> dict[ItemTier, float]:
     return {t: round(out[t], 4) for t in TIERS}
 
 
+def stem_problems(gen: KuBankGen) -> list[str]:
+    """Stems that are not a question the student can answer (the model likes to end an advanced stem on a claim
+    with no question, so the student has to guess the task)."""
+    return [
+        f"{t}: the stem must end with a question that tells the student what to do"
+        for t in TIERS
+        if not getattr(gen, t).stem.strip().endswith("?")
+    ]
+
+
 def bank_item_id(ku_id: str, tier: ItemTier) -> str:
     return f"as-{ku_id}-{tier}"
 

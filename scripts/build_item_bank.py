@@ -5,6 +5,7 @@ Unit, one per Bloom tier, written by an LLM from the KU's own slides and checked
 
     uv run python scripts/build_item_bank.py --estimate                  # what a full run would cost; no API call
     uv run python scripts/build_item_bank.py --lectures 1                # generate one lecture (spends LLM credits)
+    uv run python scripts/build_item_bank.py --kus ku-a,ku-b --regen     # redo specific KUs
     uv run python scripts/build_item_bank.py                             # generate everything not cached yet
     uv run python scripts/build_item_bank.py --skip-llm                  # only reassemble bank.json from the cache
 
@@ -35,13 +36,24 @@ from assessment_agent.bank import (  # noqa: E402
     assemble_ku_items,
     balance_positions,
     lecture_topic_id,
+    stem_problems,
     validate_bank,
 )
 from syllabyte_common.learner import Item  # noqa: E402
 from syllabyte_common.llm import DEFAULT_MODEL, PRICE_PER_MTOK, structured, text_block  # noqa: E402
 from syllabyte_common.models import CourseCorpus, KnowledgeUnit, KUList, RunManifest  # noqa: E402
 
-BANK_SYSTEM = "\n".join(l for l in ui.ITEM_SYSTEM.splitlines() if not l.startswith("- difficulty_prior"))
+_STEM_RULE = "- The stem is one sentence, under 28 words, and self-contained."
+assert _STEM_RULE in ui.ITEM_SYSTEM, "build_ui_fixtures.ITEM_SYSTEM changed; update the stem rule here"
+_NEW_STEM_RULE = (
+    "- The stem is self-contained and under 40 words. If it sets up a situation or states a claim, the question comes "
+    "after it, and it always ends with a question mark."
+)
+BANK_SYSTEM = "\n".join(
+    l.replace(_STEM_RULE, _NEW_STEM_RULE)  # keeps what follows on the line: "Do not say 'according to the slide'…"
+    for l in ui.ITEM_SYSTEM.splitlines()
+    if not l.startswith("- difficulty_prior")
+)
 
 
 def bank_prompt(ku: KnowledgeUnit, prereq_titles: list[str], slide_text: str, extra: str = "") -> str:
@@ -55,10 +67,15 @@ It builds on: {prereq}
 Write THREE questions about this knowledge unit for a pre-test of what a student already knows, one per tier:
 {tiers}
 
-- basic: recognise or restate the idea.
-- applied: use the idea on a small new case, or take a situation apart.
-- advanced: judge a claim or a design, spot what is wrong with an argument, or predict what changes when a condition changes. It must still be answerable from the material in the slides below, by reasoning with it.
-The three must be independent: answering one must not give away another, and none may reuse another's wording or options.
+- basic: one fact, definition or label from the slides.
+- applied: handle a new case in the slides' own setting: classify it, compute with it, or read it. It must need more than the basic question's lookup, and must not be the same lookup with another value.
+- advanced: judge a claim or design, spot what is wrong with an argument, or predict what changes when a condition changes. Vary the shape across units; do not always open with "A colleague claims".
+The three tiers must call for different kinds of thinking, not just different wording, and must be independent: answering one must not give away another, and none may reuse another's wording or options.
+
+Stay inside the slides. Every question, including the advanced one, must be answerable from the slides below alone. Use the slides' own example, people, data and notation; you may change the numbers or ask about another case in that same setting, but never bring in an analogy, example or fact from another domain. Where the slides state a number or a rule, use it exactly as stated. In the explanation and hint, describe a chart or table only as far as its text or image shows.
+
+Wrong options: each must be a plausible misconception about this idea. Never make a wrong option restate the claim the question asks the student to evaluate, never make it a true statement, and never make it merely the negation of the right answer.
+
 Set `slides` to the slide numbers that support the questions (one list for all three).
 Set `ku_difficulty` from -2 (very easy) to 2 (hard): how hard is this CONCEPT for a student meeting it for the first time. Rate the concept, not your questions; the three tiers are spread apart automatically.
 
@@ -156,11 +173,19 @@ def generate_ku(ku: KnowledgeUnit, kus: dict[str, KnowledgeUnit], corpus: Course
     prereqs = [ui.SHORT_TITLES.get(p, kus[p].title) for p in ku.prerequisites if p in kus]
     ui.log(f"{ku.id}: generating (slides {slides})")
 
-    def make(extra: str) -> KuBankGen:
+    def ask(extra: str) -> KuBankGen:
         return structured(
             schema=KuBankGen, content=[text_block(bank_prompt(ku, prereqs, material[0], extra)), *material[1]],
             system=BANK_SYSTEM, stage="item_bank", ku_id=ku.id, model=args.model, max_tokens=6000, manifest=manifest,
         )
+
+    def make(extra: str) -> KuBankGen:
+        g = ask(extra)
+        problems = stem_problems(g)
+        if problems:
+            ui.log(f"  {ku.id}: {problems} — asking again once")
+            g = ask(extra + "\n\nYour previous attempt had problems. Fix them:\n" + "\n".join(f"- {p}" for p in problems))
+        return g
 
     def describe(g: KuBankGen) -> str:
         return "\n".join(ui.mcq_text(f"as-{ku.id}-{t}", getattr(g, t)) for t in TIERS)
@@ -169,6 +194,8 @@ def generate_ku(ku: KnowledgeUnit, kus: dict[str, KnowledgeUnit], corpus: Course
         make=make, describe=describe, ids_of=lambda g: [f"as-{ku.id}-{t}" for t in TIERS], material=material,
         stage=f"bank_{ku.id}", model=args.critic_model or args.model, manifest=manifest,
     )
+    # anything the retry did not fix stays visible on the review sheet
+    flags += [{"id": f"as-{ku.id}-{p.split(':')[0]}", "issue": p.split(': ', 1)[1]} for p in stem_problems(gen)]
     return {"gen": gen.model_dump(), "flags": flags}
 
 
@@ -196,7 +223,8 @@ def main() -> None:
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--critic-model", default=None, help="defaults to --model")
     ap.add_argument("--lectures", default=None, help="comma-separated lecture numbers to generate (default: all)")
-    ap.add_argument("--regen", action="store_true", help="ignore the cache for the selected lectures")
+    ap.add_argument("--kus", default=None, help="comma-separated KU ids to generate (instead of --lectures)")
+    ap.add_argument("--regen", action="store_true", help="ignore the cache for the selected lectures / KUs")
     ap.add_argument("--skip-llm", action="store_true", help="do not call the LLM; only reassemble from the cache")
     ap.add_argument("--estimate", action="store_true", help="print the expected cost and exit; no API call")
     ap.add_argument("--workers", type=int, default=4, help="KUs generated in parallel")
@@ -214,13 +242,19 @@ def main() -> None:
 
     ordered = sorted(kus_list, key=lambda k: (lecture_of(k), min(r.slide_number for r in k.source_refs)))
     wanted = {int(n) for n in args.lectures.split(",")} if args.lectures else {l.n for l in ui.LECTURES}
-    todo = [k for k in ordered if lecture_of(k) in wanted and (args.regen or not cache_path(cache, k.id).exists())]
+    only = set(args.kus.split(",")) if args.kus else None
+    if only and only - set(kus):
+        sys.exit(f"unknown KU(s): {sorted(only - set(kus))}")
+    todo = [
+        k for k in ordered
+        if (k.id in only if only else lecture_of(k) in wanted) and (args.regen or not cache_path(cache, k.id).exists())
+    ]
 
     if args.estimate:
         price = PRICE_PER_MTOK.get(args.model, (0.0, 0.0))
         print(f"model {args.model}: ${price[0]:.2f} in / ${price[1]:.2f} out per Mtok (0 means no price on file)")
         total = 0.0
-        for n in sorted(wanted):
+        for n in sorted({lecture_of(k) for k in todo} or wanted):
             rows = [estimate_ku(material_tokens(corpus, [r.slide_number for r in k.source_refs]), price) for k in todo if lecture_of(k) == n]
             usd = sum(r["usd"] for r in rows)
             total += usd

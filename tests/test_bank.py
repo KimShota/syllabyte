@@ -11,6 +11,7 @@ from assessment_agent.bank import (
     bank_item_id,
     lecture_topic_id,
     order_tiers,
+    stem_problems,
     tier_beta,
     validate_bank,
 )
@@ -123,3 +124,16 @@ class TestValidation:
         legacy = Item(id="ob-x", topic_id="t", context="onboarding", stem="?", options=["a", "b", "c"], correct_index=0,
                       allows_not_sure=True, explanation="e")
         assert any("not a bank item" in p for p in validate_bank([legacy], []))
+
+
+class TestStems:
+    def test_flags_a_stem_that_never_asks_anything(self):
+        g = gen()
+        g.advanced.stem = "A colleague claims the chart proves causation."
+        g.basic.stem = "What is a chart?  "
+        assert stem_problems(g) == ["advanced: the stem must end with a question that tells the student what to do"]
+
+    def test_a_question_after_a_claim_is_fine(self):
+        g = gen()
+        g.applied.stem = "A colleague claims the chart proves causation; what is wrong with that?"
+        assert stem_problems(g) == []

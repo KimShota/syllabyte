@@ -7,7 +7,6 @@ import zlib
 from pathlib import Path
 
 import pytest
-
 from assessment_agent.bank import TIERS, validate_bank
 from syllabyte_common.models import KnowledgeUnit, SlideRef
 
@@ -107,6 +106,21 @@ class TestPrompt:
         p = script.bank_prompt(KUS[1], ["Title of ku-a"], "[slide 5]\ntext")
         for needle in ("basic", "applied", "advanced", "Remember / Understand", "Evaluate / Create", "Title of ku-a", "ku_difficulty", "[slide 5]"):
             assert needle in p
+
+    def test_keeps_the_questions_inside_the_slides_and_the_distractors_honest(self):
+        p = script.bank_prompt(KUS[0], [], "x")
+        for needle in (
+            "answerable from the slides below alone",
+            "never bring in an analogy",
+            "Never make a wrong option restate the claim",
+            "must not be the same lookup",
+            "do not always open with",
+        ):
+            assert needle in p
+
+    def test_lets_a_stem_carry_a_setup_but_always_ends_in_a_question(self):
+        assert "under 40 words" in script.BANK_SYSTEM and "under 28 words" not in script.BANK_SYSTEM
+        assert "always ends with a question mark" in script.BANK_SYSTEM
 
     def test_does_not_ask_for_per_item_difficulty(self):
         assert "difficulty_prior" not in script.BANK_SYSTEM
