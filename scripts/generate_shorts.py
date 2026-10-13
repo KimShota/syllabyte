@@ -93,6 +93,141 @@ def save_segment_result(seg_dir: Path, key: str, result: RenderResult) -> None:
     )
 
 
+def make_ku_video(
+    ku: KnowledgeUnit,
+    corpus: CourseCorpus,
+    ku_dir: Path,
+    *,
+    manifest: RunManifest,
+    save_manifest=lambda: None,
+    level: int | None = None,
+    prereq_titles: list[str] | None = None,
+    tts: str = "kokoro",
+    quality: str = "low",
+    parallel_segments: int = 5,
+    skip_critic: bool = False,
+    allow_fallback: bool = False,
+    force_from: int = len(STAGES),
+) -> Path | None:
+    """One KU's video: script (at `level` when given) -> tts -> animate ->
+    assemble, under `ku_dir`, reusing whatever each stage already wrote there
+    unless `force_from` names that stage or an earlier one. Returns the
+    final.mp4, or None when a segment fell back to the caption template and
+    `allow_fallback` is off. `save_manifest` is called after each stage that
+    spent tokens."""
+    # Stage 3: script + critique
+    script_path = ku_dir / "script.json"
+    critique_path = ku_dir / "critique.json"
+    if force_from <= stage_index("script") or not script_path.exists():
+        log(f"[3/6] script: writing + critiquing script for {ku.id}")
+        script, critique_result = write_script_with_critique(
+            ku, corpus, manifest=manifest, skip_critic=skip_critic,
+            level=level, prereq_titles=prereq_titles,
+        )
+        script_path.write_text(script.model_dump_json(indent=2))
+        critique_path.write_text(critique_result.model_dump_json(indent=2))
+        save_manifest()
+    else:
+        log(f"[3/6] script: reusing existing script for {ku.id}")
+        script = Script.model_validate_json(script_path.read_text())
+
+    # Stage 4: TTS
+    audio_dir = ku_dir / "audio"
+    audio_manifest_path = audio_dir / "segment_audio.json"
+    if force_from <= stage_index("tts") or not audio_manifest_path.exists():
+        log(f"[4/6] tts: synthesizing narration ({tts})")
+        segment_audios = synthesize_segments(script, audio_dir, backend_name=tts)
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        audio_manifest_path.write_text(
+            SegmentAudioList(items=segment_audios).model_dump_json(indent=2)
+        )
+        concat_wavs(segment_audios, audio_dir / "narration.wav")
+        build_srt(script, segment_audios, audio_dir / "captions.srt")
+    else:
+        log(f"[4/6] tts: reusing existing audio for {ku.id}")
+        segment_audios = SegmentAudioList.model_validate_json(
+            audio_manifest_path.read_text()
+        ).items
+
+    # Stage 5: animate
+    render_dir = ku_dir / "render"
+    render_results_path = render_dir / "render_results.json"
+    if force_from <= stage_index("animate") or not render_results_path.exists():
+        log(f"[5/6] animate: rendering {len(script.segments)} segment(s), quality={quality}")
+        if missing := missing_latex_tools():
+            raise SystemExit(
+                f"LaTeX is missing ({', '.join(missing)} not on PATH), so formulas can't render. "
+                "Install it as in README.md step 2 (brew install --cask basictex, then the tlmgr "
+                "packages) and open a new shell."
+            )
+        forced = force_from <= stage_index("animate")
+
+        def animate_segment(i: int, seg: Segment, audio) -> RenderResult:
+            seg_dir = render_dir / f"seg_{i}"
+            key = segment_render_key(seg, audio.beat_durations, quality)
+            if not forced and (done := load_segment_result(seg_dir, key)) is not None:
+                log(f"    segment {i}: reusing finished render (tier={done.tier})")
+                return done
+            t0 = time.monotonic()
+            result = render_segment(
+                seg, i, audio.beat_durations, seg_dir,
+                quality=quality, manifest=manifest,
+            )
+            save_segment_result(seg_dir, key, result)
+            log(
+                f"    segment {i}: tier={result.tier} attempts={result.attempts} "
+                f"({time.monotonic() - t0:.1f}s)"
+            )
+            return result
+
+        # Segments are independent (own seg_i dir and Seg{i} class) and
+        # spend their time waiting on the API or a manim subprocess, so
+        # threads run them concurrently. Results keep segment order.
+        with ThreadPoolExecutor(max_workers=parallel_segments) as pool:
+            futures = [
+                pool.submit(animate_segment, i, RenderSegment(**seg.model_dump(), colour_key=script.colour_key), audio)
+                for i, (seg, audio) in enumerate(zip(script.segments, segment_audios))
+            ]
+            render_results = [f.result() for f in futures]
+        render_dir.mkdir(parents=True, exist_ok=True)
+        render_results_path.write_text(
+            RenderResultList(items=render_results).model_dump_json(indent=2)
+        )
+        save_manifest()
+    else:
+        log(f"[5/6] animate: reusing existing renders for {ku.id}")
+        render_results = RenderResultList.model_validate_json(
+            render_results_path.read_text()
+        ).items
+
+    # Fallback segments show narration captions instead of a real visual;
+    # don't ship a video containing one unless explicitly allowed.
+    fallback = [r.segment_index for r in render_results if r.tier == "template_fallback"]
+    if fallback and not allow_fallback:
+        log(
+            f"    !! {ku.id}: segment(s) {fallback} fell back to the caption template "
+            "(no real visual). Not assembling. Re-run with --from-stage animate to "
+            "retry, or pass --allow-fallback to ship it anyway."
+        )
+        return None
+    if fallback:
+        log(f"    !! {ku.id}: shipping with caption-fallback segment(s) {fallback} (--allow-fallback)")
+
+    # Stage 6: assemble
+    final_path = ku_dir / "final.mp4"
+    if force_from <= stage_index("assemble") or not final_path.exists():
+        log(f"[6/6] assemble: syncing + concatenating")
+        diagnostics = assemble_ku_video(
+            ku_dir, render_results, segment_audios,
+            audio_dir / "narration.wav",
+        )
+        (ku_dir / "assembly_diagnostics.json").write_text(json.dumps(diagnostics, indent=2))
+        log(f"    -> {diagnostics['final_path']} (max drift {diagnostics['max_abs_drift_seconds']:.2f}s)")
+    else:
+        log(f"[6/6] assemble: {ku.id} already has final.mp4")
+    return final_path
+
+
 def run(args: argparse.Namespace) -> None:
     run_dir = RunDir(args.out)
     force_from = stage_index(args.from_stage) if args.from_stage else len(STAGES)
@@ -143,118 +278,13 @@ def run(args: argparse.Namespace) -> None:
     failed_kus: list[str] = []
     for ku in selected:
         log(f"--- KU: {ku.id} ({ku.title}) ---")
-        ku_dir = run_dir.ku_dir(ku.id)
-
-        # Stage 3: script + critique
-        script_path = ku_dir / "script.json"
-        critique_path = ku_dir / "critique.json"
-        if force_from <= stage_index("script") or not script_path.exists():
-            log(f"[3/6] script: writing + critiquing script for {ku.id}")
-            script, critique_result = write_script_with_critique(
-                ku, corpus, manifest=manifest, skip_critic=args.skip_critic
-            )
-            script_path.write_text(script.model_dump_json(indent=2))
-            critique_path.write_text(critique_result.model_dump_json(indent=2))
-            run_dir.save_json(manifest_path, manifest)
-        else:
-            log(f"[3/6] script: reusing existing script for {ku.id}")
-            script = Script.model_validate_json(script_path.read_text())
-
-        # Stage 4: TTS
-        audio_dir = ku_dir / "audio"
-        audio_manifest_path = audio_dir / "segment_audio.json"
-        if force_from <= stage_index("tts") or not audio_manifest_path.exists():
-            log(f"[4/6] tts: synthesizing narration ({args.tts})")
-            segment_audios = synthesize_segments(script, audio_dir, backend_name=args.tts)
-            audio_dir.mkdir(parents=True, exist_ok=True)
-            audio_manifest_path.write_text(
-                SegmentAudioList(items=segment_audios).model_dump_json(indent=2)
-            )
-            concat_wavs(segment_audios, audio_dir / "narration.wav")
-            build_srt(script, segment_audios, audio_dir / "captions.srt")
-        else:
-            log(f"[4/6] tts: reusing existing audio for {ku.id}")
-            segment_audios = SegmentAudioList.model_validate_json(
-                audio_manifest_path.read_text()
-            ).items
-
-        # Stage 5: animate
-        render_dir = ku_dir / "render"
-        render_results_path = render_dir / "render_results.json"
-        if force_from <= stage_index("animate") or not render_results_path.exists():
-            log(f"[5/6] animate: rendering {len(script.segments)} segment(s), quality={args.quality}")
-            if missing := missing_latex_tools():
-                raise SystemExit(
-                    f"LaTeX is missing ({', '.join(missing)} not on PATH), so formulas can't render. "
-                    "Install it as in README.md step 2 (brew install --cask basictex, then the tlmgr "
-                    "packages) and open a new shell."
-                )
-            forced = force_from <= stage_index("animate")
-
-            def animate_segment(i: int, seg: Segment, audio) -> RenderResult:
-                seg_dir = render_dir / f"seg_{i}"
-                key = segment_render_key(seg, audio.beat_durations, args.quality)
-                if not forced and (done := load_segment_result(seg_dir, key)) is not None:
-                    log(f"    segment {i}: reusing finished render (tier={done.tier})")
-                    return done
-                t0 = time.monotonic()
-                result = render_segment(
-                    seg, i, audio.beat_durations, seg_dir,
-                    quality=args.quality, manifest=manifest,
-                )
-                save_segment_result(seg_dir, key, result)
-                log(
-                    f"    segment {i}: tier={result.tier} attempts={result.attempts} "
-                    f"({time.monotonic() - t0:.1f}s)"
-                )
-                return result
-
-            # Segments are independent (own seg_i dir and Seg{i} class) and
-            # spend their time waiting on the API or a manim subprocess, so
-            # threads run them concurrently. Results keep segment order.
-            with ThreadPoolExecutor(max_workers=args.parallel_segments) as pool:
-                futures = [
-                    pool.submit(animate_segment, i, RenderSegment(**seg.model_dump(), colour_key=script.colour_key), audio)
-                    for i, (seg, audio) in enumerate(zip(script.segments, segment_audios))
-                ]
-                render_results = [f.result() for f in futures]
-            render_dir.mkdir(parents=True, exist_ok=True)
-            render_results_path.write_text(
-                RenderResultList(items=render_results).model_dump_json(indent=2)
-            )
-            run_dir.save_json(manifest_path, manifest)
-        else:
-            log(f"[5/6] animate: reusing existing renders for {ku.id}")
-            render_results = RenderResultList.model_validate_json(
-                render_results_path.read_text()
-            ).items
-
-        # Fallback segments show narration captions instead of a real visual;
-        # don't ship a video containing one unless explicitly allowed.
-        fallback = [r.segment_index for r in render_results if r.tier == "template_fallback"]
-        if fallback and not args.allow_fallback:
-            log(
-                f"    !! {ku.id}: segment(s) {fallback} fell back to the caption template "
-                "(no real visual). Not assembling. Re-run with --from-stage animate to "
-                "retry, or pass --allow-fallback to ship it anyway."
-            )
+        if make_ku_video(
+            ku, corpus, run_dir.ku_dir(ku.id), manifest=manifest,
+            save_manifest=lambda: run_dir.save_json(manifest_path, manifest),
+            tts=args.tts, quality=args.quality, parallel_segments=args.parallel_segments,
+            skip_critic=args.skip_critic, allow_fallback=args.allow_fallback, force_from=force_from,
+        ) is None:
             failed_kus.append(ku.id)
-            continue
-        if fallback:
-            log(f"    !! {ku.id}: shipping with caption-fallback segment(s) {fallback} (--allow-fallback)")
-
-        # Stage 6: assemble
-        final_path = ku_dir / "final.mp4"
-        if force_from <= stage_index("assemble") or not final_path.exists():
-            log(f"[6/6] assemble: syncing + concatenating")
-            diagnostics = assemble_ku_video(
-                ku_dir, render_results, segment_audios,
-                audio_dir / "narration.wav",
-            )
-            (ku_dir / "assembly_diagnostics.json").write_text(json.dumps(diagnostics, indent=2))
-            log(f"    -> {diagnostics['final_path']} (max drift {diagnostics['max_abs_drift_seconds']:.2f}s)")
-        else:
-            log(f"[6/6] assemble: {ku.id} already has final.mp4")
 
     if failed_kus:
         log(f"FAILED (no final.mp4 for): {failed_kus}. Run directory: {run_dir.root}")

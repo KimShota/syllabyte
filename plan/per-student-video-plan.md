@@ -1,6 +1,6 @@
 # Per-student video generation: plan
 
-Branch: `per-student-video` (from `main` at cb45549). Status: **step 2 (level in script generation) built and tried on real output (2026-10-13), revised the same day; step 4 (speed) first measurement done; steps 3 and 5 not started.**
+Branch: `per-student-video` (from `main` at cb45549). Status: **step 2 (level in script generation) built and tried on real output (2026-10-13), revised the same day; steps 3 (cache and job) and 4 (speed) built; step 5 (app wiring) waits for the Phase 1 backend.**
 Roadmap item 4 of `plan/per-ku-profiling-plan.md`. Context: the student uploads their own course, each KU's video is made on
 demand at that student's level for that KU, and "fast" means the first video is ready within about 3 minutes of a level being set
 and each later one before the student needs it (per-KU plan D15, D16).
@@ -123,7 +123,20 @@ purple), and every formula is typeset with real subscripts. Left over:
 
 **Machine setup:** LaTeX (BasicTeX) installed 2026-10-13; `generate_shorts` now refuses to animate without it. Spend: ≈ $9.6 of the $10 budget.
 
+## Step 3: cache and on-demand job (built 2026-10-13, no spend)
+
+- **`syllabyte_common.video_jobs`:** `video_key(corpus, ku, level, prereq_titles)` hashes what a video is made from (each cited slide's text,
+  notes and image bytes, the KU, its prerequisites' titles, the level, `PIPELINE_VERSION`), so a re-uploaded deck with the same slides hits the
+  cache and any change misses it. `VideoStore` keeps one job per key (`queued` / `making` / `ready` / `failed`) under `runs/videos/`, behind an
+  exclusive file lock: `request` returns a ready video or queues it (asking sooner moves it up; a deleted file or a failure under
+  `MAX_ATTEMPTS` = 2 queues it again); workers take the lowest priority number (playlist position) first, oldest first on ties; `recover` puts
+  jobs a dead worker left `making` back in the queue. The generator is passed in, so the Phase 1 backend can keep the interface over Mongo/Celery.
+- **`generate_shorts.make_ku_video`:** the per-KU stages (script at a level → tts → animate → assemble), extracted from the CLI loop, which now
+  calls it (checked: re-running a finished run reuses every stage).
+- **`scripts/video_jobs.py`:** `request --course DIR --want KU:LEVEL ...` (in playlist order), `work --workers N`, `status`.
+- **Checked:** 16 tests with a stubbed generator (cache hits, priority order, retries, parallel workers make each video once, crash recovery, the
+  CLI), and the real generator through the queue on an already-made video: ready, then served from the cache, with no API calls.
+
 ## Next
 
-- 3. The cache and the on-demand job (built and tested with stubbed generation, no spend).
 - Further real runs need a new budget.
