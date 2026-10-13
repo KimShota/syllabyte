@@ -28,6 +28,8 @@ from script_generation_agent.critic import CRITIQUE_THRESHOLD, MAX_ROUNDS, criti
 from script_generation_agent.prompts import (
     BASE_SYSTEM_PROMPT,
     BASE_WORDS,
+    CRITIQUE_BASE_SYSTEM_PROMPT,
+    CRITIQUE_EXAMPLE_SYSTEM_PROMPT,
     EXAMPLE_WORDS,
     build_base_prompt,
     build_example_prompt,
@@ -163,6 +165,29 @@ def write_example(
     return _with_retry(make, lambda seg: validate_example(seg, level), f"KU {ku.id} level {level} example")  # type: ignore[arg-type,return-value]
 
 
+def write_base_with_critique(
+    ku: KnowledgeUnit, corpus: CourseCorpus, *, model: str = DEFAULT_MODEL, manifest: RunManifest | None = None,
+    skip_critic: bool = False,
+) -> tuple[BaseScript, CritiqueResult]:
+    """The shared base, critiqued once for every level (a flaw here would otherwise fail each level's example round)."""
+    result = CritiqueResult(ku_id=ku.id)
+    extra = ""
+    base: BaseScript | None = None
+    for round_num in range(1, MAX_ROUNDS + 1):
+        base = write_base_script(ku, corpus, model=model, manifest=manifest, extra_instruction=extra)
+        if skip_critic:
+            result.passed = True
+            return base, result
+        score = critique(base, corpus, ku, model=model, manifest=manifest, system=CRITIQUE_BASE_SYSTEM_PROMPT, stage="critique_base")  # type: ignore[arg-type]
+        result.rounds.append(score)
+        if score.min_score >= CRITIQUE_THRESHOLD:
+            result.passed = True
+            return base, result
+        extra = "The previous base script scored below threshold. Issues found:\n" + "\n".join(f"- {i}" for i in score.issues) + "\nFix these in the new script."
+    assert base is not None
+    return base, result
+
+
 def write_leveled_script(
     ku: KnowledgeUnit, corpus: CourseCorpus, level: Level, *, base: BaseScript | None = None,
     prereq_titles: list[str] | None = None, model: str = DEFAULT_MODEL, manifest: RunManifest | None = None,
@@ -170,10 +195,12 @@ def write_leveled_script(
 ) -> tuple[Script, BaseScript, CritiqueResult]:
     """The script for `ku` at `level`, plus the base it was built on (pass it back in for the other levels).
 
-    The critic scores the composed script; if it falls below threshold only the example is rewritten, since the base
-    is shared and was already accepted.
+    If no base is given one is written and critiqued first. The critic then scores the composed script but only
+    for the worked-example segment; a low score rewrites only the example, since the base is shared and was
+    already accepted.
     """
-    base = base or write_base_script(ku, corpus, model=model, manifest=manifest)
+    if base is None:
+        base, _ = write_base_with_critique(ku, corpus, model=model, manifest=manifest, skip_critic=skip_critic)
     result = CritiqueResult(ku_id=ku.id)
     extra = ""
     script: Script | None = None
@@ -186,7 +213,7 @@ def write_leveled_script(
         if skip_critic:
             result.passed = True
             return script, base, result
-        score = critique(script, corpus, ku, model=model, manifest=manifest)
+        score = critique(script, corpus, ku, model=model, manifest=manifest, system=CRITIQUE_EXAMPLE_SYSTEM_PROMPT, stage=f"critique_example_l{level}")
         result.rounds.append(score)
         if score.min_score >= CRITIQUE_THRESHOLD:
             result.passed = True
@@ -230,4 +257,7 @@ if __name__ == "__main__":
         (out / f"script.L{level}.json").write_text(script.model_dump_json(indent=2))
         (out / f"critique.L{level}.json").write_text(crit.model_dump_json(indent=2))
         print(f"level {level}: {script.word_count} words, passed={crit.passed}, {time.monotonic() - t0:.0f}s")
+    (out / "manifest.json").write_text(manifest.model_dump_json(indent=2))
+    for c in manifest.llm_calls:
+        print(f"  {c.stage:24s} {c.wall_seconds:6.1f}s  out {c.output_tokens:>6,} tokens")
     print(f"LLM cost ≈ ${manifest.total_cost_usd(PRICE_PER_MTOK):.2f}")

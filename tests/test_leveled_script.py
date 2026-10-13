@@ -10,12 +10,16 @@ from script_generation_agent.leveled import (
     validate_base,
     validate_example,
     write_base_script,
+    write_base_with_critique,
     write_example,
     write_leveled_script,
 )
 from script_generation_agent.prompts import (
     BASE_SYSTEM_PROMPT,
     BASE_WORDS,
+    CRITIQUE_BASE_SYSTEM_PROMPT,
+    CRITIQUE_EXAMPLE_SYSTEM_PROMPT,
+    CRITIQUE_SYSTEM_PROMPT,
     EXAMPLE_WORDS,
     LEVEL_EXAMPLE_BRIEF,
     SCRIPT_SYSTEM_PROMPT,
@@ -92,10 +96,17 @@ class TestPrompts:
         assert "recaps, in plain words" in u1 and "“Earlier idea”" in u1 and "FULL, step-by-step" in u1
         assert "ONE worked example" in u2 and "Do not recap" in u2 and "“Earlier idea”" not in u2
         assert "'what if' question" in u3 and "Do not work an example" in u3
-        assert len({LEVEL_EXAMPLE_BRIEF[1], LEVEL_EXAMPLE_BRIEF[2], LEVEL_EXAMPLE_BRIEF[3]}) == 3
+        assert len({LEVEL_EXAMPLE_BRIEF[1], LEVEL_EXAMPLE_BRIEF[2], LEVEL_EXAMPLE_BRIEF[3], LEVEL_EXAMPLE_BRIEF["1_no_prerequisite"]}) == 4
 
-    def test_a_level_one_recap_without_prerequisites_still_reads_sensibly(self):
-        assert "the basics this idea starts from" in build_example_prompt(KU, "{}", "M", 1, [])
+    def test_a_level_one_ku_with_no_prerequisite_gets_no_recap(self):
+        # recapping would only repeat the core idea the viewer heard one segment earlier
+        p = build_example_prompt(KU, "{}", "M", 1, [])
+        assert "builds on nothing earlier, so do not recap" in p and "recaps, in plain words" not in p
+        assert "FULL, step-by-step" in p
+
+    def test_levels_two_and_three_do_not_depend_on_prerequisites(self):
+        for level in (2, 3):
+            assert build_example_prompt(KU, "{}", "M", level, []) == build_example_prompt(KU, "{}", "M", level, ["X"])
 
     def test_budgets_keep_every_composed_script_in_the_150_220_word_window(self):
         for level, (lo, hi) in EXAMPLE_WORDS.items():
@@ -249,3 +260,46 @@ class TestLeveledScript:
         fake(write_example_l3=[example(3)])  # 100 + 47 = 147 words, under the 150 minimum
         with pytest.raises(ScriptValidationError, match="word_count"):
             write_leveled_script(KU, CORPUS, 3, base=base_script(100), skip_critic=True)
+
+
+class TestBaseCritique:
+    def test_the_base_is_critiqued_once_and_rewritten_with_the_issues_fed_back(self, fake, monkeypatch):
+        f = fake(write_base_script=[base_script(), base_script(118)])
+        scores = iter([BAD, GOOD])
+        calls = []
+        monkeypatch.setattr(leveled, "critique", lambda *a, **k: (calls.append(k["stage"]), next(scores))[1])
+        base, result = write_base_with_critique(KU, CORPUS)
+        assert result.passed and len(result.rounds) == 2 and calls == ["critique_base", "critique_base"]
+        assert "the example uses a number that is not on the slide" in f.calls[1][1]
+        assert base.word_count == base_script(118).word_count
+
+    def test_levels_built_on_an_accepted_base_never_critique_or_rewrite_it(self, fake, monkeypatch):
+        f = fake(write_example_l1=[example(1)], write_example_l2=[example(2)])
+        seen = []
+        monkeypatch.setattr(leveled, "critique", lambda *a, **k: (seen.append((k["stage"], k["system"])), GOOD)[1])
+        base = base_script()
+        for level in (1, 2):
+            write_leveled_script(KU, CORPUS, level, base=base)
+        assert [c[0] for c in f.calls] == ["write_example_l1", "write_example_l2"]  # no base writes
+        assert [s[0] for s in seen] == ["critique_example_l1", "critique_example_l2"]
+        assert all(s[1] == CRITIQUE_EXAMPLE_SYSTEM_PROMPT for s in seen)
+
+    def test_without_a_base_one_is_written_and_critiqued_first(self, fake, monkeypatch):
+        f = fake(write_base_script=[base_script()], write_example_l2=[example(2)])
+        stages = []
+        monkeypatch.setattr(leveled, "critique", lambda *a, **k: (stages.append(k["stage"]), GOOD)[1])
+        write_leveled_script(KU, CORPUS, 2)
+        assert stages == ["critique_base", "critique_example_l2"]
+        assert [c[0] for c in f.calls] == ["write_base_script", "write_example_l2"]
+
+    def test_the_scoped_critic_prompts_keep_the_original_rubric_and_add_their_scope(self):
+        for p in (CRITIQUE_BASE_SYSTEM_PROMPT, CRITIQUE_EXAMPLE_SYSTEM_PROMPT):
+            assert p.startswith(CRITIQUE_SYSTEM_PROMPT)
+        assert "do not penalize the missing example" in CRITIQUE_BASE_SYSTEM_PROMPT
+        assert "ONLY for the worked-example segment" in CRITIQUE_EXAMPLE_SYSTEM_PROMPT
+
+    def test_skipping_the_critic_writes_the_base_and_never_asks_for_a_score(self, fake, monkeypatch):
+        fake(write_base_script=[base_script()])
+        monkeypatch.setattr(leveled, "critique", lambda *a, **k: pytest.fail("the critic should not run"))
+        base, result = write_base_with_critique(KU, CORPUS, skip_critic=True)
+        assert result.passed and base.word_count == base_script().word_count

@@ -174,11 +174,18 @@ Write the 4-segment base script (prepare, initiate, deliver, end) for this Knowl
 
 # What the worked-example segment is at each level. Level 1: a recap of what this idea builds on, then the full
 # worked example. Level 2: one worked example, key steps only. Level 3: no example, a "what if" question.
-LEVEL_EXAMPLE_BRIEF = {
+LEVEL_EXAMPLE_BRIEF: dict[int | str, str] = {
     1: (
         "This viewer is new to the idea (Level 1, foundations). Open with ONE short beat that recaps, in plain words, "
         "the earlier idea this one builds on: {prereqs}. Then give a FULL, step-by-step worked example in 3 or 4 beats, "
         "one small step per beat, naming each quantity as you use it. Go slowly."
+    ),
+    # Level 1 for a KU that builds on nothing: there is no earlier idea to recap, and recapping the core idea would
+    # only repeat the segment just before this one.
+    "1_no_prerequisite": (
+        "This viewer is new to the idea (Level 1, foundations). This idea builds on nothing earlier, so do not recap; "
+        "the core idea was just stated. Give a FULL, step-by-step worked example in 4 or 5 beats, one small step per beat, "
+        "naming each quantity as you use it. Go slowly."
     ),
     2: (
         "This viewer has the core of the idea (Level 2). Give ONE worked example in 3 or 4 beats, key steps only. "
@@ -214,8 +221,9 @@ Hard constraints (a segment that violates these will be rejected by an automatic
 
 
 def build_example_prompt(ku: KnowledgeUnit, base_script_json: str, source_material: str, level: int, prereq_titles: list[str]) -> str:
-    prereqs = "; ".join(f"“{t}”" for t in prereq_titles) or "the basics this idea starts from"
-    brief = LEVEL_EXAMPLE_BRIEF[level].format(prereqs=prereqs)
+    prereqs = "; ".join(f"“{t}”" for t in prereq_titles)
+    key = "1_no_prerequisite" if level == 1 and not prereq_titles else level
+    brief = LEVEL_EXAMPLE_BRIEF[key].format(prereqs=prereqs)
     return f"""\
 Knowledge Unit: {ku.title}
 Summary: {ku.summary}
@@ -256,6 +264,25 @@ literally.
 
 List every concrete issue you find in `issues` (empty list if none). Be \
 specific — cite the segment (by phase), the beat number, and what's wrong.
+"""
+
+
+# The critic reviews the shared base once, then each level's worked example on its own: a problem in a segment that
+# is shared by every level can only be fixed in the base, and a rewrite of the example cannot fix it.
+CRITIQUE_BASE_SYSTEM_PROMPT = CRITIQUE_SYSTEM_PROMPT + """\
+
+This script is the shared part of a video: four segments (prepare, initiate, deliver, end). A worked-example \
+segment that differs per viewer is inserted between the deliver and end segments later, so do not penalize the \
+missing example or the length. Judge the four phases in order, and flag any claim, term or number in these \
+segments that the source does not support.
+"""
+
+CRITIQUE_EXAMPLE_SYSTEM_PROMPT = CRITIQUE_SYSTEM_PROMPT + """\
+
+The first, third... segments other than the worked example (the SECOND "deliver" segment, which is the one \
+written for this particular viewer) were already reviewed and accepted: they are shared by every viewer. Score \
+and report issues ONLY for the worked-example segment, judged in the context of the whole script. Do not \
+report issues in any other segment.
 """
 
 
