@@ -153,3 +153,44 @@ button:disabled {
     height: min(calc(100svh - 150px), 700px);
   }
 }
+
+/* The TLX scale (app/study): a 0-100 line. With no answer yet the thumb is hidden, so nothing looks preselected. */
+.tlx-range {
+  appearance: none;
+  height: 44px;
+  background: transparent;
+  cursor: pointer;
+}
+.tlx-range::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: 9999px;
+  background: var(--color-line);
+}
+.tlx-range::-moz-range-track {
+  height: 8px;
+  border-radius: 9999px;
+  background: var(--color-line);
+}
+.tlx-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 28px;
+  height: 28px;
+  margin-top: -10px;
+  border-radius: 9999px;
+  background: var(--color-primary);
+  border: 3px solid white;
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+.tlx-range::-moz-range-thumb {
+  width: 24px;
+  height: 24px;
+  border-radius: 9999px;
+  background: var(--color-primary);
+  border: 3px solid white;
+}
+.tlx-range-unset::-webkit-slider-thumb {
+  opacity: 0;
+}
+.tlx-range-unset::-moz-range-thumb {
+  opacity: 0;
+}

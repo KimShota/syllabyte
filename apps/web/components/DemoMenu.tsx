@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api/client";
-import { downloadText, fastOnboard, loadPersona, resetDemo, sessionLogJson, setLogDeclined, setParticipantCode, showEmptyPlaylist, simulateNextDay, simulateNextWeek } from "@/lib/api/demo";
+import { downloadText, endFirstModule, fastOnboard, loadPersona, resetDemo, sessionLogJson, setCondition, setLogDeclined, setParticipantCode, showEmptyPlaylist, simulateNextDay, simulateNextWeek } from "@/lib/api/demo";
 import { FIX } from "@/lib/fixtures";
 import { getState, isOnboarded, useEventCount, useStoreVersion } from "@/lib/store";
 import { Button, SegmentedRow, TextLink } from "./ui/primitives";
@@ -104,6 +104,14 @@ function DemoMenu({ onClose }: { onClose: () => void }) {
       ],
     },
     {
+      title: "Study questionnaires (research consent)",
+      items: [
+        { label: "About you (baseline)", run: () => go("/study?b=baseline", ensureConsent) },
+        { label: "Module 1 questionnaire", run: () => go("/study?b=module-1", async () => { await onboarded(); endFirstModule(); }) },
+        { label: "Questionnaire card on Playlist", run: () => go("/playlist", async () => { await onboarded(); endFirstModule(); }) },
+      ],
+    },
+    {
       title: "Lecture checks (scripted student)",
       items: [
         { label: "Check due", run: () => go("/playlist", () => loadPersona("precheck")) },
@@ -124,6 +132,9 @@ function DemoMenu({ onClose }: { onClose: () => void }) {
             <Button full={false} variant="secondary" onClick={() => setParticipantCode(code)}>Save</Button>
           </div>
           <p className="meta mt-2">Stamped on every event. {events} events logged this session.</p>
+          <p className="mb-1 mt-4 font-bold">Study condition</p>
+          <SegmentedRow label="Study condition" value={s.condition} onChange={(v) => setCondition(v)} options={[{ value: "A", label: "A · SyllaByte" }, { value: "B", label: "B · Control" }]} />
+          <p className="meta mt-2">Set by the researcher; kept through Reset demo. For now B only changes the questionnaires (no trust scale).</p>
         </section>
 
         {groups.map((g) => (
@@ -148,6 +159,7 @@ function DemoMenu({ onClose }: { onClose: () => void }) {
             <SegmentedRow label="Log declined" value={s.flags.log_declined ? "on" : "off"} onChange={(v) => setLogDeclined(v === "on")} options={[{ value: "on", label: "On (usability sessions)" }, { value: "off", label: "Off (research rule)" }]} />
           </div>
           <Button variant="secondary" onClick={() => downloadText(`session-${s.participant_code ?? "anon"}.json`, sessionLogJson())}>Download session log (JSON)</Button>
+          <Button variant="secondary" onClick={async () => downloadText(`study-${s.participant_code ?? "anon"}.csv`, await api.exportStudyCsv(), "text/csv")}>Download study responses (CSV)</Button>
           <Button variant="secondary" onClick={() => go("/debug/events")}>Open live event timeline</Button>
           {confirmReset ? (
             <div className="rounded-card bg-gap-bg p-4">

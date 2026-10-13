@@ -71,3 +71,10 @@ export async function answerCurrent(page: Page, how: "first" | "not_sure" = "fir
   else await page.locator('section[aria-labelledby="q-stem"] [role=group] button').first().click();
   await page.getByRole("button", { name: /^(Next|See my levels|Start the lecture)$/ }).click();
 }
+
+/** After "I agree", research participants get "About you" first (plan/study-instruments-plan.md I6); close it for later. */
+export async function closeAboutYou(page: Page) {
+  await expect(page.getByRole("heading", { name: "About you" })).toBeVisible();
+  await page.getByRole("button", { name: "Close, your answers are saved" }).click();
+  await expect(page).toHaveURL(/onboarding/);
+}

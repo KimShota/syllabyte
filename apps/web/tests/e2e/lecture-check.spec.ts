@@ -42,7 +42,8 @@ test.describe("the check before a lecture", () => {
     const before = (await stateOf(page)).levels;
     await demoTool(page, "Simulate next week (+7 days)");
     await page.goto("/playlist");
-    await page.getByRole("button", { name: "Not now" }).click();
+    // scoped: a research participant's playlist can also carry a questionnaire card with its own "Not now"
+    await page.locator("section").filter({ hasText: "A quick check before this lecture." }).getByRole("button", { name: "Not now" }).click();
     await expect(page.getByText("A quick check before this lecture.")).toHaveCount(0);
     expect((await stateOf(page)).levels).toEqual(before);
   });

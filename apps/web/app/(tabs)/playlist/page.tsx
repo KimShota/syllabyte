@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { LevelUpdatesCard } from "@/components/LevelUpdatesCard";
 import { NextSessionCard } from "@/components/NextSessionCard";
 import { PrecheckCard } from "@/components/PrecheckCard";
+import { StudyCard } from "@/components/StudyCard";
 import { SkipReasonSheet } from "@/components/SkipSheets";
 import { Button, Eyebrow, InfoCard, LinkButton, TextLink, Title } from "@/components/ui/primitives";
 import { Sheet } from "@/components/ui/Sheet";
@@ -64,6 +65,7 @@ export default function PlaylistPage() {
       </p>
 
       <div className="mt-5 flex flex-col gap-3">
+        <StudyCard />
         {pl.precheck && <PrecheckCard check={pl.precheck} />}
         <LevelUpdatesCard />
 

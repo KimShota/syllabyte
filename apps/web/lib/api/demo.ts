@@ -1,4 +1,5 @@
 import { FIX } from "@/lib/fixtures";
+import { studyModules } from "@/lib/logic/instruments";
 import { getState, isOnboarded, mutate, replaceState, resetState } from "@/lib/store";
 import type { Condition, Item } from "@/lib/types";
 import { DAY } from "@/lib/util";
@@ -34,6 +35,17 @@ export function simulateNextWeek(): void {
 export function setParticipantCode(code: string): void {
   mutate((s) => {
     s.participant_code = code.trim() || null;
+  });
+}
+
+/** Moves the demo clock just past module 1's last lecture week, so its questionnaire is due (plan I2). */
+export function endFirstModule(): void {
+  const [m1] = studyModules(FIX.course);
+  const lastWeek = Math.max(...FIX.course.lectures.filter((l) => m1.lectures.includes(l.n)).map((l) => l.week));
+  mutate((s) => {
+    const due = s.semester_start + lastWeek * 7 * DAY;
+    const t = Date.now() + s.clock_offset_ms;
+    if (t < due) s.clock_offset_ms += due - t + 60_000;
   });
 }
 

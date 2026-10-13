@@ -38,7 +38,8 @@ export function ConsentView({ markdown }: { markdown: string }) {
   async function choose(research: boolean) {
     setBusy(true);
     await api.postConsent(research);
-    router.push("/onboarding");
+    // Research participants answer "About you" (plan I6) before the baseline check; it can be skipped.
+    router.push(research ? "/study?b=baseline&next=/onboarding" : "/onboarding");
   }
 
   return (
@@ -50,7 +51,7 @@ export function ConsentView({ markdown }: { markdown: string }) {
 
       <div className="mt-6 flex flex-col gap-3">
         <InfoCard eyebrow="What we collect">
-          Your answers, how sure you said you were, which videos you skip, how you watch, and notes you save.
+          Your answers, how sure you said you were, which videos you skip, how you watch, notes you save, and a few short questionnaires.
         </InfoCard>
         <InfoCard eyebrow="Who sees it">
           The research team, without your name. Your instructor sees reports about video errors, not who sent them.

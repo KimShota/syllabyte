@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { answerCurrent, loggedVerbs, stateOf } from "./helpers";
+import { answerCurrent, closeAboutYou, loggedVerbs, stateOf } from "./helpers";
 
 test("welcome → consent → baseline → result → playlist, with events", async ({ page }) => {
   await page.goto("/welcome");
@@ -13,6 +13,7 @@ test("welcome → consent → baseline → result → playlist, with events", as
   await expect(page.getByText("TODO: replace this placeholder")).toBeVisible();
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "I agree to take part" }).click();
+  await closeAboutYou(page);
 
   // the baseline: 12 adaptive questions, Next is disabled until an answer is chosen, nothing preselected, no going back
   await expect(page.getByRole("heading", { name: "A quick check, no grade" })).toBeVisible();
@@ -53,6 +54,7 @@ test("welcome → consent → baseline → result → playlist, with events", as
 test("closing the tab mid-check resumes on the same question", async ({ page }) => {
   await page.goto("/consent");
   await page.getByRole("button", { name: "I agree to take part" }).click();
+  await closeAboutYou(page);
   await answerCurrent(page);
   await answerCurrent(page);
   await expect(page.getByText("Question 3 of 12")).toBeVisible();
@@ -70,6 +72,7 @@ test("a student who declines research still gets the whole app", async ({ page }
 test("'Pick my own level' leaves the check and sets every concept", async ({ page }) => {
   await page.goto("/consent");
   await page.getByRole("button", { name: "I agree to take part" }).click();
+  await closeAboutYou(page);
   await page.getByRole("button", { name: "Pick my own level" }).click();
   await page.getByRole("button", { name: /Level 3 · Advanced/ }).click();
   await page.getByRole("button", { name: "Use this level" }).click();

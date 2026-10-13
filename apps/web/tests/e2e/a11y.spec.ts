@@ -1,6 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
-import { jump, toPlaylist, VIDEOS } from "./helpers";
+import { closeAboutYou, jump, toPlaylist, VIDEOS } from "./helpers";
 
 // Plan §11/§12: WCAG 2.2 AA on every route and the sheets, in CI.
 const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
@@ -21,6 +21,9 @@ test("first-run screens", async ({ page }) => {
   await clean(page, "consent form sheet");
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "I agree to take part" }).click();
+  await expect(page.getByRole("heading", { name: "About you" })).toBeVisible();
+  await clean(page, "/study, About you");
+  await closeAboutYou(page);
   await clean(page, "/onboarding");
   await page.getByRole("button", { name: "Not sure yet" }).click();
   await clean(page, "/onboarding answered");

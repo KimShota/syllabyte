@@ -3,10 +3,10 @@
 TODO: replace this placeholder with the IRB-approved consent text before any student sees it.
 
 ## What this is
-SyllaByte makes short animated videos from your course's own slides and tunes them to what you already know. We are studying whether a mid-semester re-check helps students learn.
+SyllaByte makes short animated videos from your course's own slides and tunes them to what you already know, checking what you know before each lecture. We are studying whether this helps students learn and remember.
 
 ## What we collect
-Your answers to quick checks, how sure you said you were, which videos you skip and why, how you watch (play, pause, speed), and the notes you choose to save.
+Your answers to quick checks, how sure you said you were, which videos you skip and why, how you watch (play, pause, speed), and the notes you choose to save. You will also be asked a few short questionnaires: about you when you start, and about how studying felt at the end of each part of the course. You can skip any question.
 
 ## Who sees it
 The research team sees this without your name. Your instructor can see reports about errors in a video, but not who sent them.
