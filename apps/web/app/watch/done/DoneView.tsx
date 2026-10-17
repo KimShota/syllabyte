@@ -6,9 +6,9 @@ import { Fragment, useState } from "react";
 import { Loading, Screen } from "@/components/AppShell";
 import { Replay } from "@/components/ui/icons";
 import { Button, Card, Eyebrow, InfoCard, SegmentedRow, TextLink, Title } from "@/components/ui/primitives";
-import { api } from "@/lib/api/client";
+import { api } from "@syllabyte/core/api/client";
 import { useQuery } from "@/lib/api/hooks";
-import type { Difficulty, Jol } from "@/lib/types";
+import type { Difficulty, Jol } from "@syllabyte/core/types";
 import { useGate } from "@/lib/useGate";
 
 /** Screen 7. Nothing here is required; the delayed judgment becomes accurate at the next-day check. */

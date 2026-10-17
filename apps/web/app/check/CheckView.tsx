@@ -6,7 +6,7 @@ import { AdaptiveQuiz } from "@/components/AdaptiveQuiz";
 import { Loading } from "@/components/AppShell";
 import { Close } from "@/components/ui/icons";
 import { Chip } from "@/components/ui/primitives";
-import { FIX, lectureByN } from "@/lib/fixtures";
+import { FIX, lectureByN } from "@syllabyte/core/fixtures";
 import { useGate } from "@/lib/useGate";
 
 /** The check before a lecture's videos: new questions on the lecture, plus a few from earlier lectures (plan D8). */

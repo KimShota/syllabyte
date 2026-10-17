@@ -2,8 +2,8 @@
 Learner-facing models for the student UI (see plan/ui-ux-implementation-plan.md §5).
 
 Phase 0 uses these to validate the fixture JSON that `scripts/build_ui_fixtures.py`
-writes into apps/web/fixtures/. From Phase 1 the FastAPI layer serves the same
-shapes. The TypeScript mirrors live in apps/web/lib/types.ts — keep both in sync.
+writes into packages/core/fixtures/. From Phase 1 the FastAPI layer serves the same
+shapes. The TypeScript mirrors live in packages/core/src/types.ts — keep both in sync.
 """
 
 from __future__ import annotations

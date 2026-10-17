@@ -5,8 +5,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BackButton, Header } from "@/components/Header";
 import { Icon, type IconName } from "@/components/Icon";
 import { T } from "@/components/T";
+import { api } from "@syllabyte/core/api/client";
 import { COURSE } from "@/data/course";
-import { SPEEDS, speedLabel, useStore } from "@/state/store";
+import { SPEEDS, setPrefs, signOut, speedLabel, usePrefs, useQuery } from "@/state/app";
 import { colors, fonts, radius, shadow, space } from "@/theme/tokens";
 
 /** Mock student until sign-in exists (Phase 1). */
@@ -14,8 +15,8 @@ const STUDENT = { name: "Alex Rivera" };
 
 export default function Profile() {
   const insets = useSafeAreaInsets();
-  const { state, dispatch } = useStore();
-  const { captions, speed } = state.prefs;
+  const { speed } = usePrefs();
+  const captions = useQuery(() => api.getMe())?.settings.captions ?? true;
   const initials = STUDENT.name
     .split(" ")
     .map((w) => w[0])
@@ -47,13 +48,13 @@ export default function Profile() {
           <View style={styles.list}>
             <Group label="Academic Preferences" />
             <Row icon="closed-caption" label="Captions on by default">
-              <Toggle value={captions} label="Captions on by default" onChange={(on) => dispatch({ type: "setCaptions", on })} />
+              <Toggle value={captions} label="Captions on by default" onChange={(on) => void api.updateSettings({ captions: on })} />
             </Row>
             <Row icon="speed" label="Playback speed default">
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`Playback speed default, ${speed}x. Tap to change`}
-                onPress={() => dispatch({ type: "setSpeed", speed: SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length] })}
+                onPress={() => setPrefs({ speed: SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length] })}
                 style={styles.speedChip}
               >
                 <T variant="codeSm" color={colors.primaryDeep} style={{ fontFamily: fonts.monoSemibold }}>
@@ -76,7 +77,7 @@ export default function Profile() {
             <Pressable
               accessibilityRole="button"
               onPress={() => {
-                dispatch({ type: "signOut" });
+                signOut();
                 if (router.canDismiss()) router.dismissAll();
                 router.replace("/welcome");
               }}

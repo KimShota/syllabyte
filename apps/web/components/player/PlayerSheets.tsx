@@ -4,10 +4,10 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Button, ChoiceCard, InfoCard, StatusBadge, TextLink } from "@/components/ui/primitives";
 import { Sheet } from "@/components/ui/Sheet";
-import { api } from "@/lib/api/client";
+import { api } from "@syllabyte/core/api/client";
 import { useQuery } from "@/lib/api/hooks";
-import type { ReportCategory, TailoringKind, VariantView } from "@/lib/types";
-import { fmtClock, fmtMinutes } from "@/lib/util";
+import type { ReportCategory, TailoringKind, VariantView } from "@syllabyte/core/types";
+import { fmtClock, fmtMinutes } from "@syllabyte/core/util";
 
 const KIND_LABEL: Record<TailoringKind, string> = { left_out: "Left out", added: "Added", set_to: "Set to" };
 const KIND_CLS: Record<TailoringKind, string> = {

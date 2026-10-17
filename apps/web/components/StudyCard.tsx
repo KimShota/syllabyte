@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { api } from "@/lib/api/client";
+import { api } from "@syllabyte/core/api/client";
 import { useQuery } from "@/lib/api/hooks";
 import { track } from "@/lib/events";
 import { InfoCard, LinkButton, TextLink } from "./ui/primitives";

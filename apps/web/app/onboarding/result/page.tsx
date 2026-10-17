@@ -8,10 +8,10 @@ import { ChangeLevelSheet, LevelPickerSheet } from "@/components/LevelSheets";
 import { ChevronDown } from "@/components/ui/icons";
 import { Button, Card, ChoiceCard, Eyebrow, LevelBar, TextLink, Title } from "@/components/ui/primitives";
 import { Sheet } from "@/components/ui/Sheet";
-import { api } from "@/lib/api/client";
+import { api } from "@syllabyte/core/api/client";
 import { useQuery } from "@/lib/api/hooks";
-import { FIX } from "@/lib/fixtures";
-import { LEVEL_NAMES, levelLabel } from "@/lib/logic/levels";
+import { FIX } from "@syllabyte/core/fixtures";
+import { LEVEL_NAMES, levelLabel } from "@syllabyte/core/logic/levels";
 import { useGate } from "@/lib/useGate";
 
 export default function OnboardingResult() {

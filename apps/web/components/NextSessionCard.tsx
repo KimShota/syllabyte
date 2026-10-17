@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { api } from "@/lib/api/client";
+import { api } from "@syllabyte/core/api/client";
 import { useQuery } from "@/lib/api/hooks";
-import type { Item, Jol } from "@/lib/types";
+import type { Item, Jol } from "@syllabyte/core/types";
 import { Button, ChoiceCard, InfoCard, TextLink } from "./ui/primitives";
 
 const JOL_WORD: Record<Jol, string> = { yes: "Yes", maybe: "Maybe", no: "No" };

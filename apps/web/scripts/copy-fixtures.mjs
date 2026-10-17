@@ -1,4 +1,4 @@
-// Copies the media referenced by fixtures/videos.json from the pipeline run into
+// Copies the media referenced by packages/core/fixtures/videos.json from the pipeline run into
 // public/fixtures/ (plan Q9). Course slides and videos never go into git.
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
@@ -8,11 +8,11 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const web = resolve(here, "..");
 const repo = resolve(web, "../..");
-const fixtures = join(web, "fixtures");
+const fixtures = join(repo, "packages", "core", "fixtures");
 const target = join(web, "public", "fixtures");
 
 if (!existsSync(join(fixtures, "videos.json"))) {
-  console.error("No fixtures/videos.json. Run: uv run python scripts/build_ui_fixtures.py");
+  console.error("No packages/core/fixtures/videos.json. Run: uv run python scripts/build_ui_fixtures.py");
   process.exit(1);
 }
 const videos = JSON.parse(readFileSync(join(fixtures, "videos.json"), "utf8"));

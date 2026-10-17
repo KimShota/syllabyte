@@ -7,12 +7,12 @@ from pathlib import Path
 import pytest
 from assessment_agent.parity import THETA_TOLERANCE, generate_cases
 
-GOLDEN = Path(__file__).resolve().parent.parent / "apps/web/tests/fixtures/cat-parity.json"
+GOLDEN = Path(__file__).resolve().parent.parent / "packages/core/tests/fixtures/cat-parity.json"
 
 
 def test_golden_file_matches_the_engine():
     if not GOLDEN.exists():
-        pytest.fail("run `uv run python scripts/make_cat_parity.py` and commit apps/web/tests/fixtures/cat-parity.json")
+        pytest.fail("run `uv run python scripts/make_cat_parity.py` and commit packages/core/tests/fixtures/cat-parity.json")
     stored = json.loads(GOLDEN.read_text())["cases"]
     fresh = generate_cases()
     assert [c["name"] for c in stored] == [c["name"] for c in fresh]

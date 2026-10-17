@@ -2,7 +2,7 @@
 """
 Build the Phase 0 UI fixtures (plan §10) from a finished pipeline run.
 
-    uv run python scripts/build_ui_fixtures.py --run runs/dev --out apps/web/fixtures
+    uv run python scripts/build_ui_fixtures.py --run runs/dev --out packages/core/fixtures
     cd apps/web && npm run fixtures        # copies the media into public/fixtures/
 
 What it does
@@ -16,7 +16,7 @@ What it does
                      frame for screen 7, and one claim per deliver/end segment.
      Results are cached in <run>/ui_cache/ so re-running costs nothing (--regen to redo).
      The adaptive-assessment items (three per KU) are made by scripts/build_item_bank.py into bank.json.
-  4. Writes apps/web/fixtures/{course,items,videos,slides}.json and _review.md.
+  4. Writes packages/core/fixtures/{course,items,videos,slides}.json and _review.md.
 
 The persona's history (levels, calibration, Week 7 story) is hand-written in the web
 app (lib/api/persona.ts). READ _review.md before any usability session: every item
@@ -293,7 +293,7 @@ def tailoring_for(ku: KnowledgeUnit, kus: dict[str, KnowledgeUnit]) -> dict[str,
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run", default="runs/dev")
-    ap.add_argument("--out", default="apps/web/fixtures")
+    ap.add_argument("--out", default="packages/core/fixtures")
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--critic-model", default=None, help="defaults to --model")
     ap.add_argument("--regen", action="store_true", help="ignore the cache and regenerate all LLM output")

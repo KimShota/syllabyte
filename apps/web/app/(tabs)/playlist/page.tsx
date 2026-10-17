@@ -10,12 +10,12 @@ import { Button, Eyebrow, InfoCard, LinkButton, TextLink, Title } from "@/compon
 import { Sheet } from "@/components/ui/Sheet";
 import { useToast } from "@/components/ui/Toast";
 import { VideoCard } from "@/components/VideoCard";
-import { api } from "@/lib/api/client";
+import { api } from "@syllabyte/core/api/client";
 import { useQuery } from "@/lib/api/hooks";
 import { track } from "@/lib/events";
-import { FIX } from "@/lib/fixtures";
-import type { VideoCardView } from "@/lib/types";
-import { fmtMinutes, plural } from "@/lib/util";
+import { FIX } from "@syllabyte/core/fixtures";
+import type { VideoCardView } from "@syllabyte/core/types";
+import { fmtMinutes, plural } from "@syllabyte/core/util";
 
 export default function PlaylistPage() {
   const toast = useToast();

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Animated, Pressable, StyleSheet, View } from "react-native";
 import { router } from "expo-router";
 import { setStatusBarHidden } from "expo-status-bar";
@@ -12,9 +12,10 @@ import { SceneView } from "./SceneView";
 import { StudySheet, activeLine, type StudyMode } from "./StudySheet";
 import { useAutoHide } from "./useAutoHide";
 import { usePlayback } from "./usePlayback";
+import { api } from "@syllabyte/core/api/client";
 import { formatTime } from "@/data/selectors";
-import type { Ku } from "@/data/types";
-import { SPEEDS, speedLabel, useStore, type Speed } from "@/state/store";
+import type { Ku, Note } from "@/data/types";
+import { SPEEDS, speedLabel, useQuery, type Speed } from "@/state/app";
 import { colors, fonts, radius, shadow } from "@/theme/tokens";
 
 /** Watched once this share of the video has played. */
@@ -40,17 +41,37 @@ export function PlayerPage({
   onCaptions: (on: boolean) => void;
 }) {
   const insets = useSafeAreaInsets();
-  const { state, dispatch } = useStore();
   const [sheet, setSheet] = useState<StudyMode | null>(null);
   const [speedOpen, setSpeedOpen] = useState(false);
   const pb = usePlayback(ku, { active, hold: sheet !== null, rate: speed });
-  const noteCount = state.notes.filter((n) => n.kuId === ku.id).length;
+  const videoId = ku.videoId;
+  const notes = useQuery<Note[]>(
+    async () => (videoId ? (await api.listNotes(videoId)).map((n) => ({ id: n.id, at: n.video_t, text: n.text })) : []),
+    [videoId],
+  ) ?? [];
+  const noteCount = notes.length;
   const lineIdx = activeLine(ku.transcript, pb.time);
   const caption = lineIdx >= 0 ? ku.transcript[lineIdx].text : null;
 
+  // a view counts once per visit to this page, the first time it passes WATCHED_AT
+  const counted = useRef(false);
   useEffect(() => {
-    if (pb.time >= ku.durationS * WATCHED_AT && !state.watched.includes(ku.id)) dispatch({ type: "markWatched", kuId: ku.id });
-  }, [pb.time, ku.durationS, ku.id, state.watched, dispatch]);
+    if (!videoId || counted.current || pb.time < ku.durationS * WATCHED_AT) return;
+    counted.current = true;
+    void api.markWatched(videoId);
+  }, [pb.time, ku.durationS, videoId]);
+
+  // how far in the student got (drives "pick up where you left off"), saved when they swipe away or leave
+  const reached = useRef(0);
+  useEffect(() => {
+    reached.current = Math.max(reached.current, pb.time);
+  }, [pb.time]);
+  useEffect(() => {
+    if (!active || !videoId) return;
+    return () => {
+      if (reached.current > 0) void api.recordProgress(videoId, reached.current, ku.durationS);
+    };
+  }, [active, videoId, ku.durationS]);
 
   const [prevActive, setPrevActive] = useState(active);
   if (active !== prevActive) {
@@ -229,7 +250,7 @@ export function PlayerPage({
         </Animated.View>
       </View>
 
-      <StudySheet ku={ku} mode={sheet} time={pb.time} onClose={() => setSheet(null)} onSeek={pb.seek} />
+      <StudySheet ku={ku} notes={notes} mode={sheet} time={pb.time} onClose={() => setSheet(null)} onSeek={pb.seek} />
     </View>
   );
 }

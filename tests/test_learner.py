@@ -76,7 +76,7 @@ class TestItemIrtFields:
 
 def test_generated_fixtures_validate():
     """The fixtures are local-only (course material); skip on a fresh clone."""
-    path = REPO / "apps/web/fixtures/course.json"
+    path = REPO / "packages/core/fixtures/course.json"
     if not path.exists():
         pytest.skip("no generated fixtures")
     c = Course.model_validate_json(path.read_text())

@@ -7,11 +7,11 @@ import { LevelUpdatesCard } from "@/components/LevelUpdatesCard";
 import { ChangeLevelSheet } from "@/components/LevelSheets";
 import { Button, Card, Eyebrow, LinkButton, TextLink, Title } from "@/components/ui/primitives";
 import { Sheet } from "@/components/ui/Sheet";
-import { api } from "@/lib/api/client";
+import { api } from "@syllabyte/core/api/client";
 import { downloadText } from "@/lib/api/demo";
 import { useQuery } from "@/lib/api/hooks";
-import { FIX } from "@/lib/fixtures";
-import { levelLabel } from "@/lib/logic/levels";
+import { FIX } from "@syllabyte/core/fixtures";
+import { levelLabel } from "@syllabyte/core/logic/levels";
 
 export default function LevelsPage() {
   const router = useRouter();

@@ -6,7 +6,7 @@ import { Sheet, SheetHandle } from "./Sheet";
 import { T } from "./T";
 import { kuMinutes } from "@/data/selectors";
 import type { Ku, KuStatus } from "@/data/types";
-import { useStore } from "@/state/store";
+import { toggleNotify, usePrefs } from "@/state/app";
 import { colors, fonts, radius } from "@/theme/tokens";
 
 function slideSpan(ku: Ku) {
@@ -16,7 +16,7 @@ function slideSpan(ku: Ku) {
 
 /** Tapping a node on the lecture roadmap: what it is, and watch / review / get notified. */
 export function NodePreviewSheet({ ku, status, onClose }: { ku: Ku | null; status: KuStatus | null; onClose: () => void }) {
-  const { state, dispatch } = useStore();
+  const prefs = usePrefs();
   const visible = !!ku && !!status;
 
   const play = () => {
@@ -36,7 +36,7 @@ export function NodePreviewSheet({ ku, status, onClose }: { ku: Ku | null; statu
         action = <Button label="Review Concept" icon="replay" kind="success" onPress={play} style={styles.action} />;
         break;
       case "drafting": {
-        const on = state.notifyKuIds.includes(ku.id);
+        const on = prefs.notifyKuIds.includes(ku.id);
         badge = { text: "Being made from slides", bg: colors.surfaceContainerHigh, fg: colors.onSurfaceVariant };
         description = `SyllaByte is turning ${slideSpan(ku)} into a short video. It will appear here when it's ready.`;
         action = (
@@ -44,7 +44,7 @@ export function NodePreviewSheet({ ku, status, onClose }: { ku: Ku | null; statu
             label={on ? "We'll Notify You" : "Notify When Ready"}
             icon={on ? "notifications-active" : "notifications-none"}
             kind="tonal"
-            onPress={() => dispatch({ type: "toggleNotify", kuId: ku.id })}
+            onPress={() => toggleNotify(ku.id)}
             style={styles.action}
           />
         );

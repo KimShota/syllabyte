@@ -1,0 +1,5 @@
+node_modules/
+# Generated from the course's own slides (scripts/build_ui_fixtures.py, scripts/build_item_bank.py): local only
+/fixtures/
+# Generated from src/content/consent.md by scripts/sync-consent.mjs
+/src/content/consent.ts

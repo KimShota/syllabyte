@@ -8,7 +8,7 @@ import { Icon } from "@/components/Icon";
 import { useLoop } from "@/components/Motion";
 import { T } from "@/components/T";
 import { ANALYZER_SLIDES, ANALYZER_TOTAL_SLIDES } from "@/data/course";
-import { useStore } from "@/state/store";
+import { setPrefs } from "@/state/app";
 import { colors, fonts, radius, shadow } from "@/theme/tokens";
 
 const SLIDE_MS = 1800;
@@ -16,7 +16,6 @@ const SLIDE_MS = 1800;
 /** "Analyzing your materials…": a scan over each slide, then on to the baseline check. */
 export default function Analyzing() {
   const insets = useSafeAreaInsets();
-  const { dispatch } = useStore();
   const [index, setIndex] = useState(0);
   const [exitOpen, setExitOpen] = useState(false);
   const [cardHeight, setCardHeight] = useState(0);
@@ -123,7 +122,7 @@ export default function Analyzing() {
                 accessibilityRole="button"
                 onPress={() => {
                   setExitOpen(false);
-                  dispatch({ type: "finishOnboarding" });
+                  setPrefs({ setupDone: true });
                   router.replace("/");
                 }}
                 style={[styles.modalBtn, { backgroundColor: colors.primary }]}

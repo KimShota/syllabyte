@@ -5,11 +5,11 @@ import { SimpleMarkdown } from "@/app/consent/ConsentView";
 import { Button, Card, Eyebrow, SegmentedRow, TextLink, Title } from "@/components/ui/primitives";
 import { Sheet } from "@/components/ui/Sheet";
 import { VideoCard } from "@/components/VideoCard";
-import { api } from "@/lib/api/client";
+import { api } from "@syllabyte/core/api/client";
 import { useQuery } from "@/lib/api/hooks";
-import { FIX } from "@/lib/fixtures";
-import { fmtClock } from "@/lib/util";
-import { CONSENT_TEXT } from "@/content/consent";
+import { FIX } from "@syllabyte/core/fixtures";
+import { fmtClock } from "@syllabyte/core/util";
+import { CONSENT_TEXT } from "@syllabyte/core/content/consent";
 
 const STATUS_LABEL = { watched: "Watched", in_playlist: "In your playlist", skipped: "Skipped", available: "Available", not_made: "Not made yet" } as const;
 

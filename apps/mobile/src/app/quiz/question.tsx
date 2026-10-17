@@ -1,36 +1,60 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { api } from "@syllabyte/core/api/client";
+import type { Choice } from "@syllabyte/core/types";
 import { Button } from "@/components/Button";
 import { IconButton } from "@/components/Header";
 import { Icon } from "@/components/Icon";
 import { T } from "@/components/T";
-import { BASELINE_ITEMS } from "@/data/quizItems";
-import type { Choice } from "@/data/types";
-import { useStore } from "@/state/store";
+import { useQuery } from "@/state/app";
 import { colors, fonts, radius, shadow } from "@/theme/tokens";
 
 const LETTERS = ["A", "B", "C", "D", "E"];
+/** the baseline before any video (plan D8) */
+const SITTING = "week0";
 
-/** One question at a time; no going back. */
+/**
+ * One question at a time; no going back. The adaptive check picks each question from the answers before it, so
+ * the next one is only known once this one is locked in.
+ */
 export default function QuizQuestion() {
   const insets = useSafeAreaInsets();
-  const { dispatch } = useStore();
-  const [index, setIndex] = useState(0);
+  const sitting = useQuery(() => api.getSitting(SITTING));
+  const item = sitting?.current?.item ?? null;
+  const [itemId, setItemId] = useState<string | null>(null);
   const [choice, setChoice] = useState<Choice | null>(null);
-  const item = BASELINE_ITEMS[index];
-  const total = BASELINE_ITEMS.length;
+  const [busy, setBusy] = useState(false);
+  if (item && item.id !== itemId) {
+    setItemId(item.id);
+    setChoice(null);
+    setBusy(false);
+  }
+
+  const shownAt = useRef(0);
+  useEffect(() => {
+    shownAt.current = Date.now();
+  }, [itemId]);
+
+  // the last answer is in: publish the levels and move on (also when coming back to a check already answered)
+  const finishing = useRef(false);
+  const over = !!sitting && !sitting.current;
+  useEffect(() => {
+    if (!over || finishing.current) return;
+    finishing.current = true;
+    void api.finishSitting(SITTING).then(() => router.replace("/quiz/done"));
+  }, [over]);
+
+  if (!sitting || !item) return <View style={styles.screen} />;
+  const total = sitting.total;
+  const index = sitting.answered;
+  const last = index + 1 >= total;
 
   function confirm() {
-    if (choice === null) return;
-    dispatch({ type: "answer", itemId: item.id, choice });
-    if (index + 1 >= total) {
-      router.replace("/quiz/done");
-      return;
-    }
-    setIndex(index + 1);
-    setChoice(null);
+    if (choice === null || !item || busy) return;
+    setBusy(true);
+    api.answerSitting(SITTING, item.id, choice, Date.now() - shownAt.current).catch(() => setBusy(false));
   }
 
   function exit() {
@@ -64,9 +88,9 @@ export default function QuizQuestion() {
           accessibilityLabel="Questions answered"
           accessibilityValue={{ min: 0, max: total, now: index }}
         >
-          {BASELINE_ITEMS.map((it, i) => (
+          {Array.from({ length: total }, (_, i) => (
             <View
-              key={it.id}
+              key={i}
               style={[styles.seg, { backgroundColor: i < index ? colors.primary : i === index ? colors.primaryDeep : colors.surfaceContainerHighest }]}
             />
           ))}
@@ -89,10 +113,10 @@ export default function QuizQuestion() {
       </ScrollView>
 
       <Button
-        label={index + 1 >= total ? "Confirm & Finish" : "Confirm & Next"}
+        label={last ? "Confirm & Finish" : "Confirm & Next"}
         trailingIcon="arrow-forward"
         height={56}
-        disabled={choice === null}
+        disabled={choice === null || busy}
         onPress={confirm}
         style={{ marginHorizontal: 16, backgroundColor: choice === null ? colors.primary : colors.primaryDeep }}
       />

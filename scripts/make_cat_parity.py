@@ -19,7 +19,7 @@ import catsim
 import scipy
 from assessment_agent.parity import THETA_TOLERANCE, generate_cases
 
-OUT = REPO / "apps/web/tests/fixtures/cat-parity.json"
+OUT = REPO / "packages/core/tests/fixtures/cat-parity.json"
 
 
 def build() -> dict:

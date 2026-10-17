@@ -1,9 +1,8 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { CONSENT_TEXT } from "@syllabyte/core/content/consent";
 import { ConsentView } from "./ConsentView";
 
 export default function Consent() {
-  // Read at build time; the text lives in content/consent.md so the approved wording can be dropped in.
-  const text = readFileSync(join(process.cwd(), "content", "consent.md"), "utf8");
-  return <ConsentView markdown={text} />;
+  // The text lives in packages/core/src/content/consent.md so the approved wording can be dropped in; prebuild
+  // mirrors it into this module.
+  return <ConsentView markdown={CONSENT_TEXT} />;
 }

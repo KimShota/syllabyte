@@ -5,7 +5,7 @@ import { useState } from "react";
 import { Screen } from "@/components/AppShell";
 import { BackButton, Button, Eyebrow, InfoCard, TextLink, Title } from "@/components/ui/primitives";
 import { Sheet } from "@/components/ui/Sheet";
-import { api } from "@/lib/api/client";
+import { api } from "@syllabyte/core/api/client";
 import { useHydrated } from "@/lib/store";
 
 /** Minimal renderer for the consent file: # / ## headings, "- " bullets, paragraphs. */

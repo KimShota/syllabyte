@@ -13,7 +13,7 @@ import { T } from "@/components/T";
 import { COURSE, OTHER_COURSES } from "@/data/course";
 import { courseLectures, type LectureNodeView } from "@/data/selectors";
 import type { LectureStatus } from "@/data/types";
-import { useStore } from "@/state/store";
+import { useProgress } from "@/state/progress";
 import { colors, fonts, radius, shadow, space } from "@/theme/tokens";
 
 const NODE = 56;
@@ -23,12 +23,12 @@ const RIGHT = 0.8;
 /** Course roadmap: the lectures as a path climbing from Lecture 1 to the final exam. */
 export default function CourseRoadmap() {
   const { courseId } = useLocalSearchParams<{ courseId: string }>();
-  const { state } = useStore();
+  const progress = useProgress();
   const insets = useSafeAreaInsets();
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const stub = OTHER_COURSES.find((c) => c.id === courseId);
-  const lectures = courseLectures(COURSE, state.watched);
+  const lectures = courseLectures(COURSE, progress);
 
   return (
     <View style={styles.screen}>

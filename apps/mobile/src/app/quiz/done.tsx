@@ -10,7 +10,8 @@ import { Spin, useLoop } from "@/components/Motion";
 import { ProgressBar } from "@/components/ProgressBar";
 import { T } from "@/components/T";
 import { firstUpNext } from "@/data/selectors";
-import { useStore } from "@/state/store";
+import { setPrefs } from "@/state/app";
+import { fetchProgress } from "@/state/progress";
 import { colors, fonts, radius, shadow } from "@/theme/tokens";
 
 const STEPS = ["Reading your answers", "Choosing your first videos", "Synthesizing key topic breakdowns", "Rendering the first video"];
@@ -19,7 +20,6 @@ const TICK_MS = 120;
 /** Check done: the first video is being made; go to it when it's ready. */
 export default function QuizDone() {
   const insets = useSafeAreaInsets();
-  const { state, dispatch } = useStore();
   const [progress, setProgress] = useState(0.12);
   const ready = progress >= 1;
   const ping = useLoop(1200);
@@ -30,9 +30,10 @@ export default function QuizDone() {
     return () => clearInterval(id);
   }, [ready]);
 
-  function goToFirstVideo() {
-    dispatch({ type: "finishOnboarding" });
-    const ku = firstUpNext(state.watched);
+  async function goToFirstVideo() {
+    setPrefs({ setupDone: true });
+    // the levels are published and the playlist built: its first video is the one to start with
+    const ku = firstUpNext(await fetchProgress());
     if (router.canDismiss()) router.dismissAll();
     router.replace("/");
     if (ku) router.push({ pathname: "/player/[kuId]", params: { kuId: ku.id } });
@@ -40,9 +41,8 @@ export default function QuizDone() {
 
   useEffect(() => {
     if (!ready) return;
-    const id = setTimeout(goToFirstVideo, 900);
+    const id = setTimeout(() => void goToFirstVideo(), 900);
     return () => clearTimeout(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);
 
   const step = STEPS[Math.min(STEPS.length - 1, Math.floor(progress * STEPS.length))];
@@ -63,7 +63,7 @@ export default function QuizDone() {
               {
                 text: "Go to Home",
                 onPress: () => {
-                  dispatch({ type: "finishOnboarding" });
+                  setPrefs({ setupDone: true });
                   if (router.canDismiss()) router.dismissAll();
                   router.replace("/");
                 },
@@ -137,7 +137,7 @@ export default function QuizDone() {
       </View>
 
       <View style={styles.footer}>
-        <Button label="Go to First Video" trailingIcon="arrow-forward" height={56} onPress={goToFirstVideo} style={{ alignSelf: "stretch" }} />
+        <Button label="Go to First Video" trailingIcon="arrow-forward" height={56} onPress={() => void goToFirstVideo()} style={{ alignSelf: "stretch" }} />
         <View style={styles.auto}>
           <Icon name="check-circle" size={14} color={colors.secondary} />
           <T variant="caption" color={colors.onSurfaceVariant} style={{ fontSize: 12 }}>

@@ -1,6 +1,6 @@
 "use client";
 
-import type { KuLevelRow, LectureLevels } from "@/lib/types";
+import type { KuLevelRow, LectureLevels } from "@syllabyte/core/types";
 import { Card, LevelBar, TextLink } from "./ui/primitives";
 
 /** The note under a KU when its video was made at a level other than its current one (plan D15). */

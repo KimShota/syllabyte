@@ -3,9 +3,9 @@ import { Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native
 import { Icon } from "../Icon";
 import { Sheet } from "../Sheet";
 import { T } from "../T";
+import { api } from "@syllabyte/core/api/client";
 import { formatTime } from "@/data/selectors";
-import type { Ku, TranscriptLine } from "@/data/types";
-import { useStore } from "@/state/store";
+import type { Ku, Note, TranscriptLine } from "@/data/types";
 import { colors, fonts, radius, type } from "@/theme/tokens";
 
 const P = colors.player;
@@ -21,12 +21,15 @@ export function activeLine(lines: TranscriptLine[], time: number): number {
 /** The player's dark bottom sheet: the KU's notes, or its transcript. The video pauses while it's open. */
 export function StudySheet({
   ku,
+  notes,
   mode,
   time,
   onClose,
   onSeek,
 }: {
   ku: Ku;
+  /** the KU's saved notes, oldest first in the video */
+  notes: Note[];
   mode: StudyMode | null;
   time: number;
   onClose: () => void;
@@ -42,22 +45,19 @@ export function StudySheet({
           <Icon name="close" size={18} color="rgba(255,255,255,0.85)" />
         </Pressable>
       </View>
-      {mode === "transcript" ? <Transcript ku={ku} time={time} onSeek={onSeek} /> : <Notes ku={ku} time={time} />}
+      {mode === "transcript" ? <Transcript ku={ku} time={time} onSeek={onSeek} /> : <Notes ku={ku} notes={notes} time={time} />}
     </Sheet>
   );
 }
 
-function Notes({ ku, time }: { ku: Ku; time: number }) {
-  const { state, dispatch } = useStore();
+function Notes({ ku, notes, time }: { ku: Ku; notes: Note[]; time: number }) {
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
-  const notes = state.notes.filter((n) => n.kuId === ku.id).sort((a, b) => a.at - b.at);
 
   function save() {
     const text = draft.trim();
-    if (!text) return;
-    if (editing) dispatch({ type: "editNote", id: editing, text });
-    else dispatch({ type: "addNote", note: { id: `${Date.now()}`, kuId: ku.id, at: time, text, createdAt: Date.now() } });
+    if (!text || !ku.videoId) return;
+    void (editing ? api.updateNote(editing, text) : api.addNote(ku.videoId, time, text));
     setDraft("");
     setEditing(null);
   }
@@ -124,7 +124,7 @@ function Notes({ ku, time }: { ku: Ku; time: number }) {
               >
                 <Icon name="edit" size={15} color="#cbd5e1" />
               </Pressable>
-              <Pressable accessibilityRole="button" accessibilityLabel="Delete note" hitSlop={6} onPress={() => dispatch({ type: "deleteNote", id: n.id })} style={styles.noteBtn}>
+              <Pressable accessibilityRole="button" accessibilityLabel="Delete note" hitSlop={6} onPress={() => void api.deleteNote(n.id)} style={styles.noteBtn}>
                 <Icon name="delete" size={15} color={colors.errorSoft} />
               </Pressable>
             </View>

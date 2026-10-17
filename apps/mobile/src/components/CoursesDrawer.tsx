@@ -8,7 +8,7 @@ import { Sheet } from "./Sheet";
 import { T } from "./T";
 import { COURSE, OTHER_COURSES } from "@/data/course";
 import { courseProgress } from "@/data/selectors";
-import { useStore } from "@/state/store";
+import { useProgress } from "@/state/progress";
 import { colors, fonts, radius, shadow } from "@/theme/tokens";
 
 function initials(name: string) {
@@ -22,8 +22,7 @@ function initials(name: string) {
 
 /** "My Courses" dropping from the top of the course roadmap: switch course or add one. */
 export function CoursesDrawer({ visible, onClose, currentId }: { visible: boolean; onClose: () => void; currentId: string }) {
-  const { state } = useStore();
-  const main = courseProgress(COURSE, state.watched);
+  const main = courseProgress(COURSE, useProgress());
   const all = [
     { id: COURSE.id, name: COURSE.name, meta: `${COURSE.code} · ${COURSE.term}`, progress: main.fraction, done: false, activeLecture: main.activeLecture?.n ?? null, planned: COURSE.lecturesPlanned },
     ...OTHER_COURSES.filter((c) => !c.analyzing).map((c) => ({

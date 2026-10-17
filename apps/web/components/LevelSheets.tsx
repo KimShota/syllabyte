@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { api } from "@/lib/api/client";
+import { api } from "@syllabyte/core/api/client";
 import { useQuery } from "@/lib/api/hooks";
-import { LEVEL_BLURBS, LEVEL_NAMES } from "@/lib/logic/levels";
-import type { KuLevelRow, Level } from "@/lib/types";
+import { LEVEL_BLURBS, LEVEL_NAMES } from "@syllabyte/core/logic/levels";
+import type { KuLevelRow, Level } from "@syllabyte/core/types";
 import { Button, ChoiceCard, SegmentedRow } from "./ui/primitives";
 import { Sheet } from "./ui/Sheet";
 import { useToast } from "./ui/Toast";

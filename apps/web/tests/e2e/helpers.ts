@@ -2,7 +2,7 @@ import { expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const fx = (f: string) => JSON.parse(readFileSync(join(__dirname, "../../fixtures", f), "utf8"));
+const fx = (f: string) => JSON.parse(readFileSync(join(__dirname, "../../../../packages/core/fixtures", f), "utf8"));
 export const VIDEOS = fx("videos.json") as { id: string; short_title: string; duration_s: number; checkpoint: { t: number; rewatch_from: number; item_id: string }; lecture_n: number; prove_it_item_id: string; claims: { text: string }[] }[];
 export const ITEMS = fx("items.json") as { id: string; correct_index: number; options: string[]; stem: string; hint: string | null }[];
 export const item = (id: string) => ITEMS.find((i) => i.id === id)!;

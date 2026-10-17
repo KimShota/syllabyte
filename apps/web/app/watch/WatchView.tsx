@@ -10,10 +10,10 @@ import { PlayerFrame, type PlayerHandle } from "@/components/player/PlayerFrame"
 import { Info, Notes as NotesIcon, Pause, Play, Transcript as TranscriptIcon, Captions } from "@/components/ui/icons";
 import { BackButton, Chip, Eyebrow, InfoCard, StatusBadge } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/Toast";
-import { api } from "@/lib/api/client";
+import { api } from "@syllabyte/core/api/client";
 import { useQuery } from "@/lib/api/hooks";
 import { track } from "@/lib/events";
-import { fmtClock } from "@/lib/util";
+import { fmtClock } from "@syllabyte/core/util";
 import { useGate } from "@/lib/useGate";
 
 const RATES = [1, 1.25, 1.5, 0.75]; // capped at 1.5x: the cost is small to there and significant by 2x (Tharumalingam 2025)

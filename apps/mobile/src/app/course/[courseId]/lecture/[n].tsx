@@ -12,7 +12,7 @@ import { NodePreviewSheet } from "@/components/NodePreviewSheet";
 import { COURSE, KUS } from "@/data/course";
 import { findLecture, kuMinutes, kuStatuses, lectureProgress, sectionSegments } from "@/data/selectors";
 import type { Ku, KuStatus } from "@/data/types";
-import { useStore } from "@/state/store";
+import { useProgress } from "@/state/progress";
 import { colors, fonts, radius, shadow, space } from "@/theme/tokens";
 
 const NODE = 56;
@@ -23,14 +23,14 @@ const X_PATTERN = [0.36, 0.66, 0.5, 0.3, 0.68, 0.48];
 /** Lecture roadmap: the lecture's KUs, section by section, climbing from the first. */
 export default function LectureRoadmap() {
   const { n } = useLocalSearchParams<{ courseId: string; n: string }>();
-  const { state } = useStore();
+  const p = useProgress();
   const insets = useSafeAreaInsets();
   const [preview, setPreview] = useState<Ku | null>(null);
 
   const lecture = findLecture(Number(n));
   if (!lecture) return null;
-  const statuses = kuStatuses(lecture, state.watched);
-  const progress = lectureProgress(lecture, state.watched);
+  const statuses = kuStatuses(lecture, p);
+  const progress = lectureProgress(lecture, p);
   const pct = progress.total ? progress.done / progress.total : 0;
 
   return (

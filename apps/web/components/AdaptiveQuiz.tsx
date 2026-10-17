@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { api } from "@/lib/api/client";
+import { api } from "@syllabyte/core/api/client";
 import { useQuery } from "@/lib/api/hooks";
-import type { Choice } from "@/lib/types";
+import type { Choice } from "@syllabyte/core/types";
 import { Loading, Screen } from "./AppShell";
 import { Button, ChoiceCard, Eyebrow, ProgressSegments, Title } from "./ui/primitives";
 

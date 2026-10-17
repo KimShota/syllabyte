@@ -219,7 +219,7 @@ def write_review(out: Path, items: list[Item], flags: dict[str, str], kus_by_id:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run", default="runs/dev")
-    ap.add_argument("--out", default="apps/web/fixtures")
+    ap.add_argument("--out", default="packages/core/fixtures")
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--critic-model", default=None, help="defaults to --model")
     ap.add_argument("--lectures", default=None, help="comma-separated lecture numbers to generate (default: all)")

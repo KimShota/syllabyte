@@ -3,15 +3,15 @@
 import clsx from "clsx";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useId, useMemo, useState } from "react";
-import type { Instrument, InstrumentItem, ResponseFormat } from "@/content/instruments";
+import type { Instrument, InstrumentItem, ResponseFormat } from "@syllabyte/core/content/instruments";
 import { Loading, Screen } from "@/components/AppShell";
 import { Close } from "@/components/ui/icons";
 import { Button, Eyebrow, ProgressSegments, Title } from "@/components/ui/primitives";
 import { Sheet } from "@/components/ui/Sheet";
-import { api } from "@/lib/api/client";
-import type { BatteryView } from "@/lib/api/types";
-import { visibleItems } from "@/lib/logic/instruments";
-import type { BatteryRecord } from "@/lib/types";
+import { api } from "@syllabyte/core/api/client";
+import type { BatteryView } from "@syllabyte/core/api/types";
+import { visibleItems } from "@syllabyte/core/logic/instruments";
+import type { BatteryRecord } from "@syllabyte/core/types";
 import { useGate } from "@/lib/useGate";
 
 type Answers = BatteryRecord["answers"];

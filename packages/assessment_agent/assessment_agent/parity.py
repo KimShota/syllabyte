@@ -4,7 +4,7 @@ Golden CAT sequences for the Python <-> TypeScript parity test (plan D3).
 `generate_cases()` runs simulated students through `CatSession` on a variety of banks and records every step:
 which item was chosen, what the student answered, and the resulting theta and standard error. The TypeScript
 engine replays the same answers and must choose the same items and land on the same thetas. The file is written
-by scripts/make_cat_parity.py to apps/web/tests/fixtures/cat-parity.json and checked in; tests/test_cat_parity.py
+by scripts/make_cat_parity.py to packages/core/tests/fixtures/cat-parity.json and checked in; tests/test_cat_parity.py
 fails if it drifts from what this module produces (for example after a catsim or scipy upgrade).
 
 Everything is seeded, and difficulties/discriminations are rounded to 2 decimals so they survive a JSON round trip

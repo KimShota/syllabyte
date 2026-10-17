@@ -8,7 +8,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./vitest.setup.ts"],
-    include: ["tests/unit/**/*.test.{ts,tsx}"],
+    include: ["tests/unit/**/*.test.{ts,tsx}"], // the logic tests live in packages/core/tests,
     css: false,
   },
 });

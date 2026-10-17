@@ -3,8 +3,8 @@
 import clsx from "clsx";
 import Link from "next/link";
 import type { ReactNode } from "react";
-import type { VideoCardView } from "@/lib/types";
-import { fmtMinutes } from "@/lib/util";
+import type { VideoCardView } from "@syllabyte/core/types";
+import { fmtMinutes } from "@syllabyte/core/util";
 import { ArrowDown, ArrowUp, Check, More, Play } from "./ui/icons";
 import { StatusBadge, Tag } from "./ui/primitives";
 

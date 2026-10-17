@@ -8,14 +8,19 @@ import { Spin } from "@/components/Motion";
 import { ProgressBar } from "@/components/ProgressBar";
 import { T } from "@/components/T";
 import { UploadSheet } from "@/components/UploadSheet";
+import { api } from "@syllabyte/core/api/client";
 import { COURSE, OTHER_COURSES } from "@/data/course";
 import { courseProgress } from "@/data/selectors";
-import { useStore } from "@/state/store";
+import { usePrefs, useQuery } from "@/state/app";
+import { useProgress } from "@/state/progress";
 import { colors, fonts, radius, shadow, space } from "@/theme/tokens";
 
 /** Home: the enrolled courses with their progress. */
 export default function Home() {
-  const { state } = useStore();
+  const prefs = usePrefs();
+  const me = useQuery(() => api.getMe());
+  const sitting = useQuery(() => api.getSitting("week0"));
+  const progress = useProgress();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ upload?: string }>();
   const [manualOpen, setManualOpen] = useState(false);
@@ -27,9 +32,10 @@ export default function Home() {
     if (!open) setDismissed(params.upload);
   };
 
-  if (!state.onboarded) return <Redirect href="/welcome" />;
+  if (!me) return <View style={styles.screen} />;
+  if (!prefs.setupDone && !me.onboarding_done) return <Redirect href="/welcome" />;
 
-  const main = courseProgress(COURSE, state.watched);
+  const main = courseProgress(COURSE, progress);
   const courses = [
     { id: COURSE.id, name: COURSE.name, progress: main.fraction, analyzing: undefined as number | undefined },
     ...OTHER_COURSES.map((c) => ({ id: c.id, name: c.name, progress: c.progress, analyzing: c.analyzing?.progress })),
@@ -79,6 +85,8 @@ export default function Home() {
           </Pressable>
         </View>
 
+        {!me.onboarding_done && sitting ? <QuickCheckCard total={sitting.total} answered={sitting.answered} /> : null}
+
         <View style={styles.list}>
           {courses.map((c) => (
             <CourseCard
@@ -111,6 +119,30 @@ export default function Home() {
         }}
       />
     </View>
+  );
+}
+
+/** The baseline is still open (the student left the first run before it): a way back into it. */
+function QuickCheckCard({ total, answered }: { total: number; answered: number }) {
+  const started = answered > 0;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={started ? `Finish the quick check, ${answered} of ${total} answered` : `Take the quick check, ${total} questions`}
+      onPress={() => router.push(started ? "/quiz/question" : "/quiz")}
+      style={({ pressed }) => [styles.check, pressed && { backgroundColor: colors.surfaceContainerLow }]}
+    >
+      <View style={styles.checkIcon}>
+        <Icon name="psychology-alt" size={22} color={colors.primary} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <T variant="bodySemibold">{started ? "Finish your quick check" : "Take the quick check"}</T>
+        <T variant="caption" color={colors.onSurfaceVariant} style={{ fontSize: 12, lineHeight: 16 }}>
+          {started ? `${answered} of ${total} answered. ` : `${total} questions, no grade. `}It tunes your videos to what you know.
+        </T>
+      </View>
+      <Icon name="chevron-right" size={22} color={colors.primary} />
+    </Pressable>
   );
 }
 
@@ -179,6 +211,19 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
   list: { marginTop: 28, gap: 16 },
+  check: {
+    marginTop: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 16,
+    borderRadius: radius.xl,
+    backgroundColor: colors.surfaceContainerLowest,
+    borderWidth: 1,
+    borderColor: "rgba(91,63,214,0.3)",
+    ...shadow.card,
+  },
+  checkIcon: { width: 40, height: 40, borderRadius: radius.lg, backgroundColor: colors.primaryFixed, alignItems: "center", justifyContent: "center" },
   card: {
     backgroundColor: colors.surfaceContainerLowest,
     borderRadius: radius.xl,

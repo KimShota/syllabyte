@@ -5,8 +5,8 @@ import { Button } from "@/components/Button";
 import { Glow } from "@/components/Glow";
 import { Icon, type IconName } from "@/components/Icon";
 import { T } from "@/components/T";
-import { BASELINE_ITEMS } from "@/data/quizItems";
-import { useStore } from "@/state/store";
+import { api } from "@syllabyte/core/api/client";
+import { useQuery } from "@/state/app";
 import { colors, radius, shadow } from "@/theme/tokens";
 
 const RULES: { icon: IconName; tone: string; text: string }[] = [
@@ -17,10 +17,11 @@ const RULES: { icon: IconName; tone: string; text: string }[] = [
   { icon: "auto-awesome", tone: colors.primary, text: "Results personalize your video lessons to maximize learning outcomes" },
 ];
 
-/** The baseline check's intro: no grade, the rules. */
+/** The baseline check's intro: no grade, the rules. The questions come from the adaptive check (the core's "week0" sitting). */
 export default function QuizIntro() {
   const insets = useSafeAreaInsets();
-  const { dispatch } = useStore();
+  const sitting = useQuery(() => api.getSitting("week0"));
+  const started = (sitting?.answered ?? 0) > 0;
   return (
     <View style={[styles.screen, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 }]}>
       <ScrollView contentContainerStyle={styles.content}>
@@ -37,7 +38,7 @@ export default function QuizIntro() {
           <View style={styles.countChip}>
             <Icon name="quiz" size={18} color={colors.primary} />
             <T variant="bodySemibold" color={colors.primary}>
-              Only {BASELINE_ITEMS.length} questions
+              Only {sitting?.total ?? "a few"} questions
             </T>
           </View>
         </View>
@@ -60,12 +61,10 @@ export default function QuizIntro() {
         </View>
       </ScrollView>
       <Button
-        label="Start"
+        label={started ? `Continue (${sitting!.answered} of ${sitting!.total} done)` : "Start"}
         trailingIcon="arrow-forward"
-        onPress={() => {
-          dispatch({ type: "resetQuiz" });
-          router.replace("/quiz/question");
-        }}
+        disabled={!sitting}
+        onPress={() => router.replace("/quiz/question")}
         style={{ marginHorizontal: 20 }}
       />
     </View>

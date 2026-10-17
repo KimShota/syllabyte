@@ -1,0 +1,21 @@
+{
+  "name": "@syllabyte/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SyllaByte's app logic shared by apps/web and apps/mobile: types, the CAT engine and the other rules, the questionnaires, the store and the mock API. Plain TypeScript, no build step; each app bundles the sources.",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "consent": "node scripts/sync-consent.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  }
+}

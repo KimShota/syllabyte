@@ -2,9 +2,9 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { api } from "@/lib/api/client";
+import { api } from "@syllabyte/core/api/client";
 import { downloadText, endFirstModule, fastOnboard, loadPersona, resetDemo, sessionLogJson, setCondition, setLogDeclined, setParticipantCode, showEmptyPlaylist, simulateNextDay, simulateNextWeek } from "@/lib/api/demo";
-import { FIX } from "@/lib/fixtures";
+import { FIX } from "@syllabyte/core/fixtures";
 import { getState, isOnboarded, useEventCount, useStoreVersion } from "@/lib/store";
 import { Button, SegmentedRow, TextLink } from "./ui/primitives";
 import { Sheet } from "./ui/Sheet";

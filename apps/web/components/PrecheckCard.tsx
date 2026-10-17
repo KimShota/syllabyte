@@ -1,7 +1,7 @@
 "use client";
 
-import { api } from "@/lib/api/client";
-import type { PrecheckView } from "@/lib/types";
+import { api } from "@syllabyte/core/api/client";
+import type { PrecheckView } from "@syllabyte/core/types";
 import { InfoCard, LinkButton, TextLink } from "./ui/primitives";
 
 /** The check before a lecture's videos (plan D8): short, adaptive, not graded, and the student can skip it. */

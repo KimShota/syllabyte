@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { api } from "@/lib/api/client";
+import { api } from "@syllabyte/core/api/client";
 import { track } from "@/lib/events";
-import type { Confidence, VariantView } from "@/lib/types";
+import type { Confidence, VariantView } from "@syllabyte/core/types";
 import { Button, ChoiceCard, SegmentedRow, TextLink, type ChoiceState } from "@/components/ui/primitives";
 
 const CONF: { value: Confidence; label: string }[] = [

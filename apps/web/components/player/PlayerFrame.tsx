@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
-import type { Video } from "@/lib/types";
+import type { Video } from "@syllabyte/core/types";
 import { VideoSources } from "./VideoSources";
 
 export interface PlayerHandle {

@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { NextConfig } from "next";
 
 // Phase 0 is a static site (plan §9.2). From Phase 2 the app runs as a Node server
@@ -5,8 +6,11 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "export",
   images: { unoptimized: true },
-  // A stray package-lock.json above the repo makes Next guess the wrong workspace root.
-  turbopack: { root: process.cwd() },
+  // The shared logic is TypeScript source in packages/core, linked into node_modules.
+  transpilePackages: ["@syllabyte/core"],
+  // Turbopack only resolves files under its root, so the root is the repo (apps/web and packages/core). Set it
+  // explicitly: a stray package-lock.json above the repo makes Next guess the wrong one.
+  turbopack: { root: path.resolve(process.cwd(), "../..") },
 };
 
 export default nextConfig;

@@ -3,17 +3,19 @@ import { setStatusBarHidden, setStatusBarStyle } from "expo-status-bar";
 import { FlatList, View } from "react-native";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { PlayerPage } from "@/components/player/PlayerPage";
+import { api } from "@syllabyte/core/api/client";
 import { KUS } from "@/data/course";
 import { findLecture, lectureFeed } from "@/data/selectors";
-import { useStore, type Speed } from "@/state/store";
+import { usePrefs, useQuery, type Speed } from "@/state/app";
 
 /**
  * The immersive player as a vertical swipe feed: one full-screen video at a time, swiping up for the
- * next KU of the same lecture. Only the page on screen plays.
+ * next KU of the same lecture that has a video. Only the page on screen plays.
  */
 export default function Player() {
   const { kuId } = useLocalSearchParams<{ kuId: string }>();
-  const { state } = useStore();
+  const prefs = usePrefs();
+  const me = useQuery(() => api.getMe());
   const start = KUS[kuId];
   const lecture = start ? findLecture(start.lectureN) : undefined;
   const feed = useMemo(() => (lecture ? lectureFeed(lecture) : []), [lecture]);
@@ -21,8 +23,10 @@ export default function Player() {
 
   const [height, setHeight] = useState(0);
   const [activeIndex, setActiveIndex] = useState(startIndex);
-  const [speed, setSpeed] = useState<Speed>(state.prefs.speed);
-  const [captions, setCaptions] = useState(state.prefs.captions);
+  const [speed, setSpeed] = useState<Speed>(prefs.speed);
+  // captions start from the student's setting; toggling them here is for this sitting only
+  const [captionsHere, setCaptions] = useState<boolean | null>(null);
+  const captions = captionsHere ?? me?.settings.captions ?? true;
 
   // FlatList needs the same function for its whole life
   const [onViewable] = useState(() => ({ viewableItems }: { viewableItems: { index?: number | null; isViewable: boolean }[] }) => {

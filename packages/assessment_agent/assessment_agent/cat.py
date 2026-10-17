@@ -2,8 +2,8 @@
 Computerized Adaptive Testing for one topic (= one lecture), on the 2PL model.
 
 This is the engine of record for SyllaByte's assessment (proposal §3.2; plan/per-ku-profiling-plan.md D1-D10).
-A TypeScript port (apps/web/lib/logic/cat.ts) runs the static demo and must agree with this module on the
-golden sequences in apps/web/tests/fixtures/cat-parity.json.
+A TypeScript port (packages/core/src/logic/cat.ts) runs the static demo and must agree with this module on the
+golden sequences in packages/core/tests/fixtures/cat-parity.json.
 
 What comes from catsim, and what is ours:
   * the 2PL response curve, item information and the maximum-likelihood search for theta

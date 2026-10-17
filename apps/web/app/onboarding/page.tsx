@@ -6,8 +6,8 @@ import { AdaptiveQuiz } from "@/components/AdaptiveQuiz";
 import { Loading } from "@/components/AppShell";
 import { LevelPickerSheet } from "@/components/LevelSheets";
 import { BackButton, Chip, InfoCard, TextLink } from "@/components/ui/primitives";
-import { FIX } from "@/lib/fixtures";
-import { LEVEL_NAMES } from "@/lib/logic/levels";
+import { FIX } from "@syllabyte/core/fixtures";
+import { LEVEL_NAMES } from "@syllabyte/core/logic/levels";
 import { useGate } from "@/lib/useGate";
 
 /** The Week 0 baseline: a fixed-length adaptive check across the first lectures (plan D8). */

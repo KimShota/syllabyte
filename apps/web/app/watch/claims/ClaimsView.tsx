@@ -6,12 +6,12 @@ import { useEffect, useRef, useState } from "react";
 import { Loading, Screen } from "@/components/AppShell";
 import { BackButton, Button, Card, Eyebrow, InfoCard, StatusBadge, TextLink, Title } from "@/components/ui/primitives";
 import { Sheet } from "@/components/ui/Sheet";
-import { api } from "@/lib/api/client";
+import { api } from "@syllabyte/core/api/client";
 import { useQuery } from "@/lib/api/hooks";
 import { VideoSources } from "@/components/player/VideoSources";
 import { track } from "@/lib/events";
-import type { ClaimView } from "@/lib/types";
-import { fmtClock } from "@/lib/util";
+import type { ClaimView } from "@syllabyte/core/types";
+import { fmtClock } from "@syllabyte/core/util";
 import { useGate } from "@/lib/useGate";
 
 /** Screen 6, slides-only (plan Q11): every claim opens the slide it came from, with the AI video's matching part beside it. */

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { api } from "@/lib/api/client";
+import { api } from "@syllabyte/core/api/client";
 import { useQuery } from "@/lib/api/hooks";
 import { Button, InfoCard } from "./ui/primitives";
 

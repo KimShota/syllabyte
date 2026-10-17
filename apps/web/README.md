@@ -10,7 +10,7 @@ in-browser mock for FastAPI without touching any component.
 
 ```bash
 # 1. once, from the repo root: build the fixtures from a finished pipeline run
-uv run python scripts/build_ui_fixtures.py --run runs/dev --out apps/web/fixtures
+uv run python scripts/build_ui_fixtures.py --run runs/dev --out packages/core/fixtures
 # 1b. the adaptive-assessment bank (3 questions per KU). It spends LLM credits the first time; --estimate prices it first
 uv run python scripts/build_item_bank.py --estimate
 uv run python scripts/build_item_bank.py
@@ -37,37 +37,36 @@ eyebrow (the small grey title above a heading), or `Ctrl+Alt+D`.
 - **Participant code** (stamped on every event), **Reset demo**, **Simulate next day** (+24 h) and **Simulate next week** (+7 days: the
   next lecture's check becomes due).
 - **Jump to** any screen. Anything that needs the baseline fast-forwards it (a scripted student: strong on lecture 1, middling on 2, weak on 3).
-  The "Lecture checks" jumps load a scripted student (`lib/api/persona.ts`), built by running the *real* API with a backdated clock, who has
+  The "Lecture checks" jumps load a scripted student (`packages/core/src/api/persona.ts`), built by running the *real* API with a backdated clock, who has
   crossed a lecture boundary: some levels went up, some down, and the "What changed and why" card is waiting.
 - **Download session log** and `/debug/events`, a live timeline of what a click logged.
 - "Log events even if consent was declined" is **on** for usability sessions; turn it off to see the research rule.
 
 ## Where things are
 
+The app logic is shared with the phone app and lives in `packages/core` (`@syllabyte/core`, see its README):
+the types, the API contract and its mock, the store, the rules in `logic/`, the questionnaires and the consent text.
+
 ```
 app/                    routes (App Router). Pages are thin; behaviour lives below
 components/             ui/ primitives, player/ (frame, quick check, sheets), shared screens
-lib/types.ts            types shared by fixtures, state and views (mirrors packages/common/.../learner.py)
-lib/api/types.ts        THE contract: every method the UI may call (plan §6.1)
-lib/api/mock.ts         Phase 0 implementation of that contract, on top of lib/store.ts (localStorage)
-lib/api/client.ts       the only import components use: `api`
-lib/logic/              pure rules, unit-tested: cat.ts (the adaptive-test engine, a port of the Python one),
-                        kuProfile.ts (levels from answers), assessment.ts (the two sittings), lectures, prereq,
-                        engagement, playlist, next-day timing, calibration, tailoring receipt
-lib/events.ts           one event shape and vocabulary in every phase (plan §6.2)
-content/consent.md      placeholder consent text: replace with the IRB-approved wording
-scripts/                copy-fixtures, check-fixtures, sync-consent, screenshots
-tests/unit, tests/e2e   Vitest and Playwright
+lib/store.ts            the browser side of the core store: localStorage, the visit per session, React hooks
+lib/events.ts           the browser's event context (screen, device, orientation) for the core's `track`
+lib/api/hooks.ts        useQuery over the core's `api`
+lib/api/demo.ts         the core's demo-menu controls, plus a browser download
+scripts/                copy-fixtures, check-fixtures, screenshots
+tests/e2e               Playwright
 ```
 
 **Rule for every "because…" sentence the student sees:** it is a template over stored answers
-(`lib/logic/*`), never free text from a model, so the numbers in it are true by construction. The
+(`packages/core/src/logic/*`), never free text from a model, so the numbers in it are true by construction. The
 unit tests assert this.
 
 ## Test
 
+The rules and the mock API are unit-tested in `packages/core` (`npm test` there).
+
 ```bash
-npm test                 # Vitest: rules and the mock API against the real fixtures (skips if there are none)
 npm run test:e2e         # builds a test build, then Playwright at 390×844 and 1280×800, incl. axe (WCAG 2.2 AA)
 npm run shots            # screenshots of every screen into ./shots
 ```
@@ -86,7 +85,7 @@ The 37 design decisions are in the plan (§16 indexes them). The ones most likel
 - **The checks are adaptive and fixed-length, with no going back.** "Not sure" counts toward the length but not the estimate. Each question is chosen when it is asked, from the answers before it, so the same answers always give the same next question.
 - **A video is made once** at the KU's level when first needed, and says so when the level has since changed. Engagement (a video stopped early, watched several times) changes what the playlist delivers, never a level.
 - A hint that was visible when a student answered counts as used, so the answer is scored as the same question made easier (`irt_hint_beta_shift`); a Level 1 student, who sees the hint inline, always has it applied.
-- **The adaptive engine exists twice**: Python (`catsim`, the engine of record) and a TypeScript port for this static site. `tests/unit/catParity.test.ts` replays 26 recorded sessions and fails on any difference in the question chosen or in θ (`uv run python scripts/make_cat_parity.py` regenerates them).
+- **The adaptive engine exists twice**: Python (`catsim`, the engine of record) and a TypeScript port for this static site. `packages/core/tests/catParity.test.ts` replays 26 recorded sessions and fails on any difference in the question chosen or in θ (`uv run python scripts/make_cat_parity.py` regenerates them).
 
 ## Known issues
 
