@@ -1,0 +1,155 @@
+<!DOCTYPE html><html lang="en" style=""><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport">
+<title>Welcome to SyllaByte</title>
+<!-- Google Fonts: Manrope -->
+<link href="https://fonts.googleapis.com" rel="preconnect">
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet">
+<!-- Tailwind CSS CDN -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f5f3ff',
+              100: '#ede9fe',
+              200: '#ddd6fe',
+              500: '#6d4df6',
+              600: '#5b3fd6',
+              700: '#4d32bc',
+            },
+            canvas: '#f4f2f9',
+            cardbg: '#ffffff',
+            ink: {
+              title: '#111827',
+              sub: '#6b7280',
+              accent: '#5b3fd6',
+              teal: '#0d9488',
+            }
+          },
+          fontFamily: {
+            sans: ['Manrope', 'system-ui', '-apple-system', 'sans-serif'],
+          },
+          boxShadow: {
+            card: '0 4px 25px -2px rgba(88, 64, 180, 0.06), 0 2px 10px -2px rgba(0, 0, 0, 0.03)',
+            action: '0 6px 16px -2px rgba(91, 63, 214, 0.35)',
+          }
+        }
+      }
+    };
+  </script>
+<!-- Custom Styles: Focus, dashed strokes, and touch optimizations -->
+<style data-purpose="custom-styling">
+    body {
+      background-color: #f4f2f9;
+      -webkit-tap-highlight-color: transparent;
+      font-family: 'Manrope', system-ui, -apple-system, sans-serif;
+    }
+    .custom-dashed-border {
+      border: 1.5px dashed #d1cbe5;
+    }
+    .custom-dashed-border:active {
+      border-color: #5b3fd6;
+      background-color: #faf9ff;
+    }
+    .safe-bottom {
+      padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
+    }
+    .safe-top {
+      padding-top: max(1.5rem, env(safe-area-inset-top));
+    }
+  </style>
+</head>
+<body class="min-h-screen text-slate-800 antialiased selection:bg-brand-100 selection:text-brand-700 flex flex-col justify-between p-4 sm:p-6 safe-top safe-bottom">
+<!-- BEGIN: MainContent -->
+<main class="w-full max-w-[420px] mx-auto flex-1 flex flex-col justify-between" data-purpose="onboarding-container">
+<!-- Top & Upload Zone Wrapper -->
+<div class="flex flex-col items-center w-full">
+<!-- BEGIN: HeaderSection -->
+<header class="flex flex-col items-center text-center mt-4 sm:mt-8 mb-6 sm:mb-8" data-purpose="welcome-header">
+<!-- Logo / Book Icon Badge -->
+<div aria-hidden="true" class="w-14 h-14 rounded-2xl bg-brand-600 flex items-center justify-center shadow-lg shadow-brand-600/25 mb-5 transition-transform active:scale-95">
+<svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" viewBox="0 0 24 24">
+<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+<path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+<path d="M12 6v6"></path>
+</svg>
+</div>
+<!-- Headline -->
+<h1 class="text-2xl sm:text-[28px] font-extrabold text-ink-title tracking-tight leading-snug">
+          Welcome to SyllaByte
+        </h1>
+<!-- Subtitle -->
+<p class="mt-2 text-sm sm:text-[15px] font-medium text-ink-sub max-w-[290px] leading-relaxed">
+          Upload your course materials to auto-generate interactive study roadmaps.
+        </p>
+</header>
+<!-- END: HeaderSection -->
+<!-- BEGIN: UploadCardContainer -->
+<section class="w-full bg-white rounded-3xl p-4 sm:p-5 shadow-card border border-purple-100/60 flex flex-col gap-4" data-purpose="upload-cards-wrapper">
+<!-- Upload Card 1: Syllabus -->
+<div class="w-full custom-dashed-border rounded-2xl p-5 flex flex-col items-center text-center bg-white transition-all duration-150 cursor-pointer group" data-purpose="syllabus-dropzone">
+<!-- Icon Badge: Soft Purple -->
+<div class="w-12 h-12 rounded-xl bg-purple-100 flex items-center justify-center text-brand-600 mb-3 group-hover:scale-105 transition-transform">
+<svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+<polyline points="14 2 14 8 20 8"></polyline>
+<line x1="16" x2="8" y1="13" y2="13"></line>
+<line x1="16" x2="8" y1="17" y2="17"></line>
+<polyline points="10 9 9 9 8 9"></polyline>
+</svg>
+</div>
+<h2 class="text-base font-bold text-ink-title">Syllabus</h2>
+<p class="text-xs text-ink-sub mt-1">Select file</p>
+<!-- Badges -->
+<div class="flex items-center gap-2 mt-3.5">
+<span class="px-2.5 py-0.5 rounded-md text-[11px] font-bold text-slate-500 border border-slate-200 bg-slate-50">PDF</span>
+<span class="px-2.5 py-0.5 rounded-md text-[11px] font-bold text-slate-500 border border-slate-200 bg-slate-50">DOCX</span>
+</div>
+<input accept=".pdf,.docx" aria-label="Upload syllabus file" class="hidden" type="file">
+</div>
+<!-- Upload Card 2: Lecture Slides -->
+<div class="w-full custom-dashed-border rounded-2xl p-5 flex flex-col items-center text-center bg-white transition-all duration-150 cursor-pointer group" data-purpose="slides-dropzone">
+<!-- Icon Badge: Soft Teal/Mint -->
+<div class="w-12 h-12 rounded-xl bg-teal-50 flex items-center justify-center text-teal-600 mb-3 group-hover:scale-105 transition-transform">
+<svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+<rect height="14" rx="2" ry="2" width="20" x="2" y="3"></rect>
+<line x1="8" x2="16" y1="21" y2="21"></line>
+<line x1="12" x2="12" y1="17" y2="21"></line>
+<circle cx="12" cy="9" r="2"></circle>
+<path d="M7 13a5 5 0 0 1 10 0"></path>
+</svg>
+</div>
+<h2 class="text-base font-bold text-ink-title">Lecture Slides</h2>
+<p class="text-xs text-ink-sub mt-1">Select file</p>
+<!-- Badges -->
+<div class="flex items-center gap-1.5 mt-3.5">
+<span class="px-2 py-0.5 rounded-md text-[11px] font-bold text-slate-500 border border-slate-200 bg-slate-50">PDF</span>
+<span class="px-2 py-0.5 rounded-md text-[11px] font-bold text-slate-500 border border-slate-200 bg-slate-50">PPTX</span>
+<span class="px-2 py-0.5 rounded-md text-[11px] font-bold text-slate-500 border border-slate-200 bg-slate-50">KEY</span>
+</div>
+<input accept=".pdf,.pptx,.key" aria-label="Upload lecture slides file" class="hidden" type="file">
+</div>
+</section>
+<!-- END: UploadCardContainer -->
+</div>
+<!-- BEGIN: BottomActions -->
+<footer class="w-full pt-6 pb-2" data-purpose="footer-actions"><div class="flex flex-col items-center gap-3 w-full"><button class="w-full flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-brand-600 hover:bg-brand-700 active:bg-brand-700 text-white font-semibold text-sm shadow-action tracking-wide transition-all active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-500" data-purpose="primary-action" type="button"><span class="">Get Started</span><svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" viewBox="0 0 24 24"><line x1="5" x2="19" y1="12" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg></button></div></footer>
+<!-- END: BottomActions -->
+</main>
+<!-- END: MainContent -->
+<!-- Interactivity for mobile tap triggers on dropzones -->
+<script data-purpose="file-trigger-handlers">
+    document.querySelectorAll('[data-purpose="syllabus-dropzone"], [data-purpose="slides-dropzone"]').forEach(zone => {
+      zone.addEventListener('click', () => {
+        const input = zone.querySelector('input[type="file"]');
+        if (input) input.click();
+      });
+    });
+  </script>
+
+
+</body></html>

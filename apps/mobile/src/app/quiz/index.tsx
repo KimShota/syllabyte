@@ -1,0 +1,114 @@
+import { ScrollView, StyleSheet, View } from "react-native";
+import { router } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Button } from "@/components/Button";
+import { Glow } from "@/components/Glow";
+import { Icon, type IconName } from "@/components/Icon";
+import { T } from "@/components/T";
+import { BASELINE_ITEMS } from "@/data/quizItems";
+import { useStore } from "@/state/store";
+import { colors, radius, shadow } from "@/theme/tokens";
+
+const RULES: { icon: IconName; tone: string; text: string }[] = [
+  { icon: "arrow-forward", tone: colors.primary, text: "You can't go back to the previous question once you answer" },
+  { icon: "help-outline", tone: colors.primary, text: "Choose “Not sure yet” if you don't know the answer" },
+  { icon: "schedule", tone: colors.secondary, text: "It isn't timed, so take your time" },
+  { icon: "public-off", tone: colors.secondary, text: "Don't search the internet; we won't grade you" },
+  { icon: "auto-awesome", tone: colors.primary, text: "Results personalize your video lessons to maximize learning outcomes" },
+];
+
+/** The baseline check's intro: no grade, the rules. */
+export default function QuizIntro() {
+  const insets = useSafeAreaInsets();
+  const { dispatch } = useStore();
+  return (
+    <View style={[styles.screen, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 }]}>
+      <ScrollView contentContainerStyle={styles.content}>
+        <View style={styles.header}>
+          <View style={styles.badgeWrap}>
+            <Glow size={150} color={colors.primaryFixedDim} opacity={0.7} />
+            <View style={styles.badge}>
+              <Icon name="psychology-alt" size={40} color={colors.primary} />
+            </View>
+          </View>
+          <T variant="titleMobile" style={{ textAlign: "center", maxWidth: 280 }} accessibilityRole="header">
+            A quick check, no grade
+          </T>
+          <View style={styles.countChip}>
+            <Icon name="quiz" size={18} color={colors.primary} />
+            <T variant="bodySemibold" color={colors.primary}>
+              Only {BASELINE_ITEMS.length} questions
+            </T>
+          </View>
+        </View>
+
+        <View style={styles.card}>
+          <View style={styles.cardHead}>
+            <Icon name="rule" size={20} color={colors.primary} />
+            <T variant="cardTitle">Rules</T>
+          </View>
+          {RULES.map((r) => (
+            <View key={r.text} style={styles.rule}>
+              <View style={{ marginTop: 1 }}>
+                <Icon name={r.icon} size={20} color={r.tone} />
+              </View>
+              <T variant="body" color={colors.onSurfaceVariant} style={{ flex: 1 }}>
+                {r.text}
+              </T>
+            </View>
+          ))}
+        </View>
+      </ScrollView>
+      <Button
+        label="Start"
+        trailingIcon="arrow-forward"
+        onPress={() => {
+          dispatch({ type: "resetQuiz" });
+          router.replace("/quiz/question");
+        }}
+        style={{ marginHorizontal: 20 }}
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: colors.surface },
+  content: { paddingHorizontal: 20, flexGrow: 1, justifyContent: "space-between", gap: 32, paddingBottom: 24 },
+  header: { alignItems: "center", paddingTop: 16 },
+  badgeWrap: { alignItems: "center", justifyContent: "center", marginBottom: 20 },
+  badge: {
+    width: 80,
+    height: 80,
+    borderRadius: radius.xl,
+    backgroundColor: colors.surfaceContainerLowest,
+    borderWidth: 1,
+    borderColor: colors.surfaceContainerHighest,
+    alignItems: "center",
+    justifyContent: "center",
+    ...shadow.card,
+  },
+  countChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: radius.full,
+    backgroundColor: colors.surfaceContainerLow,
+    borderWidth: 1,
+    borderColor: colors.surfaceContainerHighest,
+  },
+  card: {
+    padding: 20,
+    borderRadius: radius.xl,
+    backgroundColor: colors.surfaceContainerLowest,
+    borderWidth: 1,
+    borderColor: colors.surfaceContainerHighest,
+    gap: 16,
+    ...shadow.card,
+  },
+  cardHead: { flexDirection: "row", alignItems: "center", gap: 8, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: colors.surfaceContainerHighest },
+  rule: { flexDirection: "row", gap: 12, alignItems: "flex-start" },
+});

@@ -1,0 +1,223 @@
+<!DOCTYPE html><html class="h-full" lang="en" style=""><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport">
+<link href="https://fonts.googleapis.com" rel="preconnect">
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&amp;family=Manrope:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "surface": "#fbf8ff",
+            "surface-bright": "#fbf8ff",
+            "surface-container-lowest": "#ffffff",
+            "surface-container-low": "#f4f2fe",
+            "surface-container": "#eeecf8",
+            "surface-container-high": "#e8e7f3",
+            "on-surface": "#1a1b23",
+            "on-surface-variant": "#484554",
+            "primary": "#431ebe",
+            "primary-container": "#5b3fd6",
+            "secondary": "#006b5d",
+            "secondary-container": "#98f3e0",
+            "outline": "#797586",
+            "outline-variant": "#c9c4d7",
+          },
+          fontFamily: {
+            body: ["Manrope", "sans-serif"],
+            title: ["Manrope", "sans-serif"],
+            mono: ["JetBrains Mono", "monospace"],
+          }
+        }
+      }
+    };
+  </script>
+<style>
+    @keyframes laserSweep {
+      0% {
+        top: 0%;
+        opacity: 0.85;
+      }
+      50% {
+        top: 96%;
+        opacity: 1;
+      }
+      100% {
+        top: 0%;
+        opacity: 0.85;
+      }
+    }
+
+    .scanning-laser {
+      animation: laserSweep 2.8s ease-in-out infinite;
+    }
+
+    /* Transition states for slide swapping */
+    .slide-enter {
+      animation: slideIn 0.55s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    .slide-exit {
+      animation: slideOut 0.45s cubic-bezier(0.7, 0, 0.84, 0) forwards;
+    }
+
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateY(22px) scale(0.96);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    @keyframes slideOut {
+      from {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+      to {
+        opacity: 0;
+        transform: translateY(-22px) scale(0.96);
+      }
+    }
+  </style>
+</head>
+<body class="h-full bg-surface text-on-surface font-body antialiased flex flex-col justify-center items-center px-6 selection:bg-primary-container/20">
+<main class="w-full max-w-sm flex flex-col items-center my-auto"><div class="w-full flex items-center justify-between mb-2"><div class="flex items-center gap-2"><span class="material-symbols-outlined text-outline text-[18px]">neurology</span><span class="font-mono text-xs text-outline font-medium tracking-tight">ANALYZER</span></div><button id="closeBtn" type="button" aria-label="Close and return to main app" class="flex items-center justify-center w-9 h-9 rounded-full bg-surface-container-high/60 hover:bg-surface-container text-on-surface transition-colors border border-outline-variant/30 active:scale-95"><span class="material-symbols-outlined text-[20px]">close</span></button></div>
+<!-- Centered Headline -->
+<h1 class="text-[26px] leading-tight font-bold tracking-tight text-on-surface text-center mb-4">
+      Analyzing your materials...
+    </h1>
+<!-- Single Prominent Centered Slide Card Container -->
+<div class="relative w-full">
+<!-- Ambient Backdrops (Soft Deck Depth Effect) -->
+<div class="absolute -bottom-2 inset-x-4 h-32 rounded-2xl bg-surface-container-high/60 -z-10 transform scale-[0.94] blur-[0.5px] h-full"></div>
+<div class="absolute -bottom-1 inset-x-2 h-32 rounded-2xl bg-surface-container/80 -z-10 transform scale-[0.97] h-full"></div>
+<!-- Active Slide Card -->
+<div class="relative w-full rounded-2xl bg-surface-container-lowest border border-outline-variant/30 shadow-[0_12px_36px_rgba(67,30,190,0.08)] p-6 overflow-hidden flex flex-col slide-exit" id="slideCard" style="height: 620px;">
+<!-- Glowing Laser Scanning Beam -->
+<div class="scanning-laser pointer-events-none absolute inset-x-0 h-[2.5px] bg-gradient-to-r from-transparent via-primary-container to-secondary shadow-[0_0_14px_3px_rgba(91,63,214,0.65)] z-20">
+<div class="absolute inset-x-0 -top-6 h-6 bg-gradient-to-t from-primary-container/15 to-transparent"></div>
+<div class="absolute inset-x-0 top-0 h-6 bg-gradient-to-b from-primary-container/15 to-transparent"></div>
+</div>
+<!-- Slide Header: Indicator & Title -->
+<div class="flex items-center gap-2 mb-6">
+<span class="material-symbols-outlined text-[17px] text-primary-container">layers</span>
+<p class="font-mono text-xs font-semibold text-primary-container tracking-tight truncate" id="slideHeader">Slide 14 of 42 • Memory Hierarchy &amp; Caches</p>
+</div>
+<!-- Slide Content Preview / Diagram Schematic -->
+<div class="rounded-xl bg-surface-container-low/70 border border-outline-variant/20 p-4 min-h-[148px] flex items-center justify-center flex-1" id="slideGraphic">
+          <div class="w-full flex items-center justify-between gap-1.5">
+            <div class="flex-1 text-center py-2.5 px-1 rounded-lg bg-surface shadow-xs border border-outline-variant/15">
+              <span class="font-mono text-[10px] uppercase font-semibold text-on-surface block">L1 Cache</span>
+              <span class="font-mono text-[9px] text-outline block mt-0.5">&lt;1ns Latency</span>
+            </div>
+            <span class="material-symbols-outlined text-[14px] text-outline-variant">arrow_forward</span>
+            <div class="flex-1 text-center py-2.5 px-1 rounded-lg bg-surface shadow-xs border border-primary/20 bg-primary-container/[0.04]">
+              <span class="font-mono text-[10px] uppercase font-semibold text-primary-container block">L2 / SRAM</span>
+              <span class="font-mono text-[9px] text-primary-container/80 block mt-0.5">Unified Bus</span>
+            </div>
+            <span class="material-symbols-outlined text-[14px] text-outline-variant">arrow_forward</span>
+            <div class="flex-1 text-center py-2.5 px-1 rounded-lg bg-surface shadow-xs border border-outline-variant/15">
+              <span class="font-mono text-[10px] uppercase font-semibold text-on-surface block">Main DRAM</span>
+              <span class="font-mono text-[9px] text-outline block mt-0.5">~60ns Delay</span>
+            </div>
+          </div>
+        </div>
+</div>
+</div>
+<div id="exitModal" class="fixed inset-0 z-50 flex items-center justify-center bg-on-surface/40 px-6 backdrop-blur-[2px] transition-opacity duration-200 hidden opacity-0"><div class="w-full max-w-xs bg-surface-container-lowest border border-outline-variant/30 rounded-2xl p-5 shadow-[0_16px_40px_rgba(67,30,190,0.12)] transform transition-all duration-200 scale-95 flex flex-col" id="modalCard"><div class="flex items-center gap-3 mb-3"><div class="w-9 h-9 rounded-full bg-primary-container/10 flex items-center justify-center text-primary-container"><span class="material-symbols-outlined text-[20px]">logout</span></div><div><h3 class="font-bold text-sm text-on-surface">Exit Analysis?</h3><p class="text-xs text-outline font-body">Progress will be saved in background.</p></div></div><p class="text-xs text-on-surface-variant mb-4 leading-relaxed">Return to the Course Roadmap now? You can check results in your study hub later.</p><div class="flex items-center gap-2"><button id="cancelExitBtn" type="button" class="flex-1 py-2 px-3 rounded-lg border border-outline-variant/30 text-xs font-semibold text-on-surface bg-surface hover:bg-surface-container transition-colors">Keep Waiting</button><button id="confirmExitBtn" type="button" class="flex-1 py-2 px-3 rounded-lg bg-primary-container hover:bg-primary text-white text-xs font-semibold transition-colors shadow-xs">Exit to Hub</button></div></div></div></main>
+<script>
+    const slides = [
+      {
+        header: "Slide 14 of 42 • Memory Hierarchy & Caches",
+        graphic: `
+          <div class="w-full flex items-center justify-between gap-1.5">
+            <div class="flex-1 text-center py-2.5 px-1 rounded-lg bg-surface shadow-xs border border-outline-variant/15">
+              <span class="font-mono text-[10px] uppercase font-semibold text-on-surface block">L1 Cache</span>
+              <span class="font-mono text-[9px] text-outline block mt-0.5">&lt;1ns Latency</span>
+            </div>
+            <span class="material-symbols-outlined text-[14px] text-outline-variant">arrow_forward</span>
+            <div class="flex-1 text-center py-2.5 px-1 rounded-lg bg-surface shadow-xs border border-primary/20 bg-primary-container/[0.04]">
+              <span class="font-mono text-[10px] uppercase font-semibold text-primary-container block">L2 / SRAM</span>
+              <span class="font-mono text-[9px] text-primary-container/80 block mt-0.5">Unified Bus</span>
+            </div>
+            <span class="material-symbols-outlined text-[14px] text-outline-variant">arrow_forward</span>
+            <div class="flex-1 text-center py-2.5 px-1 rounded-lg bg-surface shadow-xs border border-outline-variant/15">
+              <span class="font-mono text-[10px] uppercase font-semibold text-on-surface block">Main DRAM</span>
+              <span class="font-mono text-[9px] text-outline block mt-0.5">~60ns Delay</span>
+            </div>
+          </div>
+        `
+      },
+      {
+        header: "Slide 15 of 42 • Pipeline Hazards & Stalls",
+        graphic: `
+          <div class="w-full flex flex-col gap-2">
+            <div class="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-surface border border-outline-variant/15 shadow-xs">
+              <span class="font-mono text-[11px] font-semibold text-on-surface">IF &rarr; ID &rarr; EX &rarr; MEM</span>
+              <span class="font-mono text-[9px] text-secondary font-medium uppercase px-1.5 py-0.5 rounded bg-secondary-container/40">In-Order</span>
+            </div>
+            <div class="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-surface border border-primary/25 shadow-xs bg-primary-container/[0.04]">
+              <span class="font-mono text-[11px] font-semibold text-primary-container">RAW Data Dependency</span>
+              <span class="font-mono text-[9px] text-primary-container font-semibold uppercase px-1.5 py-0.5 rounded bg-surface-container">Forwarding</span>
+            </div>
+          </div>
+        `
+      },
+      {
+        header: "Slide 16 of 42 • Dynamic Branch Prediction",
+        graphic: `
+          <div class="w-full flex items-center justify-center gap-2">
+            <div class="flex-1 text-center py-2 px-2 rounded-lg bg-surface border border-outline-variant/15 shadow-xs">
+              <span class="font-mono text-[10px] text-outline block uppercase">Predictor</span>
+              <span class="font-mono text-[11px] font-semibold text-on-surface mt-0.5 block">2-Bit Saturating</span>
+            </div>
+            <span class="material-symbols-outlined text-[14px] text-outline-variant">sync_alt</span>
+            <div class="flex-1 text-center py-2 px-2 rounded-lg bg-surface border border-primary/20 bg-primary-container/[0.04] shadow-xs">
+              <span class="font-mono text-[10px] text-primary-container block uppercase">Target Cache</span>
+              <span class="font-mono text-[11px] font-semibold text-primary-container mt-0.5 block">BTB Hit (96%)</span>
+            </div>
+          </div>
+        `
+      }
+    ];
+
+    let currentIndex = 0;
+    const card = document.getElementById("slideCard");
+    const headerEl = document.getElementById("slideHeader");
+    const graphicEl = document.getElementById("slideGraphic");
+
+    // Initialize first slide graphic
+    graphicEl.innerHTML = slides[0].graphic;
+
+    function swapSlide() {
+      card.classList.remove("slide-enter");
+      card.classList.add("slide-exit");
+
+      setTimeout(() => {
+        currentIndex = (currentIndex + 1) % slides.length;
+        const currentData = slides[currentIndex];
+
+        headerEl.textContent = currentData.header;
+        graphicEl.innerHTML = currentData.graphic;
+
+        card.classList.remove("slide-exit");
+        card.classList.add("slide-enter");
+      }, 450);
+    }
+
+    // Seamlessly swap slide deck card every 3.2 seconds
+    setInterval(swapSlide, 3200);
+  </script>
+
+
+
+
+<script>(function(){const closeBtn=document.getElementById('closeBtn');const exitModal=document.getElementById('exitModal');const modalCard=document.getElementById('modalCard');const cancelExitBtn=document.getElementById('cancelExitBtn');const confirmExitBtn=document.getElementById('confirmExitBtn');function showModal(){if(!exitModal)return;exitModal.classList.remove('hidden');requestAnimationFrame(()=>{exitModal.classList.remove('opacity-0');modalCard.classList.remove('scale-95');modalCard.classList.add('scale-100');});}function hideModal(){if(!exitModal)return;exitModal.classList.add('opacity-0');modalCard.classList.remove('scale-100');modalCard.classList.add('scale-95');setTimeout(()=>{exitModal.classList.add('hidden');},200);}if(closeBtn){closeBtn.addEventListener('click',showModal);}if(cancelExitBtn){cancelExitBtn.addEventListener('click',hideModal);}if(confirmExitBtn){confirmExitBtn.addEventListener('click',()=>{confirmExitBtn.innerHTML='<span class="material-symbols-outlined text-[14px] animate-spin">sync</span> Exiting...';setTimeout(()=>{window.history.length>1?window.history.back():window.location.reload();},650);});}})();</script></body></html>

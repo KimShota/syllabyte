@@ -1,0 +1,190 @@
+<!DOCTYPE html><html class="h-full" lang="en" style=""><head><meta charset="utf-8"><meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"><meta content="mobile_tab" name="shell-type"><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"><link href="https://fonts.googleapis.com" rel="preconnect"><link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&amp;family=Manrope:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config = { darkMode: "class", theme: { extend: { "colors": { "on-secondary-fixed": "#00201b", "on-primary-fixed-variant": "#4522c0", "surface-container-lowest": "#ffffff", "error-container": "#ffdad6", "surface": "#fbf8ff", "surface-variant": "#e3e1ed", "primary": "#431ebe", "outline-variant": "#c9c4d7", "tertiary-fixed": "#ffdbca", "on-secondary": "#ffffff", "on-surface": "#1a1b23", "error": "#ba1a1a", "surface-container-highest": "#e3e1ed", "secondary": "#006b5d", "tertiary-fixed-dim": "#ffb68e", "on-surface-variant": "#484554", "on-error": "#ffffff", "inverse-surface": "#2f3039", "on-primary-fixed": "#1a0063", "surface-tint": "#5e42d9", "on-tertiary": "#ffffff", "on-secondary-container": "#007163", "on-error-container": "#93000a", "primary-fixed": "#e5deff", "on-background": "#1a1b23", "surface-container-low": "#f4f2fe", "on-tertiary-fixed-variant": "#763300", "inverse-on-surface": "#f1effb", "primary-fixed-dim": "#c9bfff", "surface-container": "#eeecf8", "tertiary": "#733100", "surface-dim": "#dad9e4", "background": "#fbf8ff", "secondary-fixed": "#98f3e0", "on-primary-container": "#d7cfff", "surface-container-high": "#e8e7f3", "tertiary-container": "#984300", "secondary-container": "#98f3e0", "on-secondary-fixed-variant": "#005046", "on-tertiary-fixed": "#331200", "on-primary": "#ffffff", "outline": "#797586", "inverse-primary": "#c9bfff", "on-tertiary-container": "#ffcaae", "secondary-fixed-dim": "#7cd7c5", "surface-bright": "#fbf8ff", "primary-container": "#5b3fd6" }, "borderRadius": { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" }, "spacing": { "space-xs": "0.25rem", "space-xl": "2.5rem", "space-md": "1rem", "gutter": "1.5rem", "margin": "2.5rem", "space-lg": "1.5rem", "margin-mobile": "1rem", "gutter-mobile": "1rem", "space-sm": "0.5rem" }, "fontFamily": { "title": ["Manrope"], "eyebrow": ["JetBrains Mono"], "code-sm": ["JetBrains Mono"], "title-mobile": ["Manrope"], "card-title": ["Manrope"], "body-semibold": ["Manrope"], "caption": ["Manrope"], "body": ["Manrope"] }, "fontSize": { "title": ["32px", { "lineHeight": "38px", "fontWeight": "700" }], "eyebrow": ["13px", { "lineHeight": "18px", "letterSpacing": "0.08em", "fontWeight": "500" }], "code-sm": ["12px", { "lineHeight": "16px", "letterSpacing": "0.04em", "fontWeight": "400" }], "title-mobile": ["26px", { "lineHeight": "32px", "fontWeight": "700" }], "card-title": ["20px", { "lineHeight": "26px", "fontWeight": "600" }], "body-semibold": ["15px", { "lineHeight": "22px", "fontWeight": "600" }], "caption": ["13px", { "lineHeight": "18px", "fontWeight": "400" }], "body": ["15px", { "lineHeight": "22px", "fontWeight": "400" }] } } } };</script><style>@layer base{html,body{width:100%;margin:0;padding:0;}body{overscroll-behavior-y:none;}.pb-safe{padding-bottom:env(safe-area-inset-bottom,0px);}.pt-safe{padding-top:env(safe-area-inset-top,0px);}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head><body class="bg-surface font-body text-body text-on-surface antialiased min-h-screen flex flex-col"><header class="fixed top-0 w-full z-50 pt-safe bg-surface/85 backdrop-blur-xl shadow-[0_1px_8px_rgba(21,22,30,0.04)]"><div class="h-16 max-w-[390px] mx-auto px-4 flex items-center justify-between"><a href="#" aria-label="Return to Home" class="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-on-surface-variant hover:text-primary hover:bg-surface-container transition-colors cursor-pointer"><span class="material-symbols-outlined text-[20px]">home</span></a><button id="course-drawer-trigger" aria-label="Switch or view courses" class="flex items-center gap-2 px-2.5 py-1.5 rounded-xl hover:bg-surface-container transition-colors cursor-pointer text-left"><span class="material-symbols-outlined text-primary text-[20px]">auto_stories</span><span class="font-title-mobile text-card-title text-on-surface font-semibold tracking-tight">My Courses</span><span class="material-symbols-outlined text-on-surface-variant text-[18px]">expand_more</span></button><div class="flex items-center gap-2"><span class="hidden font-eyebrow text-eyebrow uppercase text-on-surface-variant font-medium tracking-wider">Roadmap</span><a aria-label="Student Profile" class="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full" data-path="student-profile" href="#"><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></a></div></div></header><main class="flex-1 flex flex-col relative w-full max-w-[390px] mx-auto px-margin-mobile pt-16 pb-28 bg-surface"><div class="flex flex-col w-full pb-10">
+<!-- Course Header & Synthesis Bar -->
+<header class="flex flex-col gap-3 mb-6 pt-1"><div class="flex items-center justify-between">
+<span class="font-eyebrow text-code-sm uppercase tracking-wider text-on-surface-variant">
+Course Overview
+</span>
+<div class="relative">
+
+</div>
+</div>
+<div class="flex items-start justify-between gap-2">
+<div>
+<div class="flex items-center gap-2">
+<h1 class="font-title-mobile text-title-mobile text-on-surface tracking-tight">
+Computational Social Science
+</h1>
+</div>
+<div class="flex items-center gap-2 mt-0.5">
+<p class="font-caption text-caption text-on-surface-variant">Prof. Al-Mansoori</p>
+<span class="w-1 h-1 rounded-full bg-outline"></span>
+<span class="font-eyebrow text-code-sm text-on-surface-variant">CS-UH 2219E · Fall 2024</span>
+</div>
+</div>
+</div>
+<!-- Course Switcher Popover / Menu Card -->
+</header>
+<!-- Serpentine Upward Path Container -->
+<!-- Ascending bottom-to-top pedagogical sequence -->
+<div class="relative w-full flex flex-col items-center">
+<!-- Underlying Curved Canvas (SVG Path Spine) -->
+<svg class="absolute inset-0 w-full h-full pointer-events-none select-none" preserveAspectRatio="none" viewBox="0 0 358 880" xmlns="http://www.w3.org/2000/svg">
+<!-- Trailing completed path segment (Lecture 1 to Lecture 2) -->
+<path class="text-secondary" d="M 72 805 C 72 730, 286 730, 286 645" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="3"></path>
+<!-- Open active path segment (Lecture 2 to Lecture 3) -->
+<path class="text-primary-fixed-dim" d="M 286 645 C 286 565, 72 565, 72 485" fill="none" stroke="currentColor" stroke-dasharray="4 4" stroke-linecap="round" stroke-width="3"></path>
+<!-- Future available path segments (Lecture 3 to Lecture 4 to Lecture 5 to Capstone) -->
+<path class="text-outline-variant" d="M 72 485 C 72 405, 286 405, 286 325" fill="none" stroke="currentColor" stroke-dasharray="5 5" stroke-linecap="round" stroke-width="2.5"></path>
+<path class="text-outline-variant" d="M 286 325 C 286 245, 72 245, 72 165" fill="none" stroke="currentColor" stroke-dasharray="5 5" stroke-linecap="round" stroke-width="2.5"></path>
+<path class="text-outline-variant" d="M 72 165 C 72 90, 179 90, 179 28" fill="none" stroke="currentColor" stroke-dasharray="5 5" stroke-linecap="round" stroke-width="2.5"></path>
+</svg>
+<!-- NODE 6: Capstone / Final Exam Preparation (TOP GOAL) -->
+<div class="relative z-10 w-full flex flex-col items-center mb-12">
+<!-- Node Badge -->
+<div class="w-14 h-14 rounded-full bg-tertiary-fixed text-tertiary flex items-center justify-center shadow-[0_4px_12px_rgba(21,22,30,0.06)] ring-4 ring-surface">
+<span class="material-symbols-outlined text-[28px]">school</span>
+</div>
+<!-- Label Card -->
+<div class="bg-surface-container-lowest mt-3 px-4 py-3 rounded-xl shadow-[0_2px_8px_rgba(21,22,30,0.04)] text-center max-w-[260px] flex flex-col items-center">
+
+<h2 class="font-card-title text-body-semibold text-on-surface mt-0.5">Final Exam</h2>
+<span class="font-caption text-code-sm text-on-surface-variant mt-1">December 14 · Comprehensive Review</span>
+</div>
+</div>
+<!-- NODE 5: Lecture 5 · Text as Data (Right Stagger) -->
+<div class="relative z-10 w-full flex items-center justify-between mb-14 px-2">
+<!-- Context Card -->
+<div class="w-[200px] bg-surface-container-lowest/80 rounded-xl p-3.5 shadow-[0_2px_8px_rgba(21,22,30,0.03)] opacity-75">
+<div class="flex items-center gap-1.5 mb-1">
+<span class="font-eyebrow text-code-sm uppercase tracking-wider text-on-surface-variant">Lecture 5</span>
+<span class="w-1 h-1 rounded-full bg-outline"></span>
+
+</div>
+<h3 class="font-card-title text-body-semibold text-on-surface leading-snug">Lecture 5: Text as Data</h3>
+<div class="mt-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-surface-container-high text-on-surface-variant font-eyebrow text-[10px]">
+<span class="material-symbols-outlined text-[12px]">schedule</span>
+          Awaiting slide</div>
+</div>
+<!-- Node Circle: Dashed (Awaiting Upload) -->
+<button aria-label="Lecture 5: Text as Data" class="w-14 h-14 rounded-full bg-surface-container-low text-on-surface-variant flex items-center justify-center shadow-sm hover:bg-surface-container transition-colors ring-4 ring-surface cursor-pointer" type="button">
+<span class="material-symbols-outlined text-[24px]">hourglass_empty</span>
+</button>
+</div>
+<!-- NODE 4: Lecture 4 · Natural Experiments (Left Stagger) -->
+<div class="relative z-10 w-full flex items-center justify-between mb-14 px-2">
+<!-- Node Circle: Dashed -->
+<button aria-label="Lecture 4: Natural Experiments" class="w-14 h-14 rounded-full bg-surface-container-low text-on-surface-variant flex items-center justify-center shadow-sm hover:bg-surface-container transition-colors ring-4 ring-surface cursor-pointer" type="button">
+<span class="material-symbols-outlined text-[24px]">auto_awesome</span>
+</button>
+<!-- Context Card -->
+<div class="w-[200px] bg-surface-container-lowest/80 rounded-xl p-3.5 shadow-[0_2px_8px_rgba(21,22,30,0.03)] opacity-75 text-right">
+<div class="flex items-center justify-end gap-1.5 mb-1">
+
+<span class="w-1 h-1 rounded-full bg-outline"></span>
+<span class="font-eyebrow text-code-sm uppercase tracking-wider text-on-surface-variant">Lecture 4</span>
+</div>
+<h3 class="font-card-title text-body-semibold text-on-surface leading-snug">Lecture 4: Natural Experiments</h3>
+<div class="mt-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-surface-container-high text-on-surface-variant font-eyebrow text-[10px]">
+<span class="material-symbols-outlined text-[12px]">schedule</span>
+          Awaiting slide</div>
+</div>
+</div>
+<!-- NODE 3: Lecture 3 · Randomization (Right Stagger) -->
+<div class="relative z-10 w-full flex items-center justify-between mb-16 px-2">
+<!-- Context Card -->
+<div class="w-[200px] bg-surface-container-lowest rounded-xl p-3.5 shadow-[0_2px_8px_rgba(21,22,30,0.04)]">
+<div class="flex items-center gap-1.5 mb-1">
+<span class="font-eyebrow text-code-sm uppercase tracking-wider text-primary font-medium">lecture 3</span>
+<span class="w-1 h-1 rounded-full bg-outline"></span>
+
+</div>
+<h3 class="font-card-title text-body-semibold text-on-surface leading-snug">Lecture 3: Randomization</h3>
+
+<div class="mt-2.5 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant font-eyebrow text-code-sm">
+<span class="w-1.5 h-1.5 rounded-full bg-outline"></span>
+          Not started (0/6)
+        </div>
+</div>
+<!-- Node Circle: Ready & Fully Open (No Padlock) -->
+<button aria-label="Open Lecture 3: Randomization" class="w-14 h-14 rounded-full bg-surface-container-lowest text-primary shadow-[0_2px_10px_rgba(67,30,190,0.1)] flex items-center justify-center ring-4 ring-surface hover:bg-surface-container-low transition-all cursor-pointer" type="button">
+<span class="font-eyebrow text-eyebrow font-semibold">03</span>
+</button>
+</div>
+<!-- NODE 2: Lecture 2 · Selection Bias (UP NEXT / ACTIVE - Left Stagger) -->
+<div class="relative z-20 w-full flex flex-col mb-16 px-2">
+<!-- Speech Bubble Callout directly pointing to active node -->
+
+<div class="flex items-center justify-between w-full">
+<!-- Node Circle: Active Glowing Node with Concentric Halo -->
+<div class="relative flex items-center justify-center">
+<!-- Gentle academic dual-ring pulse aura -->
+<div class="absolute -inset-2 rounded-full bg-primary-fixed/60 animate-pulse pointer-events-none"></div>
+<button aria-label="Continue Lecture 2: Selection bias" class="relative z-10 w-14 h-14 rounded-full bg-primary-container text-on-primary flex items-center justify-center shadow-[0_8px_20px_rgba(91,63,214,0.3)] ring-4 ring-surface hover:scale-105 transition-transform cursor-pointer" type="button">
+<span class="material-symbols-outlined text-[28px]" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+</button>
+</div>
+<!-- Interactive Detailed Card -->
+<a class="w-[210px] bg-surface-container-lowest rounded-xl p-4 shadow-[0_4px_16px_rgba(91,63,214,0.1)] hover:bg-surface-container-low transition-all block" href="#">
+<div class="flex items-center justify-between mb-1">
+<span class="font-eyebrow text-code-sm uppercase tracking-wider text-primary font-semibold">lecture 2 · In Progress</span>
+<span class="font-eyebrow text-code-sm text-primary font-semibold">2/5</span>
+</div>
+<h3 class="font-card-title text-body-semibold text-on-surface leading-snug">Lecture 2: Selection Bias</h3>
+<!-- Mini Progress Track inside card -->
+<div class="w-full bg-surface-container h-1.5 rounded-full mt-2.5 overflow-hidden">
+<div class="bg-primary-container h-full rounded-full w-2/5"></div>
+</div>
+<div class="flex items-center justify-between mt-2 pt-1 font-caption text-code-sm text-on-surface-variant">
+<span class="">Next: Heckman Correction</span>
+<span class="material-symbols-outlined text-primary text-[16px]">arrow_forward</span>
+</div>
+</a>
+</div>
+</div>
+<!-- NODE 1: Lecture 1 · Causal Questions (COMPLETED - Right Stagger) -->
+<div class="relative z-10 w-full flex items-center justify-between px-2">
+<!-- Completed Card -->
+<div class="w-[200px] bg-surface-container-lowest rounded-xl p-3.5 shadow-[0_2px_8px_rgba(21,22,30,0.04)]">
+<div class="flex items-center gap-1.5 mb-1">
+<span class="font-eyebrow text-code-sm uppercase tracking-wider text-secondary font-medium">Lecture 1</span>
+<span class="w-1 h-1 rounded-full bg-secondary"></span>
+<span class="font-eyebrow text-code-sm text-secondary font-medium">Completed</span>
+</div>
+<h3 class="font-card-title text-body-semibold text-on-surface leading-snug">Lecture 1: Causal Questions</h3>
+<div class="mt-2.5 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-secondary-container text-on-secondary-container font-eyebrow text-code-sm">
+<span class="material-symbols-outlined text-[13px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+          10 of 10 completed</div>
+</div>
+<!-- Node Circle: Completed State with Teal Checkmark -->
+<button aria-label="Review Lecture 1: Causal Questions" class="w-14 h-14 rounded-full bg-secondary text-on-secondary shadow-[0_4px_12px_rgba(0,107,93,0.2)] flex items-center justify-center ring-4 ring-surface hover:opacity-95 transition-opacity cursor-pointer" type="button">
+<span class="material-symbols-outlined text-[26px]">check</span>
+</button>
+</div>
+</div>
+<!-- Bottom Encouragement Note -->
+
+</div></main><nav class="fixed bottom-0 w-full z-50 pb-safe pointer-events-none" data-active-classes="text-primary-container font-body-semibold"><div class="max-w-[390px] mx-auto px-4 pb-3 pt-1"></div></nav>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<script>(function(){const trigger=document.getElementById('course-drawer-trigger');const drawerRoot=document.getElementById('courses-drawer-root');const backdrop=document.getElementById('courses-drawer-backdrop');const closeBtn=document.getElementById('courses-drawer-close');const panel=document.getElementById('courses-drawer-panel');function openDrawer(){drawerRoot.classList.remove('pointer-events-none','opacity-0');drawerRoot.classList.add('pointer-events-auto','opacity-100');panel.classList.remove('-translate-x-full');panel.classList.add('translate-x-0');}function closeDrawer(){drawerRoot.classList.add('opacity-0');drawerRoot.classList.remove('opacity-100');panel.classList.add('-translate-x-full');panel.classList.remove('translate-x-0');setTimeout(()=>{drawerRoot.classList.add('pointer-events-none');drawerRoot.classList.remove('pointer-events-auto');},300);}if(trigger)trigger.addEventListener('click',openDrawer);if(backdrop)backdrop.addEventListener('click',closeDrawer);if(closeBtn)closeBtn.addEventListener('click',closeDrawer);})();</script>
+
+</body></html>

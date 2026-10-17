@@ -1,0 +1,337 @@
+<!DOCTYPE html><html class="h-full" lang="en" style=""><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport">
+<meta content="mobile_tab" name="shell-type">
+<link href="https://fonts.googleapis.com" rel="preconnect">
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&amp;family=Manrope:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "surface-container-high": "#e8e7f3",
+            "surface-container-low": "#f4f2fe",
+            "on-tertiary": "#ffffff",
+            "on-primary-fixed-variant": "#4522c0",
+            "on-secondary-container": "#007163",
+            "tertiary-fixed-dim": "#ffb68e",
+            "secondary-fixed": "#98f3e0",
+            "on-surface": "#1a1b23",
+            "surface": "#fbf8ff",
+            "secondary-container": "#98f3e0",
+            "secondary-fixed-dim": "#7cd7c5",
+            "on-tertiary-fixed-variant": "#763300",
+            "tertiary-fixed": "#ffdbca",
+            "surface-bright": "#fbf8ff",
+            "primary-fixed-dim": "#c9bfff",
+            "on-background": "#1a1b23",
+            "surface-container-lowest": "#ffffff",
+            "outline": "#797586",
+            "inverse-surface": "#2f3039",
+            "error-container": "#ffdad6",
+            "primary": "#5b3fd6",
+            "on-primary": "#ffffff",
+            "tertiary-container": "#984300",
+            "on-surface-variant": "#484554",
+            "on-primary-fixed": "#1a0063",
+            "tertiary": "#733100",
+            "on-tertiary-fixed": "#331200",
+            "error": "#ba1a1a",
+            "surface-container": "#eeecf8",
+            "on-error": "#ffffff",
+            "on-secondary-fixed-variant": "#005046",
+            "on-secondary-fixed": "#00201b",
+            "outline-variant": "#c9c4d7",
+            "background": "#fbf8ff",
+            "inverse-primary": "#c9bfff",
+            "inverse-on-surface": "#f1effb",
+            "surface-dim": "#dad9e4",
+            "surface-tint": "#5e42d9",
+            "on-tertiary-container": "#ffcaae",
+            "on-error-container": "#93000a",
+            "primary-container": "#5b3fd6",
+            "surface-container-highest": "#e3e1ed",
+            "surface-variant": "#e3e1ed",
+            "primary-fixed": "#e5deff",
+            "on-primary-container": "#d7cfff",
+            "secondary": "#006b5d",
+            "on-secondary": "#ffffff"
+          },
+          borderRadius: {
+            "DEFAULT": "0.25rem",
+            "lg": "0.5rem",
+            "xl": "0.75rem",
+            "2xl": "1rem",
+            "full": "9999px"
+          },
+          spacing: {
+            "space-md": "1rem",
+            "space-sm": "0.5rem",
+            "space-lg": "1.5rem",
+            "space-xl": "2.5rem",
+            "space-xs": "0.25rem",
+            "margin": "2.5rem",
+            "margin-mobile": "1rem",
+            "gutter-mobile": "1rem",
+            "gutter": "1.5rem"
+          },
+          fontFamily: {
+            "body": ["Manrope", "sans-serif"],
+            "card-title": ["Manrope", "sans-serif"],
+            "body-semibold": ["Manrope", "sans-serif"],
+            "title": ["Manrope", "sans-serif"],
+            "title-mobile": ["Manrope", "sans-serif"],
+            "code-sm": ["JetBrains Mono", "monospace"],
+            "caption": ["Manrope", "sans-serif"],
+            "eyebrow": ["JetBrains Mono", "monospace"]
+          },
+          fontSize: {
+            "body": ["15px", { "lineHeight": "22px", "fontWeight": "400" }],
+            "card-title": ["20px", { "lineHeight": "26px", "fontWeight": "600" }],
+            "body-semibold": ["15px", { "lineHeight": "22px", "fontWeight": "600" }],
+            "title": ["30px", { "lineHeight": "36px", "fontWeight": "700" }],
+            "title-mobile": ["26px", { "lineHeight": "32px", "fontWeight": "700" }],
+            "code-sm": ["12px", { "lineHeight": "16px", "letterSpacing": "0.04em", "fontWeight": "400" }],
+            "caption": ["13px", { "lineHeight": "18px", "fontWeight": "400" }],
+            "eyebrow": ["12px", { "lineHeight": "16px", "letterSpacing": "0.08em", "fontWeight": "600" }]
+          }
+        }
+      }
+    };
+  </script>
+<style>
+    @layer base {
+      html, body {
+        width: 100vw;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        overscroll-behavior: none;
+      }
+      .pb-safe {
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+      }
+      .pt-safe {
+        padding-top: env(safe-area-inset-top, 0px);
+      }
+    }
+    ::-webkit-scrollbar {
+      display: none;
+    }
+  </style>
+</head>
+<body class="bg-[#fbf8ff] font-body text-body text-[#1a1b23] flex flex-col min-h-screen selection:bg-primary-fixed selection:text-on-primary-fixed antialiased">
+<!-- Fixed Top Header (Clean solid background, sharp text, no blur) -->
+<header class="fixed top-0 left-0 right-0 w-full z-40 bg-[#fbf8ff] border-b border-[#e3e1ed]/70 pt-safe">
+<div class="h-16 px-4 flex items-center justify-between">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-xl bg-primary flex items-center justify-center text-white shadow-sm">
+<span class="material-symbols-outlined text-[22px]">auto_stories</span>
+</div>
+<div class="flex flex-col">
+<span class="font-eyebrow text-eyebrow text-primary tracking-wider uppercase font-semibold">SYLLABYTE</span>
+<span class="font-title text-[18px] text-[#1a1b23] font-bold leading-tight">Home</span>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<button aria-label="Course Announcements" class="w-10 h-10 rounded-full flex items-center justify-center text-[#484554] hover:bg-surface-container-high active:scale-95 transition-all">
+
+</button>
+<button aria-label="User Profile" class="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-white shadow-sm active:scale-95 transition-all">
+<span class="material-symbols-outlined text-[20px]">person</span>
+</button>
+</div>
+</div>
+</header>
+<!-- Main Content Layout -->
+<main class="flex-1 flex flex-col w-full max-w-lg mx-auto px-4 pt-20 pb-28">
+<!-- Top Action & Title Area -->
+<div class="pt-4 pb-2">
+<div class="flex items-center justify-between gap-3">
+<div>
+<h1 class="font-title text-title text-[#1a1b23] tracking-tight font-bold">My Courses</h1>
+<p class="font-caption text-caption text-[#484554] mt-0.5">See your enrolled courses &amp; track progress for each</p>
+</div>
+<button class="enroll-trigger flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-primary text-white font-body-semibold text-caption shadow-sm hover:opacity-95 active:scale-95 transition-all shrink-0" id="open-enroll-btn">
+<span class="material-symbols-outlined text-[18px]">add</span>
+<span class="">Upload Course</span>
+</button>
+</div>
+</div>
+<!-- Filter / Toggle Pills -->
+<div class="mt-4 mb-5">
+<div class="inline-flex items-center p-1 bg-[#eeecf8] rounded-xl border border-[#e3e1ed]">
+
+
+</div>
+</div>
+<!-- Active Courses Section (Strictly course name + progress percentage with sleek progress bar) -->
+<section class="flex flex-col space-y-4" id="populated-view">
+<!-- Course 1 -->
+<article class="flex flex-col rounded-2xl bg-white p-5 border border-[#e3e1ed] shadow-[0_2px_8px_rgba(26,27,35,0.04)] space-y-3.5">
+<div class="flex items-center justify-between gap-2">
+<h2 class="font-card-title text-[17px] text-[#1a1b23] font-semibold leading-snug">Computational Social Science</h2>
+<span class="font-body-semibold text-[15px] text-primary font-bold shrink-0">65%</span>
+</div>
+<div aria-valuemax="100" aria-valuemin="0" aria-valuenow="65" class="w-full h-2.5 rounded-full bg-[#eeecf8] overflow-hidden" role="progressbar">
+<div class="h-full bg-primary rounded-full transition-all duration-500" style="width: 65%;"></div>
+</div>
+</article>
+<!-- Course 2 -->
+<article class="flex flex-col rounded-2xl bg-white p-5 border border-[#e3e1ed] shadow-[0_2px_8px_rgba(26,27,35,0.04)] space-y-3.5">
+<div class="flex items-center justify-between gap-2">
+<h2 class="font-card-title text-[17px] text-[#1a1b23] font-semibold leading-snug">Microeconomic Theory II</h2>
+<span class="font-body-semibold text-[15px] text-primary font-bold shrink-0">40%</span>
+</div>
+<div aria-valuemax="100" aria-valuemin="0" aria-valuenow="40" class="w-full h-2.5 rounded-full bg-[#eeecf8] overflow-hidden" role="progressbar">
+<div class="h-full bg-primary rounded-full transition-all duration-500" style="width: 40%;"></div>
+</div>
+</article>
+<!-- Course 3 -->
+<article class="flex flex-col rounded-2xl bg-white p-5 border border-[#e3e1ed] shadow-[0_2px_8px_rgba(26,27,35,0.04)] space-y-3.5">
+<div class="flex items-center justify-between gap-2">
+<h2 class="font-card-title text-[17px] text-[#1a1b23] font-semibold leading-snug">Machine Learning &amp; Causal Inference</h2>
+<span class="font-body-semibold text-[15px] text-primary font-bold shrink-0">15%</span>
+</div>
+<div aria-valuemax="100" aria-valuemin="0" aria-valuenow="15" class="w-full h-2.5 rounded-full bg-[#eeecf8] overflow-hidden" role="progressbar">
+<div class="h-full bg-primary rounded-full transition-all duration-500" style="width: 15%;"></div>
+</div>
+</article>
+<!-- Secondary Quick Upload Banner for balanced vertical layout -->
+<article class="flex flex-col rounded-2xl bg-white p-5 border border-primary/30 shadow-[0_2px_8px_rgba(26,27,35,0.04)] space-y-3.5 relative overflow-hidden"><div class="flex items-center justify-between gap-2"><div class="flex items-center gap-2"><span class="material-symbols-outlined text-primary text-[20px] animate-spin">sync</span><h2 class="font-card-title text-[17px] text-[#1a1b23] font-semibold leading-snug">Introduction to Neuroscience</h2></div><span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold font-eyebrow bg-secondary-fixed text-on-secondary-fixed-variant tracking-wider uppercase">Analyzing</span></div><div class="flex items-center justify-between text-caption text-[#484554]"><span class="font-caption text-[13px]">Analyzing content...</span><span class="font-body-semibold text-[13px] text-primary font-bold shrink-0">48%</span></div><div aria-valuemax="100" aria-valuemin="0" aria-valuenow="48" class="w-full h-2.5 rounded-full bg-[#eeecf8] overflow-hidden" role="progressbar"><div class="h-full bg-primary rounded-full transition-all duration-500" style="width: 48%;"></div></div></article><div class="pt-3">
+<button class="enroll-trigger w-full flex items-center justify-center gap-2 py-4 px-4 rounded-2xl border-2 border-dashed border-[#c9c4d7] bg-[#f4f2fe]/60 text-primary font-body-semibold text-[14px] hover:bg-[#eeecf8] transition-colors">
+<span class="material-symbols-outlined text-[20px]">upload_file</span>
+<span class="">+ Upload Another Course</span>
+</button>
+</div>
+</section>
+<!-- Empty State Section (Toggled cleanly) -->
+<section class="flex-col items-center justify-center py-14 px-6 rounded-2xl bg-white border border-[#e3e1ed] text-center shadow-[0_2px_8px_rgba(26,27,35,0.04)] space-y-5 my-auto hidden" id="empty-view">
+<div class="w-16 h-16 rounded-2xl bg-[#eeecf8] flex items-center justify-center text-primary">
+<span class="material-symbols-outlined text-[34px]">school</span>
+</div>
+<div class="flex flex-col space-y-1.5 max-w-xs">
+<h3 class="font-card-title text-[20px] text-[#1a1b23] font-bold">No courses yet</h3>
+<p class="font-body text-caption text-[#484554]">Upload your syllabus or lecture slides to generate your study roadmap and start tracking.</p>
+</div>
+<button class="enroll-trigger flex items-center gap-2 px-6 py-3 rounded-xl bg-primary text-white font-body-semibold text-[14px] shadow-sm hover:opacity-95 active:scale-95 transition-all">
+<span class="material-symbols-outlined text-[18px]">upload_file</span>
+<span class="">Upload Course</span>
+</button>
+</section>
+</main>
+<!-- Upload Modal Dialog (No blur, crisp high-contrast overlay) -->
+<div class="fixed inset-0 z-50 flex items-end justify-center bg-[#1a1b23]/50 transition-opacity duration-200 opacity-0 pointer-events-none" id="enroll-modal">
+<div class="w-full max-w-md bg-white rounded-t-[28px] p-6 flex flex-col space-y-4 shadow-2xl max-h-[85vh] overflow-y-auto transform transition-transform duration-300 ease-out border-t border-[#e3e1ed] translate-y-full" id="modal-panel">
+<div class="w-12 h-1.5 rounded-full bg-[#dad9e4] mx-auto -mt-2 mb-1"></div>
+<div class="flex items-center justify-between pb-1">
+<h3 class="font-card-title text-[20px] text-[#1a1b23] font-bold">Upload Course</h3>
+<button class="w-9 h-9 rounded-full bg-[#eeecf8] flex items-center justify-center text-[#484554] hover:text-[#1a1b23] active:scale-90 transition-all" id="close-enroll-btn">
+<span class="material-symbols-outlined text-[20px]">close</span>
+</button>
+</div>
+<div class="flex flex-col space-y-1.5">
+<label class="font-caption text-caption text-[#484554] font-semibold">Course Name</label>
+<input class="h-12 px-4 rounded-xl bg-[#f4f2fe] text-[#1a1b23] font-body text-body border border-[#e3e1ed] focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all" id="input-course-name" placeholder="e.g. CS-201: Data Structures" type="text">
+</div>
+<div class="flex flex-col space-y-1.5">
+<label class="font-caption text-caption text-[#484554] font-semibold">Syllabus or Slides (PDF/PPTX)</label>
+<div class="p-6 rounded-xl bg-[#f4f2fe] border-2 border-dashed border-[#c9c4d7] flex flex-col items-center justify-center text-center cursor-pointer hover:bg-[#eeecf8] transition-colors">
+<span class="material-symbols-outlined text-[30px] text-primary mb-1">cloud_upload</span>
+<span class="font-body-semibold text-caption text-[#1a1b23]">Tap to choose files</span>
+<span class="font-caption text-[11px] text-[#484554] mt-0.5">PDF, DOCX, or PPTX up to 25MB</span>
+</div>
+</div>
+<div class="pt-2 pb-safe">
+<button class="w-full h-12 rounded-xl bg-primary text-white font-body-semibold text-body shadow-sm active:scale-98 transition-all flex items-center justify-center gap-2" id="submit-enroll-btn">
+<span class="">Add Course</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Bottom Tab Navigation Bar (Crisp solid background, proper safe-area padding) -->
+<nav class="fixed bottom-0 left-0 right-0 w-full z-40 pb-safe bg-[#ffffff] border-t border-[#e3e1ed]">
+
+</nav>
+<!-- Script for Tab Switcher and Modal Interactions -->
+<script>
+    (function initSyllaByteHome() {
+      const tabPopulated = document.getElementById('tab-populated');
+      const tabEmpty = document.getElementById('tab-empty');
+      const populatedView = document.getElementById('populated-view');
+      const emptyView = document.getElementById('empty-view');
+
+      const enrollModal = document.getElementById('enroll-modal');
+      const modalPanel = document.getElementById('modal-panel');
+      const openEnrollBtn = document.getElementById('open-enroll-btn');
+      const closeEnrollBtn = document.getElementById('close-enroll-btn');
+      const submitEnrollBtn = document.getElementById('submit-enroll-btn');
+      const enrollTriggers = document.querySelectorAll('.enroll-trigger');
+
+      function showPopulated() {
+        tabPopulated.className = "px-4 py-1.5 rounded-lg font-body-semibold text-caption bg-white text-primary shadow-xs font-semibold transition-all";
+        tabEmpty.className = "px-4 py-1.5 rounded-lg font-body text-caption text-[#484554] hover:text-[#1a1b23] transition-all";
+        populatedView.classList.remove('hidden');
+        emptyView.classList.add('hidden');
+        emptyView.classList.remove('flex');
+      }
+
+      function showEmpty() {
+        tabEmpty.className = "px-4 py-1.5 rounded-lg font-body-semibold text-caption bg-white text-primary shadow-xs font-semibold transition-all";
+        tabPopulated.className = "px-4 py-1.5 rounded-lg font-body text-caption text-[#484554] hover:text-[#1a1b23] transition-all";
+        populatedView.classList.add('hidden');
+        emptyView.classList.remove('hidden');
+        emptyView.classList.add('flex');
+      }
+
+      function openModal() {
+        enrollModal.classList.remove('pointer-events-none', 'opacity-0');
+        enrollModal.classList.add('opacity-100');
+        modalPanel.classList.remove('translate-y-full');
+        modalPanel.classList.add('translate-y-0');
+      }
+
+      function closeModal() {
+        modalPanel.classList.remove('translate-y-0');
+        modalPanel.classList.add('translate-y-full');
+        enrollModal.classList.remove('opacity-100');
+        enrollModal.classList.add('opacity-0', 'pointer-events-none');
+      }
+
+      tabPopulated.addEventListener('click', showPopulated);
+      tabEmpty.addEventListener('click', showEmpty);
+
+      if (openEnrollBtn) {
+        openEnrollBtn.addEventListener('click', openModal);
+      }
+      enrollTriggers.forEach(btn => btn.addEventListener('click', openModal));
+      if (closeEnrollBtn) {
+        closeEnrollBtn.addEventListener('click', closeModal);
+      }
+      if (enrollModal) {
+        enrollModal.addEventListener('click', (e) => {
+          if (e.target === enrollModal) closeModal();
+        });
+      }
+
+      if (submitEnrollBtn) {
+        submitEnrollBtn.addEventListener('click', () => {
+          closeModal();
+          showPopulated();
+        });
+      }
+    })();
+  </script>
+
+
+
+
+
+
+</body></html>

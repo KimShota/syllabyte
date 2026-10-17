@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "SyllaByte",
+    "slug": "syllabyte",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "edu.nyu.syllabyte"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#5B3FD6",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "edu.nyu.syllabyte"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-status-bar",
+      "expo-font",
+      "expo-video",
+      "expo-splash-screen"
+    ],
+    "scheme": "syllabyte",
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
