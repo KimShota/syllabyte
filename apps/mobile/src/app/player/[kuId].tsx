@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { setStatusBarStyle } from "expo-status-bar";
+import { setStatusBarHidden, setStatusBarStyle } from "expo-status-bar";
 import { FlatList, View } from "react-native";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { PlayerPage } from "@/components/player/PlayerPage";
@@ -34,7 +34,10 @@ export default function Player() {
   useFocusEffect(
     useCallback(() => {
       setStatusBarStyle("light");
-      return () => setStatusBarStyle("dark");
+      return () => {
+        setStatusBarStyle("dark");
+        setStatusBarHidden(false, "fade");
+      };
     }, []),
   );
 

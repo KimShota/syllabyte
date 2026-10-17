@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Animated, Pressable, StyleSheet, View } from "react-native";
 import { router } from "expo-router";
+import { setStatusBarHidden } from "expo-status-bar";
 import { VideoView } from "expo-video";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -9,6 +10,7 @@ import { Icon, type IconName } from "../Icon";
 import { T } from "../T";
 import { SceneView } from "./SceneView";
 import { StudySheet, activeLine, type StudyMode } from "./StudySheet";
+import { useAutoHide } from "./useAutoHide";
 import { usePlayback } from "./usePlayback";
 import { formatTime } from "@/data/selectors";
 import type { Ku } from "@/data/types";
@@ -71,16 +73,38 @@ export function PlayerPage({
       ]).start();
   }, [pb.playing, glyph]);
 
+  // while it plays untouched, everything but the video (and captions, if on) fades away
+  const [scrubbing, setScrubbing] = useState(false);
+  const controls = useAutoHide({ active, pinned: !pb.playing || sheet !== null || speedOpen || scrubbing });
+  const shown = controls.shown;
+  const chrome = useState(() => new Animated.Value(1))[0];
+  const [metaHeight, setMetaHeight] = useState(0);
+  useEffect(() => {
+    Animated.timing(chrome, { toValue: shown ? 1 : 0, duration: shown ? 160 : 450, useNativeDriver: true }).start();
+  }, [shown, chrome]);
+  useEffect(() => {
+    if (active) setStatusBarHidden(!shown, "fade");
+  }, [active, shown]);
+  const hideable = { opacity: chrome };
+  const touchable = shown ? "box-none" : "none";
+
   return (
-    <View style={{ height, backgroundColor: colors.player.bg, overflow: "hidden" }}>
+    <View
+      style={{ height, backgroundColor: colors.player.bg, overflow: "hidden" }}
+      onStartShouldSetResponderCapture={() => {
+        controls.touched();
+        return false;
+      }}
+    >
       <LinearGradient colors={["#0a0a0a", "#18181b", "#000"]} style={StyleSheet.absoluteFill} />
       <AmbientGlow />
 
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={pb.playing ? "Pause" : pb.ended ? "Replay" : "Play"}
+        accessibilityLabel={!shown ? "Show controls" : pb.playing ? "Pause" : pb.ended ? "Replay" : "Play"}
         onPress={() => {
           if (speedOpen) setSpeedOpen(false);
+          else if (!shown) controls.reveal();
           else pb.toggle();
         }}
         style={[StyleSheet.absoluteFill, styles.surface]}
@@ -95,16 +119,18 @@ export function PlayerPage({
         </Animated.View>
       </Pressable>
 
-      <LinearGradient colors={["rgba(0,0,0,0.8)", "rgba(0,0,0,0.4)", "transparent"]} style={[styles.top, { paddingTop: insets.top + 12 }]} pointerEvents="box-none">
-        <GlassButton icon="arrow-back" label="Go back" onPress={() => (router.canGoBack() ? router.back() : router.replace("/"))} />
-        <Pressable accessibilityRole="button" accessibilityLabel="Student profile" onPress={() => router.push("/profile")} style={styles.glassBtn}>
-          <View style={styles.avatarDot}>
-            <Icon name="person" size={16} color="#fff" />
-          </View>
-        </Pressable>
-      </LinearGradient>
+      <Animated.View style={[styles.top, hideable]} pointerEvents={touchable}>
+        <LinearGradient colors={["rgba(0,0,0,0.8)", "rgba(0,0,0,0.4)", "transparent"]} style={[styles.topBar, { paddingTop: insets.top + 12 }]} pointerEvents={touchable}>
+          <GlassButton icon="arrow-back" label="Go back" onPress={() => (router.canGoBack() ? router.back() : router.replace("/"))} />
+          <Pressable accessibilityRole="button" accessibilityLabel="Student profile" onPress={() => router.push("/profile")} style={styles.glassBtn}>
+            <View style={styles.avatarDot}>
+              <Icon name="person" size={16} color="#fff" />
+            </View>
+          </Pressable>
+        </LinearGradient>
+      </Animated.View>
 
-      <View style={[styles.rail, { bottom: insets.bottom + 128 }]}>
+      <Animated.View style={[styles.rail, { bottom: insets.bottom + 128 }, hideable]} pointerEvents={touchable}>
         <RailItem label="Notes">
           <Pressable
             accessibilityRole="button"
@@ -162,37 +188,46 @@ export function PlayerPage({
             </T>
           </Pressable>
         </RailItem>
-      </View>
+      </Animated.View>
 
-      <LinearGradient colors={["transparent", "rgba(0,0,0,0.85)", "#000"]} style={[styles.footer, { paddingBottom: insets.bottom + 8 }]} pointerEvents="box-none">
+      <View style={[styles.footer, { paddingBottom: insets.bottom + 8 }]} pointerEvents="box-none">
+        <Animated.View style={[StyleSheet.absoluteFill, hideable]} pointerEvents="none">
+          <LinearGradient colors={["transparent", "rgba(0,0,0,0.85)", "#000"]} style={StyleSheet.absoluteFill} />
+        </Animated.View>
         {captions && caption ? (
-          <View style={styles.caption} accessibilityLiveRegion="polite">
+          <Animated.View
+            style={[styles.caption, { transform: [{ translateY: chrome.interpolate({ inputRange: [0, 1], outputRange: [metaHeight, 0] }) }] }]}
+            accessibilityLiveRegion="polite"
+            pointerEvents="none"
+          >
             <T variant="caption" color="#fff" style={{ fontSize: 13 }}>
               <T variant="codeSm" color={colors.secondaryContainer} style={{ fontFamily: fonts.monoSemibold }}>
                 [AI Voice]:{" "}
               </T>
               “{caption}”
             </T>
-          </View>
+          </Animated.View>
         ) : null}
-        <View style={styles.meta}>
-          <T variant="codeSm" color={colors.secondaryContainer} style={{ fontSize: 11, fontFamily: fonts.monoSemibold, textTransform: "uppercase", letterSpacing: 1 }}>
-            {eyebrow}
-          </T>
-          <T variant="cardTitle" color="#fff" style={{ fontFamily: fonts.bold, fontSize: 18, lineHeight: 24 }} accessibilityRole="header">
-            {ku.shortTitle}
-          </T>
-          {ku.transcript.length ? (
-            <Pressable accessibilityRole="button" onPress={() => setSheet("transcript")} hitSlop={8} style={styles.transcriptLink}>
-              <Icon name="notes" size={14} color="rgba(255,255,255,0.7)" />
-              <T variant="caption" color="rgba(255,255,255,0.7)" style={{ fontSize: 12 }}>
-                Transcript
-              </T>
-            </Pressable>
-          ) : null}
-        </View>
-        <Scrubber time={pb.time} duration={ku.durationS} onSeek={pb.seek} />
-      </LinearGradient>
+        <Animated.View style={hideable} pointerEvents={touchable} onLayout={(e) => setMetaHeight(e.nativeEvent.layout.height)}>
+          <View style={styles.meta}>
+            <T variant="codeSm" color={colors.secondaryContainer} style={{ fontSize: 11, fontFamily: fonts.monoSemibold, textTransform: "uppercase", letterSpacing: 1 }}>
+              {eyebrow}
+            </T>
+            <T variant="cardTitle" color="#fff" style={{ fontFamily: fonts.bold, fontSize: 18, lineHeight: 24 }} accessibilityRole="header">
+              {ku.shortTitle}
+            </T>
+            {ku.transcript.length ? (
+              <Pressable accessibilityRole="button" onPress={() => setSheet("transcript")} hitSlop={8} style={styles.transcriptLink}>
+                <Icon name="notes" size={14} color="rgba(255,255,255,0.7)" />
+                <T variant="caption" color="rgba(255,255,255,0.7)" style={{ fontSize: 12 }}>
+                  Transcript
+                </T>
+              </Pressable>
+            ) : null}
+          </View>
+          <Scrubber time={pb.time} duration={ku.durationS} onSeek={pb.seek} onScrubbing={setScrubbing} />
+        </Animated.View>
+      </View>
 
       <StudySheet ku={ku} mode={sheet} time={pb.time} onClose={() => setSheet(null)} onSeek={pb.seek} />
     </View>
@@ -228,7 +263,7 @@ function RailItem({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function Scrubber({ time, duration, onSeek }: { time: number; duration: number; onSeek: (t: number) => void }) {
+function Scrubber({ time, duration, onSeek, onScrubbing }: { time: number; duration: number; onSeek: (t: number) => void; onScrubbing: (on: boolean) => void }) {
   const [width, setWidth] = useState(1);
   const [drag, setDrag] = useState<number | null>(null);
   const shown = drag ?? (duration ? time / duration : 0);
@@ -239,13 +274,20 @@ function Scrubber({ time, duration, onSeek }: { time: number; duration: number; 
       <View
         onStartShouldSetResponder={() => true}
         onResponderTerminationRequest={() => false}
-        onResponderGrant={(e) => setDrag(fraction(e.nativeEvent.locationX))}
+        onResponderGrant={(e) => {
+          onScrubbing(true);
+          setDrag(fraction(e.nativeEvent.locationX));
+        }}
         onResponderMove={(e) => setDrag(fraction(e.nativeEvent.locationX))}
         onResponderRelease={() => {
           if (drag !== null) onSeek(drag * duration);
           setDrag(null);
+          onScrubbing(false);
         }}
-        onResponderTerminate={() => setDrag(null)}
+        onResponderTerminate={() => {
+          setDrag(null);
+          onScrubbing(false);
+        }}
         onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
         style={styles.scrubHit}
         accessible
@@ -285,7 +327,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  top: { position: "absolute", top: 0, left: 0, right: 0, paddingHorizontal: 16, paddingBottom: 24, flexDirection: "row", justifyContent: "space-between" },
+  top: { position: "absolute", top: 0, left: 0, right: 0 },
+  topBar: { paddingHorizontal: 16, paddingBottom: 24, flexDirection: "row", justifyContent: "space-between" },
   glassBtn: {
     width: 40,
     height: 40,
