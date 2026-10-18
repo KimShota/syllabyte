@@ -4,15 +4,14 @@ import { router, type Href } from "expo-router";
 import { api } from "@syllabyte/core/api/client";
 import type { StudyTaskView } from "@syllabyte/core/api/types";
 import { track } from "@syllabyte/core/events";
-import type { PrecheckView, SittingView } from "@syllabyte/core/types";
+import type { PrecheckView } from "@syllabyte/core/types";
 import { Icon, type IconName } from "./Icon";
 import { T } from "./T";
 import { useQuery } from "@/state/app";
 import { colors, fonts, radius, shadow } from "@/theme/tokens";
 
-/** What's waiting for the student, above the course list on Home: the baseline, a lecture check, questionnaires. */
-export function TaskCards({ onboarded }: { onboarded: boolean }) {
-  const baseline = useQuery(() => api.getSitting("week0"));
+/** What's waiting for the student, above the course list on Home: a lecture check, questionnaires. (The baseline isn't a card: it can't be put off, see BaselineGate.) */
+export function TaskCards() {
   const playlist = useQuery(() => api.getPlaylist());
   const tasks = useQuery(() => api.getStudyTasks());
   const shownIds = (tasks ?? []).map((t) => t.battery_id).join(",");
@@ -20,29 +19,13 @@ export function TaskCards({ onboarded }: { onboarded: boolean }) {
     for (const id of shownIds ? shownIds.split(",") : []) track("study_shown", { type: "battery", id });
   }, [shownIds]);
 
-  // keys are namespaced: the "About you" battery's id is "baseline", the same as the quick-check card's
+  // keys are namespaced so a battery id can never collide with a card (the "About you" battery's id is "baseline")
   const cards = [
-    !onboarded && baseline ? <BaselineCard key="sitting:baseline" sitting={baseline} /> : null,
     playlist?.precheck ? <PrecheckCard key="sitting:precheck" check={playlist.precheck} /> : null,
     ...(tasks ?? []).map((t) => <StudyTaskCard key={`battery:${t.battery_id}`} task={t} />),
   ].filter(Boolean);
   if (!cards.length) return null;
   return <View style={styles.list}>{cards}</View>;
-}
-
-/** The baseline is still open (the student left the first run before it): a way back into it. */
-function BaselineCard({ sitting }: { sitting: SittingView }) {
-  const started = sitting.answered > 0;
-  return (
-    <TaskCard
-      icon="psychology-alt"
-      eyebrow="Quick check"
-      title={started ? "Finish your quick check" : "Take the quick check"}
-      body={`${started ? `${sitting.answered} of ${sitting.total} answered.` : `${sitting.total} questions, no grade.`} It tunes your videos to what you know.`}
-      action={started ? "Continue" : "Start"}
-      onPress={() => router.push(started ? "/quiz/question" : "/quiz")}
-    />
-  );
 }
 
 /** Where a lecture check goes: its intro, or straight to the question it is on once started. */

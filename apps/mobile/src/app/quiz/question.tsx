@@ -76,7 +76,8 @@ export default function QuizQuestion() {
             </T>
             <T variant="bodySemibold">{sitting.lecture_n ? "Lecture check" : "Active Quiz Session"}</T>
           </View>
-          <IconButton icon="close" label="Exit assessment" onPress={exit} />
+          {/* the baseline can't be left (the root layout sends a student who backs out straight back to it) */}
+          {sittingId === "week0" ? null : <IconButton icon="close" label="Exit assessment" onPress={exit} />}
         </View>
       </View>
 

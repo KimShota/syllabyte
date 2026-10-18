@@ -85,7 +85,7 @@ export default function Home() {
           </Pressable>
         </View>
 
-        <TaskCards onboarded={me.onboarding_done} />
+        <TaskCards />
 
         <View style={styles.list}>
           {courses.map((c) => (
