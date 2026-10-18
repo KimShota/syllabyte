@@ -20,10 +20,11 @@ export function TaskCards({ onboarded }: { onboarded: boolean }) {
     for (const id of shownIds ? shownIds.split(",") : []) track("study_shown", { type: "battery", id });
   }, [shownIds]);
 
+  // keys are namespaced: the "About you" battery's id is "baseline", the same as the quick-check card's
   const cards = [
-    !onboarded && baseline ? <BaselineCard key="baseline" sitting={baseline} /> : null,
-    playlist?.precheck ? <PrecheckCard key="precheck" check={playlist.precheck} /> : null,
-    ...(tasks ?? []).map((t) => <StudyTaskCard key={t.battery_id} task={t} />),
+    !onboarded && baseline ? <BaselineCard key="sitting:baseline" sitting={baseline} /> : null,
+    playlist?.precheck ? <PrecheckCard key="sitting:precheck" check={playlist.precheck} /> : null,
+    ...(tasks ?? []).map((t) => <StudyTaskCard key={`battery:${t.battery_id}`} task={t} />),
   ].filter(Boolean);
   if (!cards.length) return null;
   return <View style={styles.list}>{cards}</View>;
