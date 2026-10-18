@@ -42,7 +42,7 @@ export function CoursesDrawer({ visible, onClose, currentId }: { visible: boolea
   }
 
   return (
-    <Sheet visible={visible} onClose={onClose} edge="top" accessibilityLabel="My courses">
+    <Sheet visible={visible} onClose={onClose} edge="top" dismissOnBackdrop={false} accessibilityLabel="My courses">
       <View style={styles.head}>
         <IconButton
           icon="home"
@@ -55,14 +55,16 @@ export function CoursesDrawer({ visible, onClose, currentId }: { visible: boolea
             router.dismissTo("/");
           }}
         />
-        <View style={styles.headTitle}>
+        {/* the title is the way out: tap "My Courses" again to close the drawer */}
+        <Pressable accessibilityRole="button" accessibilityLabel="Close My Courses" onPress={onClose} hitSlop={8} style={styles.headTitle}>
           <Icon name="menu-book" size={20} color={colors.primary} />
           <T variant="cardTitle" style={{ fontFamily: fonts.bold, fontSize: 18 }}>
             My Courses
           </T>
           <Icon name="expand-less" size={20} color={colors.onSurface} />
-        </View>
-        <IconButton icon="close" label="Close" size={20} color={colors.onSurfaceVariant} onPress={onClose} />
+        </Pressable>
+        {/* balances the Home button so the title stays centred */}
+        <View style={styles.headSpacer} />
       </View>
 
       <View style={styles.body}>
@@ -162,7 +164,8 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.surfaceContainer,
   },
   roundBtn: { width: 36, minWidth: 36, minHeight: 36, borderRadius: 18, backgroundColor: colors.surfaceContainer },
-  headTitle: { flexDirection: "row", alignItems: "center", gap: 8 },
+  headTitle: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 36 },
+  headSpacer: { width: 36 },
   body: { padding: 16, gap: 8 },
   listHead: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 4, marginBottom: 4 },
   row: { padding: 12, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.surfaceContainer },

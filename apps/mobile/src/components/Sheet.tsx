@@ -14,6 +14,7 @@ export function Sheet({
   dark,
   edge = "bottom",
   maxHeightRatio = 0.85,
+  dismissOnBackdrop = true,
   accessibilityLabel,
 }: {
   visible: boolean;
@@ -22,6 +23,8 @@ export function Sheet({
   dark?: boolean;
   edge?: "bottom" | "top";
   maxHeightRatio?: number;
+  /** a tap on the dimmed backdrop closes the sheet (false: only the sheet's own controls do) */
+  dismissOnBackdrop?: boolean;
   accessibilityLabel?: string;
 }) {
   const { height } = useWindowDimensions();
@@ -51,12 +54,16 @@ export function Sheet({
     <Modal transparent visible statusBarTranslucent onRequestClose={onClose} animationType="none">
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={[styles.root, top && styles.rootTop]}>
         <Animated.View style={[StyleSheet.absoluteFill, { opacity: anim }]}>
-          <Pressable
-            style={[StyleSheet.absoluteFill, { backgroundColor: dark ? "rgba(0,0,0,0.72)" : "rgba(26,27,35,0.45)" }]}
-            onPress={onClose}
-            accessibilityRole="button"
-            accessibilityLabel="Close"
-          />
+          {dismissOnBackdrop ? (
+            <Pressable
+              style={[StyleSheet.absoluteFill, { backgroundColor: dark ? "rgba(0,0,0,0.72)" : "rgba(26,27,35,0.45)" }]}
+              onPress={onClose}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+            />
+          ) : (
+            <View style={[StyleSheet.absoluteFill, { backgroundColor: dark ? "rgba(0,0,0,0.72)" : "rgba(26,27,35,0.45)" }]} />
+          )}
         </Animated.View>
         <Animated.View
           accessibilityViewIsModal
