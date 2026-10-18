@@ -72,17 +72,6 @@ export default function Home() {
               See your enrolled courses & track progress for each
             </T>
           </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Upload course"
-            onPress={() => setUploadOpen(true)}
-            style={({ pressed }) => [styles.uploadBtn, pressed && { backgroundColor: colors.primaryPressed }]}
-          >
-            <Icon name="add" size={18} color={colors.onPrimary} />
-            <T variant="caption" color={colors.onPrimary} style={{ fontFamily: fonts.semibold }}>
-              Upload Course
-            </T>
-          </Pressable>
         </View>
 
         <TaskCards />
@@ -176,16 +165,6 @@ const styles = StyleSheet.create({
   logo: { width: 40, height: 40, borderRadius: radius.lg, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },
   content: { paddingHorizontal: space.gutter, paddingTop: 24 },
   titleRow: { flexDirection: "row", alignItems: "center", gap: 12 },
-  uploadBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: radius.lg,
-    backgroundColor: colors.primary,
-    minHeight: 44,
-  },
   list: { marginTop: 28, gap: 16 },
   card: {
     backgroundColor: colors.surfaceContainerLowest,

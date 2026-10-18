@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AccessibilityInfo, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { api } from "@syllabyte/core/api/client";
-import { track } from "@syllabyte/core/events";
 import type { Confidence, VariantView } from "@syllabyte/core/types";
 import { Button } from "../Button";
 import { Icon } from "../Icon";
@@ -19,8 +18,7 @@ const CONF: { value: Confidence; label: string }[] = [
 /**
  * The video's one quick check, over the paused video (plan Q4, Q10, Q29). Pick an answer, then "How sure?"; the
  * result appears by itself once both are set. It can't be skipped and has no "Not sure yet" (the "Guessing" rating
- * carries that). Hints by level: Level 1 sees it from the start, Level 2 can open it, Level 3 has none; a hint that
- * was open when the student answered counts as used.
+ * carries that). There is no hint.
  */
 export function QuickCheck({
   variant,
@@ -39,7 +37,6 @@ export function QuickCheck({
   const item = variant.checkpoint_item;
   const [choice, setChoice] = useState<number | null>(null);
   const [conf, setConf] = useState<Confidence | null>(null);
-  const [hintOpen, setHintOpen] = useState(variant.level === 1);
   const [result, setResult] = useState<{ correct: boolean; queued: boolean } | null>(null);
   const shownAt = useRef(0);
   const sent = useRef(false);
@@ -53,12 +50,12 @@ export function QuickCheck({
     if (choice === null || conf === null || sent.current) return;
     sent.current = true;
     void api
-      .postCheckpointAnswer({ videoId: variant.video.id, choice, confidence: conf, hintUsed: hintOpen && Boolean(item.hint), latencyMs: Date.now() - shownAt.current })
+      .postCheckpointAnswer({ videoId: variant.video.id, choice, confidence: conf, hintUsed: false, latencyMs: Date.now() - shownAt.current })
       .then((r) => {
         setResult({ correct: r.correct, queued: r.queuedForTomorrow });
         onAnswered();
       });
-  }, [choice, conf, hintOpen, item.hint, variant.video.id, onAnswered]);
+  }, [choice, conf, variant.video.id, onAnswered]);
 
   const revealed = result !== null;
 
@@ -129,34 +126,6 @@ export function QuickCheck({
                 ))}
               </View>
             </View>
-          ) : null}
-
-          {!revealed && item.hint && variant.level !== 3 ? (
-            hintOpen ? (
-              <View style={styles.hint}>
-                <T variant="caption" color="#e2e8f0" style={{ fontSize: 14, lineHeight: 20 }}>
-                  <T variant="caption" color="#fff" style={{ fontFamily: fonts.bold, fontSize: 14 }}>
-                    Hint:{" "}
-                  </T>
-                  {item.hint}
-                </T>
-              </View>
-            ) : (
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => {
-                  setHintOpen(true);
-                  track("hint_used", { type: "item", id: item.id });
-                }}
-                hitSlop={8}
-                style={styles.hintLink}
-              >
-                <Icon name="lightbulb-outline" size={16} color={colors.secondaryContainer} />
-                <T variant="caption" color={colors.secondaryContainer} style={{ fontFamily: fonts.semibold }}>
-                  Show a hint
-                </T>
-              </Pressable>
-            )
           ) : null}
 
           {revealed ? (
@@ -246,7 +215,5 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.18)",
   },
   segmentOn: { borderColor: colors.primaryFixedDim, backgroundColor: colors.primary },
-  hint: { padding: 12, borderRadius: radius.md, backgroundColor: "rgba(255,255,255,0.08)" },
-  hintLink: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", minHeight: 32 },
   queued: { padding: 12, borderRadius: radius.md, backgroundColor: colors.secondaryContainer },
 });
