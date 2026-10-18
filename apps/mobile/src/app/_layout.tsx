@@ -46,6 +46,8 @@ export default function RootLayout() {
         <Stack.Screen name="quiz/index" options={{ animation: "slide_from_bottom" }} />
         <Stack.Screen name="quiz/question" options={{ gestureEnabled: false }} />
         <Stack.Screen name="quiz/done" options={{ animation: "fade", gestureEnabled: false }} />
+        <Stack.Screen name="quiz/checked" options={{ animation: "fade", gestureEnabled: false }} />
+        <Stack.Screen name="study/[id]" options={{ animation: "slide_from_bottom" }} />
         <Stack.Screen name="player/[kuId]" options={{ animation: "slide_from_bottom", contentStyle: { backgroundColor: "#000" } }} />
       </Stack>
     </SafeAreaProvider>

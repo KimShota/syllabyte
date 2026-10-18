@@ -362,6 +362,18 @@ describe.skipIf(!haveFixtures)("mock API with the real fixtures", () => {
     });
   });
 
+  it("reports whether a video's quick check has been answered, right or wrong", async () => {
+    await onboardWith("not_sure");
+    const vid = FIX.videos[0];
+    const item = FIX.items.find((i) => i.id === vid.checkpoint.item_id)!;
+    expect((await api.getVariant(vid.id)).checkpoint_answered).toBe(false);
+    await api.skipCheckpoint(vid.id);
+    expect((await api.getVariant(vid.id)).checkpoint_answered).toBe(false);
+    await api.postCheckpointAnswer({ videoId: vid.id, choice: (item.correct_index + 1) % 3, confidence: "certain", hintUsed: false, latencyMs: 900 });
+    expect((await api.getVariant(vid.id)).checkpoint_answered).toBe(true);
+    expect((await api.getVariant(FIX.videos[1].id)).checkpoint_answered).toBe(false);
+  });
+
   it("edits and deletes a note", async () => {
     const id = FIX.videos[0].id;
     await api.addNote(id, 12, "first");

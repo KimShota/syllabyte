@@ -3,14 +3,18 @@
  * one visit per launch, the event context, and the React hooks the screens use. Screens read and write the study
  * data only through the core's `api`, as on the web, so Phase 1 can swap in the backend.
  *
+ * Every student who has the app has already agreed to take part in the study (consent is collected before they
+ * get it), so the app records research consent itself; there is no consent screen.
+ *
  * A few settings belong to this app alone (playback speed, "notify me", the first-run screens seen); they are kept
  * beside it under their own key.
  */
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AppState, Dimensions } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { api } from "@syllabyte/core/api/client";
 import { setEventEnv } from "@syllabyte/core/events";
-import { flush, getVersion, hydrate, isHydrated, resetState, subscribe, type StorageAdapter } from "@syllabyte/core/store";
+import { flush, getState, getVersion, hydrate, isHydrated, resetState, subscribe, type StorageAdapter } from "@syllabyte/core/store";
 
 const STATE_KEY = "syllabyte.demo.v2";
 const PREFS_KEY = "syllabyte.mobile.prefs.v1";
@@ -95,10 +99,16 @@ export function usePrefs(): Prefs {
   return useSyncExternalStore(subscribePrefs, () => prefs, () => prefs);
 }
 
+/** Consent was given before the student got the app (see the top of this file): record it once. */
+async function recordConsent(): Promise<void> {
+  if (getState().consent === null) await api.postConsent(true);
+}
+
 /** Sign out: the demo starts over, study data and this app's settings alike. */
 export function signOut(): void {
   resetState();
   setPrefs(DEFAULT_PREFS);
+  void recordConsent();
 }
 
 // ------------------------------------------------------------------ start-up
@@ -109,7 +119,8 @@ let starting: Promise<void> | null = null;
 /** Read both saved documents once; screens render after it. */
 export function startApp(): Promise<void> {
   if (!starting) {
-    starting = Promise.all([Promise.resolve(hydrate(phoneStorage)), loadPrefs()]).then(() => {
+    starting = Promise.all([Promise.resolve(hydrate(phoneStorage)), loadPrefs()]).then(async () => {
+      await recordConsent();
       ready = true;
       emitPrefs();
     });

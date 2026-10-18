@@ -1,5 +1,5 @@
 import { ScrollView, StyleSheet, View } from "react-native";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/Button";
 import { Glow } from "@/components/Glow";
@@ -17,10 +17,15 @@ const RULES: { icon: IconName; tone: string; text: string }[] = [
   { icon: "auto-awesome", tone: colors.primary, text: "Results personalize your video lessons to maximize learning outcomes" },
 ];
 
-/** The baseline check's intro: no grade, the rules. The questions come from the adaptive check (the core's "week0" sitting). */
+/**
+ * A check's intro: no grade, the rules. The baseline ("week0", the default) or the check before a lecture
+ * ("lecture-<n>"); the questions come from the core's adaptive sittings.
+ */
 export default function QuizIntro() {
   const insets = useSafeAreaInsets();
-  const sitting = useQuery(() => api.getSitting("week0"));
+  const id = useLocalSearchParams<{ sitting?: string }>().sitting ?? "week0";
+  const sitting = useQuery(() => api.getSitting(id), [id]);
+  const lecture = sitting?.lecture_n ?? null;
   const started = (sitting?.answered ?? 0) > 0;
   return (
     <View style={[styles.screen, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 }]}>
@@ -33,8 +38,13 @@ export default function QuizIntro() {
             </View>
           </View>
           <T variant="titleMobile" style={{ textAlign: "center", maxWidth: 280 }} accessibilityRole="header">
-            A quick check, no grade
+            {lecture ? `A quick check before Lecture ${lecture}` : "A quick check, no grade"}
           </T>
+          {lecture ? (
+            <T variant="body" color={colors.onSurfaceVariant} style={{ textAlign: "center", marginTop: 6, maxWidth: 300 }}>
+              It tunes this lecture&apos;s videos to what you know now. No grade.
+            </T>
+          ) : null}
           <View style={styles.countChip}>
             <Icon name="quiz" size={18} color={colors.primary} />
             <T variant="bodySemibold" color={colors.primary}>
@@ -64,7 +74,7 @@ export default function QuizIntro() {
         label={started ? `Continue (${sitting!.answered} of ${sitting!.total} done)` : "Start"}
         trailingIcon="arrow-forward"
         disabled={!sitting}
-        onPress={() => router.replace("/quiz/question")}
+        onPress={() => router.replace({ pathname: "/quiz/question", params: { sitting: id } })}
         style={{ marginHorizontal: 20 }}
       />
     </View>

@@ -673,6 +673,7 @@ export const mockApi: Api = {
       review_status: effectiveReview(videoId),
       open_reports: s.reports.filter((r) => r.video_id === videoId && r.status === "open").length,
       checkpoint_item: itemById(video.checkpoint.item_id),
+      checkpoint_answered: s.responses.some((r) => r.context === "checkpoint" && r.item_id === video.checkpoint.item_id),
       tailoring: rows,
       changes_count: changesCount(rows),
       claims,

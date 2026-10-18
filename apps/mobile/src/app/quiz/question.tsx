@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, View } from "react-native";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "@syllabyte/core/api/client";
 import type { Choice } from "@syllabyte/core/types";
@@ -12,16 +12,16 @@ import { useQuery } from "@/state/app";
 import { colors, fonts, radius, shadow } from "@/theme/tokens";
 
 const LETTERS = ["A", "B", "C", "D", "E"];
-/** the baseline before any video (plan D8) */
-const SITTING = "week0";
 
 /**
- * One question at a time; no going back. The adaptive check picks each question from the answers before it, so
+ * One question at a time; no going back. The sitting is the baseline before any video ("week0", the default) or
+ * the check before a lecture ("lecture-<n>"), plan D8. The adaptive check picks each question from the answers before it, so
  * the next one is only known once this one is locked in.
  */
 export default function QuizQuestion() {
   const insets = useSafeAreaInsets();
-  const sitting = useQuery(() => api.getSitting(SITTING));
+  const sittingId = useLocalSearchParams<{ sitting?: string }>().sitting ?? "week0";
+  const sitting = useQuery(() => api.getSitting(sittingId), [sittingId]);
   const item = sitting?.current?.item ?? null;
   const [itemId, setItemId] = useState<string | null>(null);
   const [choice, setChoice] = useState<Choice | null>(null);
@@ -43,8 +43,10 @@ export default function QuizQuestion() {
   useEffect(() => {
     if (!over || finishing.current) return;
     finishing.current = true;
-    void api.finishSitting(SITTING).then(() => router.replace("/quiz/done"));
-  }, [over]);
+    void api
+      .finishSitting(sittingId)
+      .then(() => router.replace(sittingId === "week0" ? "/quiz/done" : { pathname: "/quiz/checked", params: { sitting: sittingId } }));
+  }, [over, sittingId]);
 
   if (!sitting || !item) return <View style={styles.screen} />;
   const total = sitting.total;
@@ -54,7 +56,7 @@ export default function QuizQuestion() {
   function confirm() {
     if (choice === null || !item || busy) return;
     setBusy(true);
-    api.answerSitting(SITTING, item.id, choice, Date.now() - shownAt.current).catch(() => setBusy(false));
+    api.answerSitting(sittingId, item.id, choice, Date.now() - shownAt.current).catch(() => setBusy(false));
   }
 
   function exit() {
@@ -70,9 +72,9 @@ export default function QuizQuestion() {
         <View style={styles.headerBar}>
           <View>
             <T variant="eyebrow" color={colors.onSurfaceVariant}>
-              SyllaByte Assessment
+              {sitting.lecture_n ? `Before Lecture ${sitting.lecture_n}` : "SyllaByte Assessment"}
             </T>
-            <T variant="bodySemibold">Active Quiz Session</T>
+            <T variant="bodySemibold">{sitting.lecture_n ? "Lecture check" : "Active Quiz Session"}</T>
           </View>
           <IconButton icon="close" label="Exit assessment" onPress={exit} />
         </View>

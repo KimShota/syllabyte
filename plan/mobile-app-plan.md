@@ -1,7 +1,7 @@
 # Mobile app (React Native / Expo) from the Figma design: plan
 
-Status: **decided 2026-10-17, not started.** Next step: a planning round (one question at a time, with a recommended
-answer), then build on a new branch `mobile-app` from `main`.
+Status: **being built.** `apps/mobile` (all design screens) and `packages/core` (the shared logic) are on `main`;
+the study flows are on branch `study-flows` (2026-10-18). Real video files and Android come next.
 
 ## Decided
 
@@ -50,6 +50,22 @@ answer), then build on a new branch `mobile-app` from `main`.
   - a "Slides 9-11" chip and a bookmark;
   - Transcript / Study Notes tabs.
 - **Mentor's comment:** a Home screen separate from the lecture roadmap. The frames checked on 2026-10-17 had none.
+
+## Decided while building (2026-10-18)
+
+- **iOS first.** Android waits (no Android Studio yet); the code stays cross-platform.
+- **The in-video quick check** interrupts the video at its checkpoint and **blocks swiping** until it is answered
+  (the back button still works; leaving and coming back asks it again). It is asked **only the first time**: once
+  answered, right or wrong, it never comes back. No skip and no "Not sure yet" (the "How sure?" rating covers it).
+  This answers Q1 for the quick check; "Not sure yet" stays on the adaptive checks.
+- **No consent screen in the app:** every student who gets the app has already consented to the research, so the
+  app records research consent itself. Needs advisor sign-off: the IRB usually wants a way to withdraw, which the
+  app no longer offers (the web app had it under Settings).
+- **No My Levels screen.** Levels still drive the videos behind the scenes; students don't see or correct them.
+  Needs advisor sign-off: the Trust questionnaire's item 16 ("I trust the levels SyllaByte chose for me") asks
+  about levels the phone app never shows.
+- **The check before a lecture** and **the questionnaires** appear as cards on Home (the lecture check also on its
+  lecture's roadmap), with "Not now".
 
 ## Open questions for the planning round (roughly in order)
 

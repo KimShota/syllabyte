@@ -6,6 +6,7 @@ import { BackButton, Header } from "@/components/Header";
 import { Icon, type IconName } from "@/components/Icon";
 import { T } from "@/components/T";
 import { api } from "@syllabyte/core/api/client";
+import { endFirstModule, simulateNextDay, simulateNextWeek } from "@syllabyte/core/api/demo";
 import { COURSE } from "@/data/course";
 import { SPEEDS, setPrefs, signOut, speedLabel, usePrefs, useQuery } from "@/state/app";
 import { colors, fonts, radius, shadow, space } from "@/theme/tokens";
@@ -42,7 +43,9 @@ export default function Profile() {
                 {initials}
               </T>
             </View>
-            <T variant="cardTitle">{STUDENT.name}</T>
+            <Pressable onLongPress={openDemoMenu} delayLongPress={1000} accessibilityRole="text">
+              <T variant="cardTitle">{STUDENT.name}</T>
+            </Pressable>
           </View>
 
           <View style={styles.list}>
@@ -67,13 +70,6 @@ export default function Profile() {
               label="Syllabus & lecture schedule"
               onPress={() => router.push({ pathname: "/course/[courseId]", params: { courseId: COURSE.id } })}
             />
-            <Group label="Methodology & Privacy" />
-            <Row
-              icon="shield"
-              label="Consent and data"
-              chevron
-              onPress={() => Alert.alert("Consent and data", "The consent text and data controls move over from the web app in a later step.")}
-            />
             <Pressable
               accessibilityRole="button"
               onPress={() => {
@@ -93,6 +89,19 @@ export default function Profile() {
       </ScrollView>
     </View>
   );
+}
+
+/**
+ * Facilitator controls (like apps/web's demo menu), for walking a study session through time: hidden behind a
+ * one-second press on the student's name.
+ */
+function openDemoMenu() {
+  Alert.alert("Demo controls", "For facilitators. These move the app's clock.", [
+    { text: "Simulate next day", onPress: simulateNextDay },
+    { text: "Simulate next week (the next lecture's check)", onPress: simulateNextWeek },
+    { text: "End module 1 (its questionnaire)", onPress: endFirstModule },
+    { text: "Cancel", style: "cancel" },
+  ]);
 }
 
 function Group({ label }: { label: string }) {

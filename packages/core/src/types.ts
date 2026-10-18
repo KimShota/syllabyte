@@ -514,6 +514,8 @@ export interface VariantView {
   review_status: ReviewStatus;
   open_reports: number;
   checkpoint_item: Item;
+  /** the student has answered this video's quick check before (the phone asks it only the first time) */
+  checkpoint_answered: boolean;
   tailoring: TailoringRow[];
   changes_count: number;
   claims: ClaimView[];

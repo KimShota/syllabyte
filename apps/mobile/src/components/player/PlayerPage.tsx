@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Animated, Pressable, StyleSheet, View } from "react-native";
 import { router } from "expo-router";
 import { setStatusBarHidden } from "expo-status-bar";
@@ -8,11 +8,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Glow } from "../Glow";
 import { Icon, type IconName } from "../Icon";
 import { T } from "../T";
+import { QuickCheck } from "./QuickCheck";
 import { SceneView } from "./SceneView";
 import { StudySheet, activeLine, type StudyMode } from "./StudySheet";
 import { useAutoHide } from "./useAutoHide";
 import { usePlayback } from "./usePlayback";
 import { api } from "@syllabyte/core/api/client";
+import { track } from "@syllabyte/core/events";
 import { formatTime } from "@/data/selectors";
 import type { Ku, Note } from "@/data/types";
 import { SPEEDS, speedLabel, useQuery, type Speed } from "@/state/app";
@@ -30,6 +32,7 @@ export function PlayerPage({
   onSpeed,
   captions,
   onCaptions,
+  onBlockSwipe,
 }: {
   ku: Ku;
   eyebrow: string;
@@ -39,12 +42,30 @@ export function PlayerPage({
   onSpeed: (s: Speed) => void;
   captions: boolean;
   onCaptions: (on: boolean) => void;
+  /** the quick check is waiting for an answer: the feed must not swipe away */
+  onBlockSwipe: (blocked: boolean) => void;
 }) {
   const insets = useSafeAreaInsets();
   const [sheet, setSheet] = useState<StudyMode | null>(null);
   const [speedOpen, setSpeedOpen] = useState(false);
-  const pb = usePlayback(ku, { active, hold: sheet !== null, rate: speed });
   const videoId = ku.videoId;
+  const variant = useQuery(async () => (videoId ? api.getVariant(videoId) : null), [videoId]);
+  // the quick check interrupts the video the first time it reaches the checkpoint, and never again once answered
+  const [check, setCheck] = useState<"waiting" | "open" | "closed">("waiting");
+  const [answered, setAnswered] = useState(false);
+  const checkOpen = check === "open";
+  const pb = usePlayback(ku, { active, hold: sheet !== null || checkOpen, rate: speed });
+  const cp = variant?.video.checkpoint;
+  const checkDue = !!variant && !variant.checkpoint_answered && !!cp;
+  if (check === "waiting" && checkDue && pb.time >= cp!.t) setCheck("open");
+  const markAnswered = useCallback(() => setAnswered(true), []);
+  const blocked = active && checkOpen && !answered;
+  useEffect(() => {
+    if (active) onBlockSwipe(blocked);
+  }, [active, blocked, onBlockSwipe]);
+  useEffect(() => {
+    if (checkOpen && cp) track("checkpoint_shown", { type: "item", id: cp.item_id });
+  }, [checkOpen, cp]);
   const notes = useQuery<Note[]>(
     async () => (videoId ? (await api.listNotes(videoId)).map((n) => ({ id: n.id, at: n.video_t, text: n.text })) : []),
     [videoId],
@@ -79,6 +100,7 @@ export function PlayerPage({
     if (!active) {
       setSheet(null);
       setSpeedOpen(false);
+      if (checkOpen && answered) setCheck("closed");
     }
   }
 
@@ -96,7 +118,7 @@ export function PlayerPage({
 
   // while it plays untouched, everything but the video (and captions, if on) fades away
   const [scrubbing, setScrubbing] = useState(false);
-  const controls = useAutoHide({ active, pinned: !pb.playing || sheet !== null || speedOpen || scrubbing });
+  const controls = useAutoHide({ active, pinned: !pb.playing || sheet !== null || speedOpen || scrubbing || checkOpen });
   const shown = controls.shown;
   const chrome = useState(() => new Animated.Value(1))[0];
   const [metaHeight, setMetaHeight] = useState(0);
@@ -140,6 +162,20 @@ export function PlayerPage({
         </Animated.View>
       </Pressable>
 
+      {checkOpen && variant ? (
+        <QuickCheck
+          variant={variant}
+          topInset={insets.top + 72}
+          onAnswered={markAnswered}
+          onContinue={() => setCheck("closed")}
+          onRewatch={() => {
+            track("rewatch_part", { type: "video", id: variant.video.id }, { from: variant.video.checkpoint.rewatch_from });
+            pb.seek(variant.video.checkpoint.rewatch_from);
+            setCheck("closed");
+          }}
+        />
+      ) : null}
+
       <Animated.View style={[styles.top, hideable]} pointerEvents={touchable}>
         <LinearGradient colors={["rgba(0,0,0,0.8)", "rgba(0,0,0,0.4)", "transparent"]} style={[styles.topBar, { paddingTop: insets.top + 12 }]} pointerEvents={touchable}>
           <GlassButton icon="arrow-back" label="Go back" onPress={() => (router.canGoBack() ? router.back() : router.replace("/"))} />
@@ -151,104 +187,108 @@ export function PlayerPage({
         </LinearGradient>
       </Animated.View>
 
-      <Animated.View style={[styles.rail, { bottom: insets.bottom + 128 }, hideable]} pointerEvents={touchable}>
-        <RailItem label="Notes">
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Open study notes, ${noteCount} saved`}
-            onPress={() => setSheet("notes")}
-            style={[styles.railBtn, sheet === "notes" && styles.railBtnOn]}
-          >
-            <Icon name="edit-note" size={22} color="#fff" />
-            {noteCount > 0 ? (
-              <View style={styles.badge}>
-                <T variant="codeSm" color="#fff" style={{ fontSize: 10, fontFamily: fonts.monoBold, letterSpacing: 0 }}>
-                  {noteCount}
-                </T>
+      {checkOpen ? null : (
+        <Animated.View style={[styles.rail, { bottom: insets.bottom + 128 }, hideable]} pointerEvents={touchable}>
+          <RailItem label="Notes">
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Open study notes, ${noteCount} saved`}
+              onPress={() => setSheet("notes")}
+              style={[styles.railBtn, sheet === "notes" && styles.railBtnOn]}
+            >
+              <Icon name="edit-note" size={22} color="#fff" />
+              {noteCount > 0 ? (
+                <View style={styles.badge}>
+                  <T variant="codeSm" color="#fff" style={{ fontSize: 10, fontFamily: fonts.monoBold, letterSpacing: 0 }}>
+                    {noteCount}
+                  </T>
+                </View>
+              ) : null}
+            </Pressable>
+          </RailItem>
+          <RailItem label="Speed">
+            <Pressable accessibilityRole="button" accessibilityLabel={`Playback speed, ${speedLabel(speed)}`} onPress={() => setSpeedOpen((o) => !o)} style={styles.railBtn}>
+              <T variant="codeSm" color={colors.secondaryContainer} style={{ fontSize: 11, fontFamily: fonts.monoBold, letterSpacing: 0 }}>
+                {speedLabel(speed)}
+              </T>
+            </Pressable>
+            {speedOpen ? (
+              <View style={styles.speedMenu} accessibilityRole="menu">
+                {SPEEDS.map((s) => (
+                  <Pressable
+                    key={s}
+                    accessibilityRole="menuitem"
+                    accessibilityState={{ selected: s === speed }}
+                    onPress={() => {
+                      onSpeed(s);
+                      setSpeedOpen(false);
+                    }}
+                    style={[styles.speedOpt, s === speed && { backgroundColor: colors.primary }]}
+                  >
+                    <T variant="codeSm" color={s === speed ? "#fff" : "#cbd5e1"} style={{ fontSize: 11, fontFamily: s === speed ? fonts.monoSemibold : fonts.mono }}>
+                      {speedLabel(s)}
+                    </T>
+                  </Pressable>
+                ))}
               </View>
             ) : null}
-          </Pressable>
-        </RailItem>
-        <RailItem label="Speed">
-          <Pressable accessibilityRole="button" accessibilityLabel={`Playback speed, ${speedLabel(speed)}`} onPress={() => setSpeedOpen((o) => !o)} style={styles.railBtn}>
-            <T variant="codeSm" color={colors.secondaryContainer} style={{ fontSize: 11, fontFamily: fonts.monoBold, letterSpacing: 0 }}>
-              {speedLabel(speed)}
-            </T>
-          </Pressable>
-          {speedOpen ? (
-            <View style={styles.speedMenu} accessibilityRole="menu">
-              {SPEEDS.map((s) => (
-                <Pressable
-                  key={s}
-                  accessibilityRole="menuitem"
-                  accessibilityState={{ selected: s === speed }}
-                  onPress={() => {
-                    onSpeed(s);
-                    setSpeedOpen(false);
-                  }}
-                  style={[styles.speedOpt, s === speed && { backgroundColor: colors.primary }]}
-                >
-                  <T variant="codeSm" color={s === speed ? "#fff" : "#cbd5e1"} style={{ fontSize: 11, fontFamily: s === speed ? fonts.monoSemibold : fonts.mono }}>
-                    {speedLabel(s)}
+          </RailItem>
+          <RailItem label="Captions">
+            <Pressable
+              accessibilityRole="switch"
+              accessibilityState={{ checked: captions }}
+              accessibilityLabel="Captions"
+              onPress={() => onCaptions(!captions)}
+              style={[styles.railBtn, captions && { backgroundColor: "rgba(255,255,255,0.2)", borderColor: "rgba(255,255,255,0.3)" }]}
+            >
+              <T variant="codeSm" color={captions ? colors.secondaryContainer : "rgba(255,255,255,0.5)"} style={{ fontFamily: fonts.monoBold, letterSpacing: 1 }}>
+                CC
+              </T>
+            </Pressable>
+          </RailItem>
+        </Animated.View>
+      )}
+
+      {checkOpen ? null : (
+        <View style={[styles.footer, { paddingBottom: insets.bottom + 8 }]} pointerEvents="box-none">
+          <Animated.View style={[StyleSheet.absoluteFill, hideable]} pointerEvents="none">
+            <LinearGradient colors={["transparent", "rgba(0,0,0,0.85)", "#000"]} style={StyleSheet.absoluteFill} />
+          </Animated.View>
+          {captions && caption ? (
+            <Animated.View
+              style={[styles.caption, { transform: [{ translateY: chrome.interpolate({ inputRange: [0, 1], outputRange: [metaHeight, 0] }) }] }]}
+              accessibilityLiveRegion="polite"
+              pointerEvents="none"
+            >
+              <T variant="caption" color="#fff" style={{ fontSize: 13 }}>
+                <T variant="codeSm" color={colors.secondaryContainer} style={{ fontFamily: fonts.monoSemibold }}>
+                  [AI Voice]:{" "}
+                </T>
+                “{caption}”
+              </T>
+            </Animated.View>
+          ) : null}
+          <Animated.View style={hideable} pointerEvents={touchable} onLayout={(e) => setMetaHeight(e.nativeEvent.layout.height)}>
+            <View style={styles.meta}>
+              <T variant="codeSm" color={colors.secondaryContainer} style={{ fontSize: 11, fontFamily: fonts.monoSemibold, textTransform: "uppercase", letterSpacing: 1 }}>
+                {eyebrow}
+              </T>
+              <T variant="cardTitle" color="#fff" style={{ fontFamily: fonts.bold, fontSize: 18, lineHeight: 24 }} accessibilityRole="header">
+                {ku.shortTitle}
+              </T>
+              {ku.transcript.length ? (
+                <Pressable accessibilityRole="button" onPress={() => setSheet("transcript")} hitSlop={8} style={styles.transcriptLink}>
+                  <Icon name="notes" size={14} color="rgba(255,255,255,0.7)" />
+                  <T variant="caption" color="rgba(255,255,255,0.7)" style={{ fontSize: 12 }}>
+                    Transcript
                   </T>
                 </Pressable>
-              ))}
+              ) : null}
             </View>
-          ) : null}
-        </RailItem>
-        <RailItem label="Captions">
-          <Pressable
-            accessibilityRole="switch"
-            accessibilityState={{ checked: captions }}
-            accessibilityLabel="Captions"
-            onPress={() => onCaptions(!captions)}
-            style={[styles.railBtn, captions && { backgroundColor: "rgba(255,255,255,0.2)", borderColor: "rgba(255,255,255,0.3)" }]}
-          >
-            <T variant="codeSm" color={captions ? colors.secondaryContainer : "rgba(255,255,255,0.5)"} style={{ fontFamily: fonts.monoBold, letterSpacing: 1 }}>
-              CC
-            </T>
-          </Pressable>
-        </RailItem>
-      </Animated.View>
-
-      <View style={[styles.footer, { paddingBottom: insets.bottom + 8 }]} pointerEvents="box-none">
-        <Animated.View style={[StyleSheet.absoluteFill, hideable]} pointerEvents="none">
-          <LinearGradient colors={["transparent", "rgba(0,0,0,0.85)", "#000"]} style={StyleSheet.absoluteFill} />
-        </Animated.View>
-        {captions && caption ? (
-          <Animated.View
-            style={[styles.caption, { transform: [{ translateY: chrome.interpolate({ inputRange: [0, 1], outputRange: [metaHeight, 0] }) }] }]}
-            accessibilityLiveRegion="polite"
-            pointerEvents="none"
-          >
-            <T variant="caption" color="#fff" style={{ fontSize: 13 }}>
-              <T variant="codeSm" color={colors.secondaryContainer} style={{ fontFamily: fonts.monoSemibold }}>
-                [AI Voice]:{" "}
-              </T>
-              “{caption}”
-            </T>
+            <Scrubber time={pb.time} duration={ku.durationS} mark={checkDue && check === "waiting" ? cp!.t : null} onSeek={pb.seek} onScrubbing={setScrubbing} />
           </Animated.View>
-        ) : null}
-        <Animated.View style={hideable} pointerEvents={touchable} onLayout={(e) => setMetaHeight(e.nativeEvent.layout.height)}>
-          <View style={styles.meta}>
-            <T variant="codeSm" color={colors.secondaryContainer} style={{ fontSize: 11, fontFamily: fonts.monoSemibold, textTransform: "uppercase", letterSpacing: 1 }}>
-              {eyebrow}
-            </T>
-            <T variant="cardTitle" color="#fff" style={{ fontFamily: fonts.bold, fontSize: 18, lineHeight: 24 }} accessibilityRole="header">
-              {ku.shortTitle}
-            </T>
-            {ku.transcript.length ? (
-              <Pressable accessibilityRole="button" onPress={() => setSheet("transcript")} hitSlop={8} style={styles.transcriptLink}>
-                <Icon name="notes" size={14} color="rgba(255,255,255,0.7)" />
-                <T variant="caption" color="rgba(255,255,255,0.7)" style={{ fontSize: 12 }}>
-                  Transcript
-                </T>
-              </Pressable>
-            ) : null}
-          </View>
-          <Scrubber time={pb.time} duration={ku.durationS} onSeek={pb.seek} onScrubbing={setScrubbing} />
-        </Animated.View>
-      </View>
+        </View>
+      )}
 
       <StudySheet ku={ku} notes={notes} mode={sheet} time={pb.time} onClose={() => setSheet(null)} onSeek={pb.seek} />
     </View>
@@ -284,7 +324,20 @@ function RailItem({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function Scrubber({ time, duration, onSeek, onScrubbing }: { time: number; duration: number; onSeek: (t: number) => void; onScrubbing: (on: boolean) => void }) {
+function Scrubber({
+  time,
+  duration,
+  mark,
+  onSeek,
+  onScrubbing,
+}: {
+  time: number;
+  duration: number;
+  /** where the quick check waits, if it hasn't been answered */
+  mark: number | null;
+  onSeek: (t: number) => void;
+  onScrubbing: (on: boolean) => void;
+}) {
   const [width, setWidth] = useState(1);
   const [drag, setDrag] = useState<number | null>(null);
   const shown = drag ?? (duration ? time / duration : 0);
@@ -320,6 +373,7 @@ function Scrubber({ time, duration, onSeek, onScrubbing }: { time: number; durat
       >
         <View style={styles.scrubTrack} pointerEvents="none">
           <View style={[styles.scrubFill, { width: `${shown * 100}%` }]} />
+          {mark !== null && duration ? <View style={[styles.mark, { left: `${(mark / duration) * 100}%` }]} /> : null}
           <View style={[styles.knob, { left: `${shown * 100}%` }, drag !== null && { transform: [{ scale: 1.25 }] }]} />
         </View>
       </View>
@@ -419,4 +473,5 @@ const styles = StyleSheet.create({
   scrubFill: { height: 6, borderRadius: 3, backgroundColor: colors.primary },
   knob: { position: "absolute", top: -4, width: 14, height: 14, marginLeft: -7, borderRadius: 7, backgroundColor: "#fff", ...shadow.card },
   times: { flexDirection: "row", justifyContent: "space-between" },
+  mark: { position: "absolute", top: -3, width: 3, height: 12, marginLeft: -1.5, borderRadius: 1.5, backgroundColor: colors.secondaryContainer },
 });

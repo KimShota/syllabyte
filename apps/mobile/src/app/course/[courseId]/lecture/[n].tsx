@@ -9,9 +9,12 @@ import { ProgressBar, SegmentBar } from "@/components/ProgressBar";
 import { Serpentine, type SerpentineRow, type SpineSegment } from "@/components/Serpentine";
 import { T } from "@/components/T";
 import { NodePreviewSheet } from "@/components/NodePreviewSheet";
+import { PrecheckCard } from "@/components/TaskCards";
+import { api } from "@syllabyte/core/api/client";
 import { COURSE, KUS } from "@/data/course";
 import { findLecture, kuMinutes, kuStatuses, lectureProgress, sectionSegments } from "@/data/selectors";
 import type { Ku, KuStatus } from "@/data/types";
+import { useQuery } from "@/state/app";
 import { useProgress } from "@/state/progress";
 import { colors, fonts, radius, shadow, space } from "@/theme/tokens";
 
@@ -24,6 +27,7 @@ const X_PATTERN = [0.36, 0.66, 0.5, 0.3, 0.68, 0.48];
 export default function LectureRoadmap() {
   const { n } = useLocalSearchParams<{ courseId: string; n: string }>();
   const p = useProgress();
+  const check = useQuery(() => api.getPlaylist())?.precheck ?? null;
   const insets = useSafeAreaInsets();
   const [preview, setPreview] = useState<Ku | null>(null);
 
@@ -56,6 +60,12 @@ export default function LectureRoadmap() {
             <ProgressBar value={pct} height={8} color={colors.secondary} track={colors.outlineVariant} style={{ width: 64 }} />
           </View>
         </View>
+
+        {check && check.lecture_n === lecture.n ? (
+          <View style={{ marginBottom: 16 }}>
+            <PrecheckCard check={check} />
+          </View>
+        ) : null}
 
         {[...lecture.sections].reverse().map((section) => {
           const segs = sectionSegments(section.kuIds, statuses);

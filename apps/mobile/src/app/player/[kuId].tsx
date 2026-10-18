@@ -29,6 +29,9 @@ export default function Player() {
   const captions = captionsHere ?? me?.settings.captions ?? true;
 
   // FlatList needs the same function for its whole life
+  // the page on screen is waiting for its quick check to be answered
+  const [blocked, setBlocked] = useState(false);
+
   const [onViewable] = useState(() => ({ viewableItems }: { viewableItems: { index?: number | null; isViewable: boolean }[] }) => {
     const first = viewableItems.find((v) => v.isViewable);
     if (first?.index != null) setActiveIndex(first.index);
@@ -59,6 +62,7 @@ export default function Player() {
           data={feed}
           keyExtractor={(k) => k.id}
           pagingEnabled
+          scrollEnabled={!blocked}
           snapToInterval={height}
           snapToAlignment="start"
           decelerationRate="fast"
@@ -81,6 +85,7 @@ export default function Player() {
               onSpeed={setSpeed}
               captions={captions}
               onCaptions={setCaptions}
+              onBlockSwipe={setBlocked}
             />
           )}
         />
