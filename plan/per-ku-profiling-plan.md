@@ -161,6 +161,8 @@ from a fixed 8-question check, and changes it only at a student-approved Week 7 
 1. **Study instruments** *(built on `study-instruments`, see `plan/study-instruments-plan.md`)*: consent, demographics,
    and Raw TLX, SUS, learning efficacy and trust at the end of each module, in the app; researcher CSV export.
 2. **Condition B:** the control experience ("unmodified lecture recordings uploaded to the LMS") and its logging.
+   *Parked 2026-10-15 with study design; decisions B1–B5 so far (slides, since there are no recordings) in
+   `plan/condition-b-plan.md`.*
 3. **Retention and transfer:** module quizzes immediately and two weeks later (forgetting curve, H1); final-exam
    transfer items; kept separate from the items that set levels.
 4. **Pipeline** *(built on `per-student-video`, see `plan/per-student-video-plan.md`)*: on-demand generation at the student's KU level, cached by (slide content, KU, level); replaces
