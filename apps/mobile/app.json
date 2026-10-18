@@ -36,7 +36,8 @@
           "photosPermission": "SyllaByte uses your photos so you can choose a profile picture.",
           "cameraPermission": "SyllaByte uses the camera so you can take a profile picture."
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "scheme": "syllabyte",
     "experiments": {

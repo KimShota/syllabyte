@@ -112,6 +112,11 @@ export function mutate(fn: (s: DemoState) => void): void {
   notify();
 }
 
+/** The data changed somewhere else (the server answered a write): wake every screen that reads through the API. */
+export function touch(): void {
+  notify();
+}
+
 export function replaceState(next: DemoState): void {
   state = { ...next };
   persist();

@@ -22,7 +22,28 @@ export function setEventEnv(next: Partial<EventEnv>): void {
   env = { ...env, ...next };
 }
 
+/** What the phone sends the server for one UI event; the server adds condition, week and participant code. */
+export interface ClientEvent {
+  verb: EventVerb;
+  object: { type: string; id?: string };
+  result?: Record<string, unknown>;
+  screen: string;
+  device: AppEvent["context"]["device"];
+  orientation: AppEvent["context"]["orientation"];
+}
+
+let sink: ((ev: ClientEvent) => void) | null = null;
+
+/** With the backend, events go to the server instead of the local state document. `null` goes back to local. */
+export function setEventSink(next: ((ev: ClientEvent) => void) | null): void {
+  sink = next;
+}
+
 export function track(verb: EventVerb, object: { type: string; id?: string }, result?: Record<string, unknown>): void {
+  if (sink) {
+    sink({ verb, object, result, screen: env.screen(), device: env.device(), orientation: env.orientation() });
+    return;
+  }
   const s = getState();
   // Plan §6.3: decliners are not logged for research. In demo builds a facilitator can
   // leave logging on for usability sessions (hidden menu toggle, on by default).

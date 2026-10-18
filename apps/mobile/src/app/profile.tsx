@@ -8,22 +8,29 @@ import { Icon, type IconName } from "@/components/Icon";
 import { T } from "@/components/T";
 import { api } from "@syllabyte/core/api/client";
 import { endFirstModule, simulateNextDay, simulateNextWeek } from "@syllabyte/core/api/demo";
+import { REMOTE } from "@/data/backend";
 import { COURSE } from "@/data/course";
 import { SPEEDS, setPrefs, signOut, speedLabel, usePrefs, useQuery } from "@/state/app";
+import { useSession } from "@/state/session";
 import { pickProfilePhoto, removeProfilePhoto, type PhotoSource } from "@/state/photo";
 import { colors, fonts, radius, shadow, space } from "@/theme/tokens";
 
-/** Mock student until sign-in exists (Phase 1). */
-const STUDENT = { name: "Alex Rivera" };
+/** The student the demo shows when there is no backend to sign in to. */
+const DEMO_STUDENT = { name: "Alex Rivera" };
 
 export default function Profile() {
   const insets = useSafeAreaInsets();
   const { speed, photoUri } = usePrefs();
   const captions = useQuery(() => api.getMe())?.settings.captions ?? true;
-  const initials = STUDENT.name
-    .split(" ")
-    .map((w) => w[0])
-    .join("");
+  const { email } = useSession();
+  // with a backend the student is who signed in; without one, the demo student
+  const name = REMOTE ? (email ?? "Signed in") : DEMO_STUDENT.name;
+  const initials = REMOTE
+    ? (email?.[0] ?? "?").toUpperCase()
+    : DEMO_STUDENT.name
+        .split(" ")
+        .map((w) => w[0])
+        .join("");
 
   return (
     <View style={styles.screen}>
@@ -60,8 +67,10 @@ export default function Profile() {
               </View>
             </Pressable>
             <View style={{ flex: 1, gap: 2 }}>
-              <Pressable onLongPress={openDemoMenu} delayLongPress={1000} accessibilityRole="text">
-                <T variant="cardTitle">{STUDENT.name}</T>
+              <Pressable onLongPress={REMOTE ? undefined : openDemoMenu} delayLongPress={1000} accessibilityRole="text">
+                <T variant="cardTitle" numberOfLines={1}>
+                  {name}
+                </T>
               </Pressable>
               <Pressable accessibilityRole="button" onPress={() => editPhoto(!!photoUri)} hitSlop={8} style={styles.photoLink}>
                 <T variant="caption" color={colors.primary} style={{ fontFamily: fonts.semibold }}>
@@ -99,7 +108,7 @@ export default function Profile() {
                 removeProfilePhoto();
                 signOut();
                 if (router.canDismiss()) router.dismissAll();
-                router.replace("/welcome");
+                router.replace(REMOTE ? "/signin" : "/welcome");
               }}
               style={({ pressed }) => [styles.signOut, pressed && { backgroundColor: colors.surfaceContainerHighest }]}
             >

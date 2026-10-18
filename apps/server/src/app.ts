@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { cors } from "hono/cors";
 import { studyCsv } from "@syllabyte/core/logic/instruments";
 import { Auth, type User } from "./auth";
 import type { Db } from "./db";
@@ -9,6 +10,8 @@ export interface Deps {
   db: Db;
   auth: Auth;
   runner: StateRunner;
+  /** Browsers only (the phone app doesn't need it): the origin allowed to call, e.g. the web build in development. */
+  corsOrigin?: string;
 }
 
 type Env = { Variables: { user: User; token: string } };
@@ -26,8 +29,9 @@ async function json(c: Context): Promise<Record<string, unknown>> {
 }
 
 /** Everything the phone calls, under /api. Built without a socket so tests can use `app.request`. */
-export function createApp({ auth, runner }: Deps): Hono<Env> {
+export function createApp({ auth, runner, corsOrigin }: Deps): Hono<Env> {
   const app = new Hono<Env>();
+  if (corsOrigin) app.use("/api/*", cors({ origin: corsOrigin, allowHeaders: ["Authorization", "Content-Type", "X-Visit"], allowMethods: ["GET", "POST", "OPTIONS"] }));
   app.use("*", bodyLimit({ maxSize: 512 * 1024, onError: (c) => c.json({ error: "too large" }, 413) }));
 
   app.get("/api/health", (c) => c.json({ ok: true }));

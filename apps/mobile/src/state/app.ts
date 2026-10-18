@@ -15,11 +15,11 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { api } from "@syllabyte/core/api/client";
 import { setEventEnv } from "@syllabyte/core/events";
 import { flush, getState, getVersion, hydrate, isHydrated, resetState, subscribe, type StorageAdapter } from "@syllabyte/core/store";
+import { REMOTE } from "@/data/backend";
+import { VISIT, endBackendSession, flushEvents, loadSession, useSession } from "./session";
 
 const STATE_KEY = "syllabyte.demo.v2";
 const PREFS_KEY = "syllabyte.mobile.prefs.v1";
-/** a launch of the app is a visit (the next-session cap counts per visit) */
-const VISIT = Math.random().toString(36).slice(2);
 
 let screen = "";
 /** The route on screen, for the events' context; the root layout keeps it current. */
@@ -110,10 +110,17 @@ async function recordConsent(): Promise<void> {
   if (getState().consent === null) await api.postConsent(true);
 }
 
-/** Sign out: the demo starts over, study data and this app's settings alike. */
+/**
+ * Sign out. Alone, the demo starts over: study data and this app's settings alike. With a backend the student's data
+ * stays on the server for their next sign-in, and only this phone's settings are cleared.
+ */
 export function signOut(): void {
-  resetState();
   setPrefs(DEFAULT_PREFS);
+  if (REMOTE) {
+    void endBackendSession();
+    return;
+  }
+  resetState();
   void recordConsent();
 }
 
@@ -122,17 +129,22 @@ export function signOut(): void {
 let ready = false;
 let starting: Promise<void> | null = null;
 
-/** Read both saved documents once; screens render after it. */
+/** Read what is saved on the phone once (and, with a backend, check the session); screens render after it. */
 export function startApp(): Promise<void> {
   if (!starting) {
-    starting = Promise.all([Promise.resolve(hydrate(phoneStorage)), loadPrefs()]).then(async () => {
-      await recordConsent();
+    starting = (REMOTE
+      ? Promise.all([loadPrefs(), loadSession()]).then(() => undefined)
+      : Promise.all([Promise.resolve(hydrate(phoneStorage)), loadPrefs()]).then(recordConsent)
+    ).then(() => {
       ready = true;
       emitPrefs();
     });
     // write a pending change before the app is suspended
     AppState.addEventListener("change", (s) => {
-      if (s !== "active") flush();
+      if (s !== "active") {
+        flush();
+        flushEvents();
+      }
     });
   }
   return starting;
@@ -141,7 +153,7 @@ export function startApp(): Promise<void> {
 export function useAppReady(): boolean {
   useSyncExternalStore(subscribePrefs, () => ready, () => ready);
   useStoreVersion();
-  return ready && isHydrated();
+  return ready && (REMOTE || isHydrated());
 }
 
 // ------------------------------------------------------------------ queries
@@ -156,14 +168,21 @@ export function useStoreVersion(): number {
  */
 export function useQuery<T>(fn: () => Promise<T>, deps: readonly unknown[] = []): T | undefined {
   const version = useStoreVersion();
+  // with a backend nothing can be asked until the student is signed in
+  const signedIn = useSession().status === "signedIn";
   const [data, setData] = useState<T | undefined>(undefined);
   const run = useRef(0);
   useEffect(() => {
+    if (!signedIn) return;
     const id = ++run.current;
-    fn().then((d) => {
-      if (id === run.current) setData(d);
-    });
+    fn().then(
+      (d) => {
+        if (id === run.current) setData(d);
+      },
+      // the server couldn't be reached or said no: keep what is on screen (the banner offers a retry)
+      () => {},
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [version, ...deps]);
-  return data;
+  }, [version, signedIn, ...deps]);
+  return signedIn ? data : undefined;
 }

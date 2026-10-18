@@ -1,6 +1,6 @@
 # Backend (Phase 1): plan and status
 
-Status: **slice 1 built** on branch `backend` (2026-10-18): `apps/server`. The phone does not talk to it yet.
+Status: **slices 1 and 2 built** on branch `backend` (2026-10-19): `apps/server`, and the phone can use it.
 
 ## Decided (2026-10-18)
 
@@ -31,12 +31,29 @@ Status: **slice 1 built** on branch `backend` (2026-10-18): `apps/server`. The p
 HTTP, batched event ingest (`POST /api/events`, logged through the core's `track` so each event carries the server's
 condition, week and code), the researcher CSV. 20 tests, including a whole baseline run on the server.
 
+## Built (slice 2): the phone uses it
+
+- `packages/core/src/api/remote.ts`: `createBackend` (the `Api` over `/api/rpc`, plus sign-in calls) and an event queue
+  (batches of 20 or after 4 s, a failed batch is kept). `api/client.ts` now has `setApi`, so one line swaps the mock for
+  the server; the web demo is unchanged.
+- `apps/mobile`: a sign-in screen (email, then code), the session token in the keychain (`expo-secure-store`), a root
+  gate (signed out: only the sign-in screen), a "can't reach the server" banner with "Try again", and screens refetching
+  after every call that changes data. UI events (`track`) go to the server in batches instead of the phone.
+- **Switch (`apps/mobile/src/data/backend.ts`):** `EXPO_PUBLIC_API_BASE=https://…` uses that server;
+  `EXPO_PUBLIC_USE_SERVER=1` uses the server on the Metro machine (port 8788); neither: the app runs on its own mock, so
+  UI work needs no server. The old on-phone test data is simply not used (decided 2026-10-19).
+- With the server there is no offline mode (decided 2026-10-19): a failed call shows the banner. Sign out clears this
+  phone's settings only; the student's data stays on the server for their next sign-in.
+- The facilitator's demo menu (long-press the name: simulate next day / week) is hidden with the server: it moved the
+  phone's own clock. A server-side facilitator tool for testing the study timeline is still to do.
+- Checked end to end in the web build against a running server: sign-in, a reload keeping the session, the whole
+  baseline (12 answers, a reload in the middle resumed at the right question), the stored state, and the unreachable-server
+  message. Not checked: typing on the iOS simulator (no tap tool) and a real phone.
+
 ## Next slices
 
-1. **The phone uses it:** a `remoteApi` implementing `Api` over `/api/rpc`, a sign-in screen (email, then code),
-   the session token in SecureStore, and the screens refetching after a call (today they refetch because the local
-   store changes; with a remote API the client must invalidate after each call). Direct `getState()` reads in the app
-   (progress, the baseline gate) move behind API calls. Offline: queue writes, or show "no connection".
+1. **Facilitator tool** for the study timeline on the server (a researcher-only "move this student's clock"), and
+   whether the phone's local-only `setupDone` (first-run screens) should live on the server.
 2. **Videos and slides from storage:** serve rendered videos by signed URL (replaces `npm run media`); `POST
    /admin/variants` for the pipeline. Blocked on the professor's OK to host course material (plan §15.1).
 3. **Deployment:** one VM, Caddy for HTTPS, nightly database copy, `SYLLABYTE_SECRET` and `RESEND_API_KEY` set.

@@ -88,3 +88,11 @@ describe("sign-in", () => {
     expect((await s.post("/api/rpc/getMe", { args: [] }, { Authorization: "Bearer nope" })).status).toBe(401);
   });
 });
+
+describe("cors", () => {
+  it("is off unless an origin is configured", async () => {
+    const s = makeServer();
+    const res = await s.app.request("/api/health", { headers: { Origin: "http://localhost:8081" } });
+    expect(res.headers.get("access-control-allow-origin")).toBeNull();
+  });
+});
