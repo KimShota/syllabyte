@@ -64,8 +64,12 @@ the study flows are on branch `study-flows` (2026-10-18). Real video files and A
 - **No My Levels screen.** Levels still drive the videos behind the scenes; students don't see or correct them.
   Needs advisor sign-off: the Trust questionnaire's item 16 ("I trust the levels SyllaByte chose for me") asks
   about levels the phone app never shows.
-- **The check before a lecture** and **the questionnaires** appear as cards on Home (the lecture check also on its
-  lecture's roadmap), with "Not now".
+- **The check before a lecture is required** (2026-10-18): there is no way to skip or postpone it. Until it is
+  done, that lecture's videos are locked: a direct link to one goes to the check, and the roadmap node says "Take the
+  check first". Earlier lectures' videos stay open. Needs advisor sign-off: the web app's plan (D8) lets the student
+  skip it, so this changes the research design, and the web app still allows skipping.
+- **The questionnaires** appear as cards on Home with "Not now", which hides one until the next launch. The check
+  before a lecture is also a card on Home and on its lecture's roadmap.
 
 ## Open questions for the planning round (roughly in order)
 

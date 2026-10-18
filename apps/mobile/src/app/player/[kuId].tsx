@@ -1,12 +1,14 @@
 import { useCallback, useMemo, useState } from "react";
 import { setStatusBarHidden, setStatusBarStyle } from "expo-status-bar";
 import { FlatList, View } from "react-native";
-import { useFocusEffect, useLocalSearchParams } from "expo-router";
+import { Redirect, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { PlayerPage } from "@/components/player/PlayerPage";
+import { precheckHref } from "@/components/TaskCards";
 import { api } from "@syllabyte/core/api/client";
 import { KUS } from "@/data/course";
 import { findLecture, lectureFeed } from "@/data/selectors";
 import { usePrefs, useQuery, type Speed } from "@/state/app";
+import { usePrecheck } from "@/state/progress";
 
 /**
  * The immersive player as a vertical swipe feed: one full-screen video at a time, swiping up for the
@@ -16,6 +18,7 @@ export default function Player() {
   const { kuId } = useLocalSearchParams<{ kuId: string }>();
   const prefs = usePrefs();
   const me = useQuery(() => api.getMe());
+  const check = usePrecheck();
   const start = KUS[kuId];
   const lecture = start ? findLecture(start.lectureN) : undefined;
   const feed = useMemo(() => (lecture ? lectureFeed(lecture) : []), [lecture]);
@@ -54,9 +57,13 @@ export default function Player() {
   );
 
   if (!start || !lecture) return null;
+  // a lecture's videos open only after its check: until it loads show black, then send the student to it
+  // (own keys: the player's root measures itself with onLayout, which only fires on a freshly mounted view)
+  if (check === undefined) return <View key="waiting" style={{ flex: 1, backgroundColor: "#000" }} />;
+  if (check && check.lecture_n === start.lectureN) return <Redirect href={precheckHref(check)} />;
 
   return (
-    <View style={{ flex: 1, backgroundColor: "#000" }} onLayout={(e) => setHeight(e.nativeEvent.layout.height)}>
+    <View key="player" style={{ flex: 1, backgroundColor: "#000" }} onLayout={(e) => setHeight(e.nativeEvent.layout.height)}>
       {height > 0 ? (
         <FlatList
           data={feed}

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
-import { router } from "expo-router";
+import { router, type Href } from "expo-router";
 import { api } from "@syllabyte/core/api/client";
 import type { StudyTaskView } from "@syllabyte/core/api/types";
 import { track } from "@syllabyte/core/events";
@@ -44,7 +44,17 @@ function BaselineCard({ sitting }: { sitting: SittingView }) {
   );
 }
 
-/** The check before a lecture's videos (plan D8): short, adaptive, not graded, and it can wait. */
+/** Where a lecture check goes: its intro, or straight to the question it is on once started. */
+export function precheckHref(check: PrecheckView): Href {
+  return check.answered > 0
+    ? { pathname: "/quiz/question", params: { sitting: check.sitting_id } }
+    : { pathname: "/quiz", params: { sitting: check.sitting_id } };
+}
+
+/**
+ * The check before a lecture's videos (plan D8): short, adaptive, not graded. The student must finish it before
+ * that lecture's videos open, so there is no way to put it off; the player and the roadmap enforce that.
+ */
 export function PrecheckCard({ check }: { check: PrecheckView }) {
   const started = check.answered > 0;
   const minutes = Math.max(1, Math.round(check.total / 3));
@@ -53,15 +63,10 @@ export function PrecheckCard({ check }: { check: PrecheckView }) {
       icon="fact-check"
       tone="secondary"
       eyebrow={`Before Lecture ${check.lecture_n}`}
-      title={started ? "Finish the lecture check" : "A quick check before this lecture"}
-      body={`${check.total} questions, about ${minutes} ${minutes === 1 ? "minute" : "minutes"}. It tunes “${check.title}” to what you know now. Not graded.`}
+      title={started ? "Finish the lecture check" : "Take the check before this lecture"}
+      body={`${check.total} questions, about ${minutes} ${minutes === 1 ? "minute" : "minutes"}. Its videos open once you finish. It tunes “${check.title}” to what you know now. Not graded.`}
       action={started ? "Continue" : "Start"}
-      onPress={() =>
-        started
-          ? router.push({ pathname: "/quiz/question", params: { sitting: check.sitting_id } })
-          : router.push({ pathname: "/quiz", params: { sitting: check.sitting_id } })
-      }
-      onLater={() => void api.skipSitting(check.sitting_id)}
+      onPress={() => router.push(precheckHref(check))}
     />
   );
 }

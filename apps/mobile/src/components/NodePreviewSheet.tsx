@@ -4,8 +4,10 @@ import { Button } from "./Button";
 import { IconButton } from "./Header";
 import { Sheet, SheetHandle } from "./Sheet";
 import { T } from "./T";
+import { precheckHref } from "./TaskCards";
 import { kuMinutes } from "@/data/selectors";
 import type { Ku, KuStatus } from "@/data/types";
+import type { PrecheckView } from "@syllabyte/core/types";
 import { toggleNotify, usePrefs } from "@/state/app";
 import { colors, fonts, radius } from "@/theme/tokens";
 
@@ -15,14 +17,27 @@ function slideSpan(ku: Ku) {
 }
 
 /** Tapping a node on the lecture roadmap: what it is, and watch / review / get notified. */
-export function NodePreviewSheet({ ku, status, onClose }: { ku: Ku | null; status: KuStatus | null; onClose: () => void }) {
+export function NodePreviewSheet({
+  ku,
+  status,
+  check,
+  onClose,
+}: {
+  ku: Ku | null;
+  status: KuStatus | null;
+  /** the check due before the upcoming lecture's videos: it locks that lecture's videos until it is done */
+  check: PrecheckView | null;
+  onClose: () => void;
+}) {
   const prefs = usePrefs();
   const visible = !!ku && !!status;
+
+  const locked = !!check && !!ku && ku.lectureN === check.lecture_n && status !== "drafting";
 
   const play = () => {
     if (!ku) return;
     onClose();
-    router.push({ pathname: "/player/[kuId]", params: { kuId: ku.id } });
+    router.push(locked ? precheckHref(check) : { pathname: "/player/[kuId]", params: { kuId: ku.id } });
   };
 
   let badge: { text: string; bg: string; fg: string } = { text: "", bg: colors.primaryFixed, fg: colors.onPrimaryFixed };
@@ -57,6 +72,11 @@ export function NodePreviewSheet({ ku, status, onClose }: { ku: Ku | null; statu
         action = <Button label={`Watch Video (${kuMinutes(ku)} min)`} icon="play-arrow" onPress={play} style={styles.action} />;
         break;
     }
+  }
+
+  if (ku && locked) {
+    description = `Lecture ${ku.lectureN}'s videos open after a quick check (${check.total} questions, no grade) that tunes them to what you know now.`;
+    action = <Button label="Take the check first" icon="lock" onPress={play} style={styles.action} />;
   }
 
   return (

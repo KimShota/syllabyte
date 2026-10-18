@@ -95,7 +95,7 @@ export default function LectureRoadmap() {
         })}
       </ScrollView>
 
-      <NodePreviewSheet ku={preview} status={preview ? statuses[preview.id] : null} onClose={() => setPreview(null)} />
+      <NodePreviewSheet ku={preview} status={preview ? statuses[preview.id] : null} check={check} onClose={() => setPreview(null)} />
     </View>
   );
 }
