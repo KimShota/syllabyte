@@ -22,13 +22,16 @@ export interface SerpentineRow {
  * Rows stacked top to bottom with a curved spine drawn behind them, through each row's node centre.
  * `segments[i]` styles the curve between row i and row i + 1.
  */
-export function Serpentine({ rows, segments }: { rows: SerpentineRow[]; segments: SpineSegment[] }) {
+export function Serpentine({ rows, segments, step = false }: { rows: SerpentineRow[]; segments: SpineSegment[]; step?: boolean }) {
   const [width, setWidth] = useState(0);
   const centers: { x: number; y: number }[] = [];
+  /** where each row ends: with `step`, the line crosses sideways here, in the gap between two rows' cards */
+  const bounds: number[] = [];
   let y = 0;
   for (const row of rows) {
     centers.push({ x: row.nodeX * width, y: y + (row.nodeY ?? row.height / 2) });
     y += row.height;
+    bounds.push(y);
   }
   const totalHeight = y;
 
@@ -44,7 +47,7 @@ export function Serpentine({ rows, segments }: { rows: SerpentineRow[]; segments
             return (
               <Path
                 key={i}
-                d={`M ${a.x} ${a.y} C ${a.x} ${mid}, ${b.x} ${mid}, ${b.x} ${b.y}`}
+                d={step ? stepPath(a, b, bounds[i]) : `M ${a.x} ${a.y} C ${a.x} ${mid}, ${b.x} ${mid}, ${b.x} ${b.y}`}
                 stroke={seg.color}
                 strokeWidth={seg.width ?? 3}
                 strokeDasharray={seg.dashed ? "6 6" : undefined}
@@ -64,4 +67,18 @@ export function Serpentine({ rows, segments }: { rows: SerpentineRow[]; segments
         : null}
     </View>
   );
+}
+
+/** Down from `a` to the row boundary, across to `b`'s column, down to `b`, with rounded corners. */
+function stepPath(a: { x: number; y: number }, b: { x: number; y: number }, boundary: number): string {
+  const dir = Math.sign(b.x - a.x) || 1;
+  const r = Math.min(18, Math.abs(b.x - a.x) / 2, Math.abs(boundary - a.y), Math.abs(b.y - boundary));
+  return [
+    `M ${a.x} ${a.y}`,
+    `V ${boundary - r}`,
+    `Q ${a.x} ${boundary} ${a.x + dir * r} ${boundary}`,
+    `H ${b.x - dir * r}`,
+    `Q ${b.x} ${boundary} ${b.x} ${boundary + r}`,
+    `V ${b.y}`,
+  ].join(" ");
 }

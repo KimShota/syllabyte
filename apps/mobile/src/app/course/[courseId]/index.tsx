@@ -106,9 +106,10 @@ function Path({ lectures }: { lectures: LectureNodeView[] }) {
   const rows: SerpentineRow[] = [
     {
       key: "final",
-      height: 170,
+      height: 180,
       nodeX: 0.5,
-      nodeY: 10 + NODE / 2,
+      // the path starts below the exam card instead of running behind it
+      nodeY: 160,
       render: () => (
         <View style={styles.finalRow}>
           <View style={[styles.node, styles.finalNode]}>
@@ -137,7 +138,7 @@ function Path({ lectures }: { lectures: LectureNodeView[] }) {
     const upper = i === 0 ? "awaiting" : top[i - 1].status;
     return segmentFor(upper, top[i].status);
   });
-  return <Serpentine rows={rows} segments={segments} />;
+  return <Serpentine rows={rows} segments={segments} step />;
 }
 
 function LectureRow({ view, nodeRight, width }: { view: LectureNodeView; nodeRight: boolean; width: number }) {
