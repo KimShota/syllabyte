@@ -36,8 +36,10 @@ Supersedes `plan/ui-ux-implementation-plan.md` §3.18's "questionnaires open in 
 **Demographics (I6)** — every question also offers "Prefer not to say".
 1. Year of study: 1st, 2nd, 3rd, 4th, Other
 2. Major or intended major (free text)
-3. Have you taken a course on this subject before? No / Yes, at school / Yes, at university
-4. How familiar are you with this course's topics? 1 (Not at all) – 5 (Very)
+3. Have you taken a course on *{course}* before? No / Yes, at school / Yes, at university
+4. How familiar are you with the topics in *{course}*? 1 (Not at all) – 5 (Very)
+   (*{course}* is the course's name, filled in when the questionnaire opens; 2026-10-18. Asked once at sign-up, so with
+   more than one course these two would have to be asked per course: not built.)
 5. How often do you watch short educational videos (TikTok, YouTube Shorts, Reels)? Never / Less than weekly / Weekly / Several times a week / Daily
 6. Is English your first language? Yes / No
 7. Age: 18–19, 20–21, 22–24, 25 or older
