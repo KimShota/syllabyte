@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Image, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { Redirect, router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Header, ProfileButton } from "@/components/Header";
@@ -47,9 +47,7 @@ export default function Home() {
         bordered
         left={
           <View style={styles.brand}>
-            <View style={styles.logo}>
-              <Icon name="auto-stories" size={22} color={colors.onPrimary} />
-            </View>
+            <Image source={require("../../assets/icon.png")} style={styles.logo} accessibilityIgnoresInvertColors />
             <View>
               <T variant="eyebrow" color={colors.primary} style={{ fontSize: 12, lineHeight: 16, fontFamily: fonts.monoSemibold }}>
                 SyllaByte
@@ -162,7 +160,7 @@ function CourseCard({ name, progress, analyzing, onPress }: { name: string; prog
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.surface },
   brand: { flexDirection: "row", alignItems: "center", gap: 12, paddingLeft: 4 },
-  logo: { width: 40, height: 40, borderRadius: radius.lg, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },
+  logo: { width: 40, height: 40, borderRadius: radius.lg },
   content: { paddingHorizontal: space.gutter, paddingTop: 24 },
   titleRow: { flexDirection: "row", alignItems: "center", gap: 12 },
   list: { marginTop: 28, gap: 16 },
