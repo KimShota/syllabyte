@@ -68,6 +68,11 @@ the study flows are on branch `study-flows` (2026-10-18). Real video files and A
   done, that lecture's videos are locked: a direct link to one goes to the check, and the roadmap node says "Take the
   check first". Earlier lectures' videos stay open. Needs advisor sign-off: the web app's plan (D8) lets the student
   skip it, so this changes the research design, and the web app still allows skipping.
+- **The initial quick check (Week 0 baseline) is required and can't be left** (2026-10-18): no skip, no "Not now", and
+  no close button on its questions. Until it is finished, every screen except the first-run screens and the check
+  itself sends the student back to it (a root-layout guard), so backing out, killing the app or opening a video link all
+  end at the check, which resumes where it was left. Needs advisor sign-off with the lecture-check item above. The
+  check before a lecture still has a close button, but its videos stay locked until it is done.
 - **The questionnaires** appear as cards on Home with "Not now", which hides one until the next launch. The check
   before a lecture is also a card on Home and on its lecture's roadmap.
 
