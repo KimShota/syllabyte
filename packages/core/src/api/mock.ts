@@ -6,7 +6,7 @@ import { calibrationBlock1, calibrationBlock2 } from "../logic/calibration";
 import { droppedEarly } from "../logic/engagement";
 import { kuLevels, levelUpdates } from "../logic/kuProfile";
 import {
-  batteryInstruments, dueModules, moduleEndTime, newBattery, studyCsv, studyModules, visibleItems,
+  batteryInstruments, dueModules, moduleEndTime, newBattery, studyCsv, studyModules, visibleItems, withCourse,
 } from "../logic/instruments";
 import { overallLevel } from "../logic/levels";
 import { createTask, currentNextSession } from "../logic/nextSession";
@@ -807,7 +807,7 @@ export const mockApi: Api = {
   async getBattery(id) {
     const r = studyRecord(id);
     const view: BatteryView = {
-      id, kind: r.kind, title: batteryTitle(id), instruments: batteryInstruments(id, S().condition),
+      id, kind: r.kind, title: batteryTitle(id), instruments: withCourse(batteryInstruments(id, S().condition), FIX.course.name),
       answers: clone(r.answers), submitted: r.submitted_at !== null,
     };
     return view;

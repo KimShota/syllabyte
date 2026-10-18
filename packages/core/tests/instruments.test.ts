@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DEMOGRAPHICS, EFFICACY, INSTRUMENTS, PREFER_NOT, SUS, TLX, TRUST } from "../src/content/instruments";
 import {
   batteryInstruments, CSV_COLUMNS, dueModules, moduleEnded, moduleEndTime, newBattery, scoreBattery, scoreInstrument, studyCsv, studyModules,
-  visibleItems,
+  visibleItems, withCourse,
 } from "../src/logic/instruments";
 import type { BatteryRecord, Course } from "../src/types";
 import { DAY } from "../src/util";
@@ -98,6 +98,16 @@ describe("batteries", () => {
     expect(batteryInstruments("module-1", "A").map((i) => i.id)).toEqual(["tlx", "efficacy", "sus", "trust"]);
     expect(batteryInstruments("module-2", "B").map((i) => i.id)).toEqual(["tlx", "efficacy", "sus"]);
     expect(batteryInstruments("baseline", "B").map((i) => i.id)).toEqual(["demographics"]);
+  });
+
+  it("name the course in the questions about it", () => {
+    const [demographics] = withCourse(batteryInstruments("baseline", "A"), "Computational Social Science");
+    const text = (id: string) => demographics.items.find((i) => i.id === id)!.text;
+    expect(text("prior_course")).toBe("Have you taken a course on Computational Social Science before?");
+    expect(text("familiarity")).toBe("How familiar are you with the topics in Computational Social Science?");
+    expect(demographics.items.some((i) => i.text.includes("{course}"))).toBe(false);
+    // the shared definitions keep the placeholder
+    expect(DEMOGRAPHICS.items.find((i) => i.id === "prior_course")!.text).toContain("{course}");
   });
 
   it("show the gender self-description only when it is chosen", () => {

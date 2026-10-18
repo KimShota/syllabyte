@@ -3,9 +3,10 @@ import type { Condition } from "../types";
 /**
  * The study's questionnaires as data (plan/study-instruments-plan.md, decisions I3-I7). Wording is the instruments'
  * own, changed only where the plan says so. Bump INSTRUMENTS_VERSION whenever any wording or option changes: every
- * answer is stored with the version it was given under.
+ * answer is stored with the version it was given under. `{course}` in an item's text is the course's name,
+ * filled in when the questionnaire is opened (withCourse in logic/instruments.ts).
  */
-export const INSTRUMENTS_VERSION = "2026-10-14";
+export const INSTRUMENTS_VERSION = "2026-10-18";
 
 export type InstrumentId = "demographics" | "tlx" | "sus" | "efficacy" | "trust";
 
@@ -63,11 +64,11 @@ export const DEMOGRAPHICS: Instrument = {
     { id: "year", label: "year", text: "Year of study", response: choice("1st year", "2nd year", "3rd year", "4th year", "Other") },
     { id: "major", label: "major", text: "Major or intended major", response: { kind: "text", placeholder: "e.g. Economics" } },
     {
-      id: "prior_course", label: "prior_course", text: "Have you taken a course on this subject before?",
+      id: "prior_course", label: "prior_course", text: "Have you taken a course on {course} before?",
       response: choice("No", "Yes, at school", "Yes, at university"),
     },
     {
-      id: "familiarity", label: "familiarity", text: "How familiar are you with this course’s topics?",
+      id: "familiarity", label: "familiarity", text: "How familiar are you with the topics in {course}?",
       response: choice("1 Not at all", "2", "3", "4", "5 Very"),
     },
     {

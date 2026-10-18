@@ -61,6 +61,11 @@ export function batteryInstruments(batteryId: string, condition: Condition): Ins
   return BATTERY_CONTENTS[batteryKind(batteryId)].map((id) => INSTRUMENTS[id]).filter((i) => i.conditions.includes(condition));
 }
 
+/** The instruments with `{course}` in the items' wording replaced by the course's name, so a question names the course it asks about. */
+export function withCourse(instruments: Instrument[], courseName: string): Instrument[] {
+  return instruments.map((i) => ({ ...i, items: i.items.map((it) => ({ ...it, text: it.text.replaceAll("{course}", courseName) })) }));
+}
+
 /** Items to show given the answers so far (the gender self-description appears only when chosen). */
 export function visibleItems(instrument: Instrument, answers: BatteryRecord["answers"]): InstrumentItem[] {
   return instrument.items.filter((it) => !it.showIf || answers[it.showIf.item] === it.showIf.value);
