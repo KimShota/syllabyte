@@ -229,11 +229,6 @@ function CardBody({ view, alignRight }: { view: LectureNodeView; alignRight: boo
           Lecture {lecture.n}
           {eyebrowRight ? ` · ${eyebrowRight}` : ""}
         </T>
-        {status === "active" ? (
-          <T variant="codeSm" color={colors.primary} style={{ fontFamily: fonts.monoSemibold, marginLeft: "auto" }}>
-            {progress.done}/{progress.total}
-          </T>
-        ) : null}
       </View>
       <T variant="bodySemibold" style={[{ marginTop: 4 }, align]}>
         {lecture.title}
@@ -249,7 +244,12 @@ function CardBody({ view, alignRight }: { view: LectureNodeView; alignRight: boo
       ) : null}
       {status === "active" ? (
         <View style={{ alignSelf: "stretch" }}>
-          <ProgressBar value={progress.total ? progress.done / progress.total : 0} height={6} style={{ marginTop: 10 }} />
+          <View style={styles.progressRow}>
+            <ProgressBar value={progress.total ? progress.done / progress.total : 0} height={6} style={{ flex: 1, width: "auto" }} />
+            <T variant="codeSm" color={colors.primary} style={{ fontFamily: fonts.monoSemibold }}>
+              {progress.done}/{progress.total}
+            </T>
+          </View>
           {progress.nextKu ? (
             <View style={styles.next}>
               <T variant="codeSm" color={colors.onSurfaceVariant} numberOfLines={1} style={{ flex: 1 }}>
@@ -314,4 +314,5 @@ const styles = StyleSheet.create({
   chip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.full, marginTop: 10 },
   chipDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.outline },
   next: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 10 },
+  progressRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10 },
 });
