@@ -1,0 +1,25 @@
+{
+  "name": "@syllabyte/server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SyllaByte's backend: sign-in, one saved state per student, and the shared app rules (packages/core) running on the server.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "allowlist": "tsx scripts/allowlist.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.5",
+    "@syllabyte/core": "file:../../packages/core",
+    "hono": "^4.13.13"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  }
+}
