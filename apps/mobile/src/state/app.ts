@@ -58,14 +58,20 @@ export interface Prefs {
   speed: Speed;
   /** "Notify when ready" on a KU whose video is still being made */
   notifyKuIds: string[];
+  /** the student's profile photo: a file in the app's document folder (state/photo.ts), or null for the initials */
+  photoUri: string | null;
 }
 
-const DEFAULT_PREFS: Prefs = { setupDone: false, speed: 1, notifyKuIds: [] };
+const DEFAULT_PREFS: Prefs = { setupDone: false, speed: 1, notifyKuIds: [], photoUri: null };
 let prefs: Prefs = DEFAULT_PREFS;
 const prefListeners = new Set<() => void>();
 
 function emitPrefs() {
   prefListeners.forEach((l) => l());
+}
+
+export function getPrefs(): Prefs {
+  return prefs;
 }
 
 export function setPrefs(patch: Partial<Prefs>): void {

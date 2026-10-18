@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, View, type ViewStyle } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, shadow } from "@/theme/tokens";
+import { Avatar } from "./Avatar";
 import { Icon, type IconName } from "./Icon";
 
 /** The fixed top bar: 64pt tall under the status bar, on the surface tint. */
@@ -61,9 +62,7 @@ export function ProfileButton({ size = 32 }: { size?: number }) {
       hitSlop={8}
       style={styles.profileHit}
     >
-      <View style={[styles.avatar, { width: size, height: size, borderRadius: size / 2 }]}>
-        <Icon name="person" size={size * 0.56} color={colors.onPrimary} />
-      </View>
+      <Avatar size={size} backgroundColor={colors.primaryDeep} fallback={<Icon name="person" size={size * 0.56} color={colors.onPrimary} />} />
     </Pressable>
   );
 }
@@ -77,5 +76,4 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center" },
   iconBtn: { minWidth: 44, minHeight: 44, borderRadius: 12, alignItems: "center", justifyContent: "center" },
   profileHit: { minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center" },
-  avatar: { backgroundColor: colors.primaryDeep, alignItems: "center", justifyContent: "center" },
 });

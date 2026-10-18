@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Avatar } from "@/components/Avatar";
 import { BackButton, Header } from "@/components/Header";
 import { Icon, type IconName } from "@/components/Icon";
 import { T } from "@/components/T";
@@ -9,6 +10,7 @@ import { api } from "@syllabyte/core/api/client";
 import { endFirstModule, simulateNextDay, simulateNextWeek } from "@syllabyte/core/api/demo";
 import { COURSE } from "@/data/course";
 import { SPEEDS, setPrefs, signOut, speedLabel, usePrefs, useQuery } from "@/state/app";
+import { pickProfilePhoto, removeProfilePhoto, type PhotoSource } from "@/state/photo";
 import { colors, fonts, radius, shadow, space } from "@/theme/tokens";
 
 /** Mock student until sign-in exists (Phase 1). */
@@ -16,7 +18,7 @@ const STUDENT = { name: "Alex Rivera" };
 
 export default function Profile() {
   const insets = useSafeAreaInsets();
-  const { speed } = usePrefs();
+  const { speed, photoUri } = usePrefs();
   const captions = useQuery(() => api.getMe())?.settings.captions ?? true;
   const initials = STUDENT.name
     .split(" ")
@@ -38,14 +40,35 @@ export default function Profile() {
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 40 }]}>
         <View style={styles.card}>
           <View style={styles.identity}>
-            <View style={styles.avatar}>
-              <T variant="bodySemibold" color={colors.primaryDeep} style={{ fontFamily: fonts.bold }}>
-                {initials}
-              </T>
-            </View>
-            <Pressable onLongPress={openDemoMenu} delayLongPress={1000} accessibilityRole="text">
-              <T variant="cardTitle">{STUDENT.name}</T>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={photoUri ? "Change profile photo" : "Add profile photo"}
+              onPress={() => editPhoto(!!photoUri)}
+              hitSlop={6}
+            >
+              <Avatar
+                size={64}
+                backgroundColor={colors.primaryFixed}
+                fallback={
+                  <T variant="cardTitle" color={colors.primaryDeep} style={{ fontFamily: fonts.bold }}>
+                    {initials}
+                  </T>
+                }
+              />
+              <View style={styles.photoBadge}>
+                <Icon name="photo-camera" size={13} color={colors.onPrimary} />
+              </View>
             </Pressable>
+            <View style={{ flex: 1, gap: 2 }}>
+              <Pressable onLongPress={openDemoMenu} delayLongPress={1000} accessibilityRole="text">
+                <T variant="cardTitle">{STUDENT.name}</T>
+              </Pressable>
+              <Pressable accessibilityRole="button" onPress={() => editPhoto(!!photoUri)} hitSlop={8} style={styles.photoLink}>
+                <T variant="caption" color={colors.primary} style={{ fontFamily: fonts.semibold }}>
+                  {photoUri ? "Change photo" : "Add a photo"}
+                </T>
+              </Pressable>
+            </View>
           </View>
 
           <View style={styles.list}>
@@ -73,6 +96,7 @@ export default function Profile() {
             <Pressable
               accessibilityRole="button"
               onPress={() => {
+                removeProfilePhoto();
                 signOut();
                 if (router.canDismiss()) router.dismissAll();
                 router.replace("/welcome");
@@ -89,6 +113,25 @@ export default function Profile() {
       </ScrollView>
     </View>
   );
+}
+
+async function takeOrChoose(source: PhotoSource) {
+  const result = await pickProfilePhoto(source);
+  if (result === "denied") {
+    Alert.alert("Camera is off", "Allow camera access for SyllaByte in Settings to take a photo, or choose one from your library.");
+  } else if (result === "unavailable") {
+    Alert.alert(source === "camera" ? "No camera available" : "Couldn't open your photos", "Try the other option.");
+  }
+}
+
+/** Profile photo: take one, choose one, or (when there is one) remove it. */
+function editPhoto(hasPhoto: boolean) {
+  Alert.alert("Profile photo", undefined, [
+    { text: "Take photo", onPress: () => void takeOrChoose("camera") },
+    { text: "Choose from library", onPress: () => void takeOrChoose("library") },
+    ...(hasPhoto ? [{ text: "Remove photo", style: "destructive" as const, onPress: removeProfilePhoto }] : []),
+    { text: "Cancel", style: "cancel" as const },
+  ]);
 }
 
 /**
@@ -153,7 +196,20 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: space.gutter, paddingTop: 8 },
   card: { backgroundColor: colors.surfaceContainerLowest, borderRadius: radius.card, overflow: "hidden", ...shadow.card },
   identity: { flexDirection: "row", alignItems: "center", gap: 12, padding: 16, backgroundColor: colors.surfaceContainerLow },
-  avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.primaryFixed, alignItems: "center", justifyContent: "center" },
+  photoBadge: {
+    position: "absolute",
+    right: -2,
+    bottom: -2,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: colors.primary,
+    borderWidth: 2,
+    borderColor: colors.surfaceContainerLow,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  photoLink: { alignSelf: "flex-start", minHeight: 24, justifyContent: "center" },
   list: { padding: 16, gap: 4 },
   group: { textTransform: "uppercase", letterSpacing: 1.6, paddingHorizontal: 8, paddingTop: 10, paddingBottom: 4 },
   row: { minHeight: 48, paddingHorizontal: 12, borderRadius: radius.lg, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },

@@ -29,7 +29,14 @@
       "expo-status-bar",
       "expo-font",
       "expo-video",
-      "expo-splash-screen"
+      "expo-splash-screen",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "SyllaByte uses your photos so you can choose a profile picture.",
+          "cameraPermission": "SyllaByte uses the camera so you can take a profile picture."
+        }
+      ]
     ],
     "scheme": "syllabyte",
     "experiments": {
