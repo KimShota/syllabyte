@@ -7,6 +7,7 @@
  */
 import { FIX } from "@syllabyte/core/fixtures";
 import type { KuEntry, Video } from "@syllabyte/core/types";
+import { mediaUrl } from "./media";
 import type { CourseDef, CourseStub, Ku, LectureDef, LectureSectionDef, Scene, TranscriptLine } from "./types";
 
 /** the length the stand-in frame plays for when a KU has no video yet */
@@ -91,6 +92,7 @@ export const KUS: Record<string, Ku> = Object.fromEntries(
         shortTitle: k.short_title,
         lectureN: k.lecture_n,
         videoId: video ? video.id : null,
+        videoUri: video ? mediaUrl(video.video_url) : undefined,
         slides: slideSpan(k, video),
         durationS: video?.duration_s ?? STAND_IN_S,
         scene: SCENES[k.id] ?? statement(lectureTitle(k.lecture_n), k.short_title, []),
