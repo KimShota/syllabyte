@@ -51,5 +51,6 @@ Files are in `deploy/`.
 4. **Logs:** `journalctl -u syllabyte -f`. In test mode (no `RESEND_API_KEY`) the sign-in codes appear there.
 5. **Database:** `/var/lib/syllabyte/syllabyte.db` (plus `-wal` and `-shm` files while running).
 
-Test mode serves plain HTTP on port 80 (Caddyfile `:80`). For real students, set the domain in the Caddyfile and
-`NODE_ENV=production`, `RESEND_API_KEY` and `MAIL_FROM` in `/etc/syllabyte/env`.
+The server is at **https://api.syllabyte.app** (Cloudflare DNS `A` record `api` -> the droplet, "DNS only"; Caddy gets
+the certificate by itself). It is still in test mode: with no `RESEND_API_KEY` the sign-in codes are printed in the log.
+For real students set `NODE_ENV=production`, `RESEND_API_KEY` and `MAIL_FROM` in `/etc/syllabyte/env`.

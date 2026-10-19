@@ -1,12 +1,4 @@
-# Until the domain exists: plain HTTP on port 80, for testing only (phones' production builds refuse HTTP).
-:80 {
+# Caddy gets and renews the HTTPS certificate for this name by itself (the A record must point at this droplet).
+api.syllabyte.app {
 	reverse_proxy 127.0.0.1:8788
 }
-
-# With a domain (point its DNS A record at the droplet first), replace the block above with:
-#
-# api.example.com {
-# 	reverse_proxy 127.0.0.1:8788
-# }
-#
-# Caddy then gets and renews the HTTPS certificate by itself.

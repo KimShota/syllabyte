@@ -61,8 +61,10 @@ condition, week and code), the researcher CSV. 20 tests, including a whole basel
 
 DigitalOcean droplet `134.209.54.77` (San Francisco SFO2, Ubuntu 24.04, 1 GB, weekly backups): Node 24, Caddy on
 port 80, the server under systemd, a firewall (SSH/80/443), swap, automatic security updates. Files: `apps/server/deploy/`
-(see the README). **Test mode:** plain HTTP and sign-in codes printed to the log, so the phone's production builds
-cannot use it yet. Still needed for real students: a domain (HTTPS, and Resend's sender), the Resend key, the nightly
+(see the README). The domain `syllabyte.app` is bought (Cloudflare, $8.20 the first year, $14.20 a year to renew,
+auto-renew off) and the server answers at **https://api.syllabyte.app** with a valid certificate.
+**Still test mode:** sign-in codes are printed to the log, not emailed. Still needed for real students: Resend (its
+DNS records go on `syllabyte.app`) and the key in `/etc/syllabyte/env` with `NODE_ENV=production`, the nightly
 database copy to R2, and the professor's OK to host the course content (the server holds the slides' text and the
 question bank, the same files the phone app bundles).
 
