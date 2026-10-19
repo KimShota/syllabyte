@@ -35,3 +35,21 @@ npm run allowlist -- add you@nyu.edu student && npm run dev
 EXPO_PUBLIC_API_BASE=http://localhost:8788 npx expo start --ios
 ```
 The sign-in code appears in terminal 1. See `apps/mobile/src/data/backend.ts` for the switch.
+
+## Deploying (DigitalOcean droplet)
+
+Files are in `deploy/`.
+
+1. **Once, on a fresh Ubuntu 24.04 droplet:** `scp deploy/setup.sh root@<ip>:/root/ && ssh root@<ip> bash /root/setup.sh`.
+   It installs Node 24 and Caddy, adds 1 GB of swap, creates the `syllabyte` user, a firewall (SSH, 80, 443),
+   automatic security updates, and `/etc/syllabyte/env` with a random `SYLLABYTE_SECRET`.
+2. **Each release, from your laptop:** `apps/server/deploy/deploy.sh root@<ip>`. It copies `apps/server` and
+   `packages/core` (including the gitignored `fixtures/`, which the server needs), runs `npm ci`, restarts the service
+   and checks `/api/health`.
+3. **Allowlist a student:** `ssh root@<ip>`, then `cd /opt/syllabyte/apps/server && set -a && . /etc/syllabyte/env && set +a &&
+   sudo -u syllabyte -E env HOME=/var/lib/syllabyte npm run allowlist -- add student@nyu.edu`.
+4. **Logs:** `journalctl -u syllabyte -f`. In test mode (no `RESEND_API_KEY`) the sign-in codes appear there.
+5. **Database:** `/var/lib/syllabyte/syllabyte.db` (plus `-wal` and `-shm` files while running).
+
+Test mode serves plain HTTP on port 80 (Caddyfile `:80`). For real students, set the domain in the Caddyfile and
+`NODE_ENV=production`, `RESEND_API_KEY` and `MAIL_FROM` in `/etc/syllabyte/env`.

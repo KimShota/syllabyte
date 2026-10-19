@@ -1,0 +1,21 @@
+[Unit]
+Description=SyllaByte server
+After=network.target
+
+[Service]
+User=syllabyte
+Group=syllabyte
+WorkingDirectory=/opt/syllabyte/apps/server
+EnvironmentFile=/etc/syllabyte/env
+ExecStart=/usr/bin/npm run start
+Restart=always
+RestartSec=3
+# the server only writes to its data folder
+ProtectSystem=strict
+ReadWritePaths=/var/lib/syllabyte
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

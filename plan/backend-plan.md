@@ -9,7 +9,7 @@ Status: **slices 1 and 2 built** on branch `backend` (2026-10-19): `apps/server`
   `packages/core` and are tested; porting them to Python would mean two copies of the study's rules that must be kept
   in step. The server calls the same `mockApi`, so the web demo, the phone and the server can never disagree.
   The Python video pipeline stays as it is; the plan's `POST /admin/variants` registration (§7.6) is still to come.
-- **SQLite** (Node's built-in `node:sqlite`, one file in WAL mode, nightly copy to S3) instead of Mongo: a pilot is a
+- **SQLite** (Node's built-in `node:sqlite`, one file in WAL mode, nightly copy to off-machine storage) instead of Mongo: a pilot is a
   few dozen students, each with one saved document, and there is nothing else to run. Behind `src/db.ts` and
   `StateRunner`, so Postgres or Mongo can replace it later without touching the rules.
 - **The server is authoritative.** The phone's `Api` becomes HTTP calls: `POST /api/rpc/<method>` with `{ args }`.
@@ -22,6 +22,13 @@ Status: **slices 1 and 2 built** on branch `backend` (2026-10-19): `apps/server`
   server answers the same for everyone. Taking an email off the allowlist ends its sessions.
 - **Research data is keyed by a pseudonym** (`S-XXXXX`, assigned at first sign-in). The email-to-code link lives only
   in the `users` table. Exports use the code and never contain an email.
+- **Hosting (2026-10-19): DigitalOcean for the server, Cloudflare R2 for videos and slides.** One droplet (Node 24,
+  systemd, Caddy for HTTPS) with the SQLite file on its disk, droplet backups on, plus a nightly copy off the machine.
+  R2 has a free tier and no download fees, so video traffic cannot cause a surprise bill; the server hands the phone
+  signed R2 links. Nothing provider-specific is used (plain Node, the S3 protocol), so moving to AWS or Google Cloud
+  later is a copy of the database file and a bucket. The real scaling step is SQLite to Postgres, not the host.
+  Ask the IRB / NYU IT whether student emails must stay in an NYU-approved or particular-region service; that would
+  override this choice.
 - The researcher CSV (`GET /api/research/study.csv`) covers every participant who consented, researchers only;
   the per-student `exportStudyCsv` method is not callable over HTTP.
 
@@ -50,13 +57,24 @@ condition, week and code), the researcher CSV. 20 tests, including a whole basel
   baseline (12 answers, a reload in the middle resumed at the right question), the stored state, and the unreachable-server
   message. Not checked: typing on the iOS simulator (no tap tool) and a real phone.
 
+## Deployed for testing (2026-10-19)
+
+DigitalOcean droplet `134.209.54.77` (San Francisco SFO2, Ubuntu 24.04, 1 GB, weekly backups): Node 24, Caddy on
+port 80, the server under systemd, a firewall (SSH/80/443), swap, automatic security updates. Files: `apps/server/deploy/`
+(see the README). **Test mode:** plain HTTP and sign-in codes printed to the log, so the phone's production builds
+cannot use it yet. Still needed for real students: a domain (HTTPS, and Resend's sender), the Resend key, the nightly
+database copy to R2, and the professor's OK to host the course content (the server holds the slides' text and the
+question bank, the same files the phone app bundles).
+
 ## Next slices
 
 1. **Facilitator tool** for the study timeline on the server (a researcher-only "move this student's clock"), and
    whether the phone's local-only `setupDone` (first-run screens) should live on the server.
 2. **Videos and slides from storage:** serve rendered videos by signed URL (replaces `npm run media`); `POST
    /admin/variants` for the pipeline. Blocked on the professor's OK to host course material (plan §15.1).
-3. **Deployment:** one VM, Caddy for HTTPS, nightly database copy, `SYLLABYTE_SECRET` and `RESEND_API_KEY` set.
+3. **Deployment:** one DigitalOcean droplet, Caddy for HTTPS, nightly database copy off the machine,
+   `SYLLABYTE_SECRET` and `RESEND_API_KEY` set (Resend needs a domain with DNS records); videos in a Cloudflare R2
+   bucket.
 4. **Hardening:** the account-deletion / withdrawal paths (IRB), rate limits by IP, the event log moved out of the
    state document once it is large, instructor endpoints (§6.1).
 
