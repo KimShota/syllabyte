@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import type { DeckResult } from "@syllabyte/core/logic/assemble";
+import type { LectureStateView as LectureState, UploadView } from "@syllabyte/core/api/types";
 import type { Courses, DeckRow, LectureRow } from "./courses";
+
+export type { LectureState, UploadView };
 import type { Db } from "./db";
 
 /**
@@ -96,32 +99,6 @@ export interface ClaimedJob {
   payload: Record<string, unknown>;
   /** the job's file, for GET /api/worker/jobs/:id/file */
   file_name: string | null;
-}
-
-/** One row of the review screen (U13). */
-export interface UploadView {
-  id: string;
-  file_name: string;
-  status: DeckUploadRow["status"];
-  outcome: DeckUploadRow["outcome"];
-  error: string | null;
-  deck: { id: string; first_title: string; page_count: number; status: DeckRow["status"] } | null;
-  /** the deck's lecture when it is already placed (by whoever uploaded it first): fixed */
-  placed_lecture_n: number | null;
-  /** the suggested lecture for an unplaced deck; null when nothing matched */
-  suggested_lecture_n: number | null;
-  /** false: the suggestion is a guess the student must check (flagged) */
-  suggestion_sure: boolean;
-  /** this student may choose the lecture (the deck is not placed yet) */
-  can_place: boolean;
-}
-
-export interface LectureState {
-  n: number;
-  title: string;
-  week: number | null;
-  state: "waiting" | "analyzing" | "ready" | "failed";
-  decks: { id: string; file_name: string; status: DeckRow["status"] }[];
 }
 
 const STOP = new Set(["the", "and", "for", "with", "from", "into", "lecture", "week", "slides", "slide", "class", "part", "notes", "pdf", "pptx", "intro"]);

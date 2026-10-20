@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { ApiError, createBackend, createEventQueue } from "@syllabyte/core/api/remote";
 import type { ClientEvent } from "@syllabyte/core/events";
+import { work } from "./fakeWorker";
 import { makeServer } from "./helpers";
 
 /** The phone's backend client wired straight to the server app, no network. */
@@ -188,3 +189,43 @@ describe("the event queue", () => {
     expect(q.size()).toBe(0);
   });
 });
+
+describe("the phone's course calls", () => {
+  const file = (name: string, text: string) => ({ name, uri: `file:///${name}`, file: new Blob([text]) });
+
+  it("adds a course from the syllabus, confirms its lectures, uploads slides and places them", async () => {
+    const s = makeServer();
+    const p = phone(s);
+    await p.signIn("ann@nyu.edu");
+    expect(await p.backend.courses.mine()).toEqual({ status: "none" });
+
+    await p.backend.courses.create(file("syllabus.pdf", "Syllabus of CS-UH 2219E"));
+    expect(await p.backend.courses.mine()).toEqual({ status: "reading" });
+    await work(s);
+    const mine = await p.backend.courses.mine();
+    if (mine.status !== "ready") throw new Error("no course");
+    expect(mine.course.is_creator).toBe(true);
+    const confirmed = await p.backend.courses.confirmLectures(mine.course.id, [{ n: 1, title: "Potential outcomes", week: 1 }]);
+    expect(confirmed.status === "ready" && confirmed.course.lectures.map((l) => l.title)).toEqual(["Potential outcomes"]);
+
+    const changedBefore = p.log.changed;
+    const added = await p.backend.courses.addSlides(mine.course.id, [file("lecture1.pdf", "Potential outcomes intro\nmore")]);
+    expect(added.map((u) => u.status)).toEqual(["reading"]);
+    expect(p.log.changed).toBeGreaterThan(changedBefore);
+    await work(s);
+    const [row] = await p.backend.courses.uploads(mine.course.id);
+    expect(row).toMatchObject({ suggested_lecture_n: 1, can_place: true });
+    await p.backend.courses.confirmUploads(mine.course.id, [{ upload_id: row.id, lecture_n: 1 }]);
+    await work(s);
+    const after = await p.backend.courses.mine();
+    expect(after.status === "ready" && after.course.lectures[0].state).toBe("ready");
+  });
+
+  it("passes the server's message on", async () => {
+    const s = makeServer();
+    const p = phone(s);
+    await p.signIn("ann@nyu.edu");
+    await expect(p.backend.courses.create(file("notes.txt", "x"))).rejects.toThrow(/PDF or Word/);
+  });
+});
+

@@ -128,3 +128,66 @@ export interface Api {
   exportMyData(): Promise<Record<string, unknown>>;
   resetModel(): Promise<void>;
 }
+
+// ---------------------------------------------------------------- uploads (plan/slide-uploads-plan.md)
+
+/** A lecture of an uploaded course and how far its slides are (U14). */
+export interface LectureStateView {
+  n: number;
+  title: string;
+  week: number | null;
+  state: "waiting" | "analyzing" | "ready" | "failed";
+  decks: { id: string; file_name: string; status: "unplaced" | "queued" | "processing" | "ready" | "failed" }[];
+}
+
+/** GET /api/courses/mine: no course yet, the syllabus being read (or failed), or the course. */
+export type MyCourseView =
+  | { status: "none" }
+  | { status: "reading" }
+  | { status: "failed"; error: string | null }
+  | {
+      status: "ready";
+      course: {
+        id: string;
+        code: string;
+        name: string;
+        schedule_found: boolean;
+        lectures_confirmed: boolean;
+        /** this student added the course, so they confirm its lecture list (U11) */
+        is_creator: boolean;
+        lectures: LectureStateView[];
+      };
+    };
+
+/** One row of the review screen (U13). */
+export interface UploadView {
+  id: string;
+  file_name: string;
+  status: "reading" | "read" | "confirmed" | "failed";
+  outcome: "new" | "existing" | "extra_part" | "updated_version" | "over_cap" | "unreadable" | null;
+  error: string | null;
+  deck: { id: string; first_title: string; page_count: number; status: LectureStateView["decks"][number]["status"] } | null;
+  /** the deck's lecture when someone already placed it: fixed */
+  placed_lecture_n: number | null;
+  suggested_lecture_n: number | null;
+  /** false: a guess the student must check */
+  suggestion_sure: boolean;
+  /** the deck is not placed yet, so this student chooses its lecture */
+  can_place: boolean;
+}
+
+export interface UploadChoice {
+  upload_id: string;
+  lecture_n?: number;
+  /** asked when the lecture already has slides (U12) */
+  kind?: "extra_part" | "updated_version";
+}
+
+/** A file picked on the phone (expo-document-picker's asset) or in a browser (with its `file`). */
+export interface UploadFile {
+  name: string;
+  uri: string;
+  mimeType?: string | null;
+  file?: Blob | null;
+}
+

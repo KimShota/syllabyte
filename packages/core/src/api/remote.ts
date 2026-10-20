@@ -1,5 +1,5 @@
 import type { ClientEvent } from "../events";
-import type { Api } from "./types";
+import type { Api, MyCourseView, UploadChoice, UploadFile, UploadView } from "./types";
 
 /**
  * The `Api` over HTTP to apps/server (plan/backend-plan.md): every method is `POST /api/rpc/<method>` with
@@ -74,6 +74,56 @@ export function createBackend(o: BackendOptions) {
     return data;
   }
 
+  /** GET with the session; for the course routes. */
+  async function get(path: string): Promise<Record<string, unknown>> {
+    const token = o.token();
+    if (!token) throw new ApiError("Sign in to continue", 401);
+    const res = await doFetch(`${o.base}${path}`, { headers: { Authorization: `Bearer ${token}`, "X-Visit": o.visit() } }).catch(() => null);
+    if (!res) {
+      o.onConnection(false);
+      throw new ApiError("Can't reach the server", 0);
+    }
+    o.onConnection(true);
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (res.status === 401) {
+      o.onUnauthorized();
+      throw new ApiError("Sign in again", 401);
+    }
+    if (!res.ok) throw new ApiError(typeof data.error === "string" ? data.error : `The server said ${res.status}`, res.status);
+    return data;
+  }
+
+  /** Files as multipart/form-data under `field`. On a phone a file is its { uri, name, type }; in a browser, its Blob. */
+  async function upload(path: string, field: string, files: UploadFile[]): Promise<Record<string, unknown>> {
+    const token = o.token();
+    if (!token) throw new ApiError("Sign in to continue", 401);
+    const form = new FormData();
+    for (const f of files) {
+      if (f.file) form.append(field, f.file, f.name);
+      else form.append(field, { uri: f.uri, name: f.name, type: f.mimeType ?? "application/octet-stream" } as unknown as Blob);
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 180_000);
+    let res: Response;
+    try {
+      res = await doFetch(`${o.base}${path}`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "X-Visit": o.visit() }, body: form, signal: controller.signal });
+    } catch {
+      o.onConnection(false);
+      throw new ApiError("Can't reach the server", 0);
+    } finally {
+      clearTimeout(timer);
+    }
+    o.onConnection(true);
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (res.status === 401) {
+      o.onUnauthorized();
+      throw new ApiError("Sign in again", 401);
+    }
+    if (!res.ok) throw new ApiError(typeof data.error === "string" ? data.error : `The server said ${res.status}`, res.status);
+    o.onChanged();
+    return data;
+  }
+
   const api = new Proxy({} as Api, {
     get: (_t, method) => {
       if (typeof method !== "string" || method === "then") return undefined;
@@ -112,8 +162,30 @@ export function createBackend(o: BackendOptions) {
     async sendEvents(events: ClientEvent[]): Promise<void> {
       await request("/api/events", { events }, true);
     },
+    /** The student's uploaded course and its slides (plan/slide-uploads-plan.md). */
+    courses: {
+      mine: async (): Promise<MyCourseView> => (await get("/api/courses/mine")) as unknown as MyCourseView,
+      /** the syllabus: the course is created or joined once the server has read it (poll `mine`) */
+      create: async (syllabus: UploadFile): Promise<{ upload_id: string }> => (await upload("/api/courses", "syllabus", [syllabus])) as unknown as { upload_id: string },
+      /** the creator confirms the lecture list, as read or edited */
+      confirmLectures: async (courseId: string, lectures?: { n: number; title: string; week: number | null }[]): Promise<MyCourseView> => {
+        const out = (await request(`/api/courses/${courseId}/lectures`, lectures ? { lectures } : {}, true)) as unknown as MyCourseView;
+        o.onChanged();
+        return out;
+      },
+      addSlides: async (courseId: string, files: UploadFile[]): Promise<UploadView[]> =>
+        ((await upload(`/api/courses/${courseId}/slides`, "files", files)) as unknown as { uploads: UploadView[] }).uploads,
+      uploads: async (courseId: string): Promise<UploadView[]> => ((await get(`/api/courses/${courseId}/uploads`)) as unknown as { uploads: UploadView[] }).uploads,
+      confirmUploads: async (courseId: string, choices: UploadChoice[]): Promise<UploadView[]> => {
+        const out = ((await request(`/api/courses/${courseId}/uploads/confirm`, { choices }, true)) as unknown as { uploads: UploadView[] }).uploads;
+        o.onChanged();
+        return out;
+      },
+    },
   };
 }
+
+export type Backend = ReturnType<typeof createBackend>;
 
 /**
  * Collects UI events and sends them in batches: when `max` are waiting, or `delayMs` after the first one. A batch
