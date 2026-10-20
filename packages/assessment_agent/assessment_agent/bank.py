@@ -98,10 +98,11 @@ def lecture_topic_id(lecture_n: int) -> str:
     return f"lecture-{lecture_n}"
 
 
-def assemble_ku_items(ku_id: str, topic_id: str, gen: KuBankGen) -> list[Item]:
-    """The KU's three bank items, difficulty set and ordered, answers not yet balanced."""
+def assemble_ku_items(ku_id: str, topic_id: str, gen: KuBankGen, deck_name: str = "slides") -> list[Item]:
+    """The KU's three bank items, difficulty set and ordered, answers not yet balanced. `deck_name`: the deck the
+    slide numbers refer to (the dev course has one, "slides")."""
     betas = order_tiers({t: tier_beta(t, gen.ku_difficulty) for t in TIERS})
-    refs = [SlideRef(deck_name="slides", slide_number=n) for n in gen.slides]
+    refs = [SlideRef(deck_name=deck_name, slide_number=n) for n in gen.slides]
     items = []
     for t in TIERS:
         m: BankMCQ = getattr(gen, t)
