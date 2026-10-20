@@ -37,7 +37,7 @@ export interface DeckRow {
   lecture_id: string | null;
   content_key: string;
   file_name: string;
-  pdf_path: string;
+  file_path: string;
   parse_json: string;
   status: "unplaced" | "queued" | "processing" | "ready" | "failed";
   result_json: string | null;
@@ -112,8 +112,17 @@ export class Courses {
     return id;
   }
 
+  /**
+   * The course's decks in course order: by lecture, then when they were placed (part 1 before part 2), then id, so the
+   * order never depends on timing ties. Unplaced decks come last.
+   */
   decks(courseId: string): DeckRow[] {
-    return this.db.prepare("SELECT * FROM decks WHERE course_id = ? ORDER BY created_at").all(courseId) as unknown as DeckRow[];
+    return this.db
+      .prepare(
+        `SELECT d.* FROM decks d LEFT JOIN lectures l ON l.id = d.lecture_id
+         WHERE d.course_id = ? ORDER BY l.n IS NULL, l.n, d.placed_at, d.created_at, d.id`,
+      )
+      .all(courseId) as unknown as DeckRow[];
   }
 
   deck(deckId: string): DeckRow | null {

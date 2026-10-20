@@ -35,7 +35,7 @@ function seedCourse(db: Db, courses: Courses, members: string[]) {
   courses.setLectures(id, [{ n: 1, title: "First", week: 1 }, { n: 2, title: "Second", week: 2 }], "syllabus");
   const lecture1 = courses.lectures(id)[0].id;
   db.prepare(
-    "INSERT INTO decks (id, course_id, lecture_id, content_key, file_name, pdf_path, parse_json, status, first_user_id, created_at) VALUES ('d1', ?, ?, 'c1', 'one.pdf', 'p', '{}', 'processing', ?, 0)",
+    "INSERT INTO decks (id, course_id, lecture_id, content_key, file_name, file_path, parse_json, status, first_user_id, created_at) VALUES ('d1', ?, ?, 'c1', 'one.pdf', 'p', '{}', 'processing', ?, 0)",
   ).run(id, lecture1, creator);
   for (const m of members) courses.addMember(id, userId(db, m));
   return id;
@@ -82,7 +82,7 @@ describe("a student's own course", () => {
 
     const lecture2 = s.courses.lectures(id)[1].id;
     s.db.prepare(
-      "INSERT INTO decks (id, course_id, lecture_id, content_key, file_name, pdf_path, parse_json, status, first_user_id, created_at) VALUES ('d2', ?, ?, 'c2', 'two.pdf', 'p', '{}', 'processing', ?, 1)",
+      "INSERT INTO decks (id, course_id, lecture_id, content_key, file_name, file_path, parse_json, status, first_user_id, created_at) VALUES ('d2', ?, ?, 'c2', 'two.pdf', 'p', '{}', 'processing', ?, 1)",
     ).run(id, lecture2, userId(s.db, "ann@nyu.edu"));
     s.courses.setDeckResult("d2", result(["ku-z"]));
     expect(kuIds(await ann.rpc<CourseMap>("getCourseMap"))).toEqual(["ku-x", "ku-z"]);

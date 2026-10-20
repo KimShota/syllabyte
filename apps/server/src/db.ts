@@ -97,7 +97,8 @@ CREATE TABLE IF NOT EXISTS decks (
   lecture_id    TEXT REFERENCES lectures (id),
   content_key   TEXT NOT NULL,
   file_name     TEXT NOT NULL,
-  pdf_path      TEXT NOT NULL,
+  -- the uploaded file as it came (a PowerPoint is converted on the worker each time it is read)
+  file_path     TEXT NOT NULL,
   -- the parse: page count, each page's text, the first page's title
   parse_json    TEXT NOT NULL,
   status        TEXT NOT NULL CHECK (status IN ('unplaced', 'queued', 'processing', 'ready', 'failed')),
@@ -133,11 +134,13 @@ CREATE TABLE IF NOT EXISTS ku_links (
   PRIMARY KEY (course_id, ku_id, prereq_id)
 );
 -- Work for the Python worker: kind 'syllabus' (read it, then the lecture list), 'deck_read' (convert and parse),
--- 'deck' (KUs and items), 'link_pass' (U7). The worker claims them over HTTP.
+-- 'deck' (KUs and items), 'link_pass' (U7). The worker claims them over HTTP (src/uploads.ts).
 CREATE TABLE IF NOT EXISTS jobs (
   id          TEXT PRIMARY KEY,
   kind        TEXT NOT NULL CHECK (kind IN ('syllabus', 'deck_read', 'deck', 'link_pass')),
+  -- the syllabus upload, deck upload or deck it works on
   target_id   TEXT NOT NULL,
+  course_id   TEXT,
   status      TEXT NOT NULL CHECK (status IN ('queued', 'claimed', 'done', 'failed')),
   priority    INTEGER NOT NULL DEFAULT 0,
   attempts    INTEGER NOT NULL DEFAULT 0,

@@ -4,14 +4,20 @@ import { Courses } from "../src/courses";
 import { openDb, type Db, type Role } from "../src/db";
 import { memoryMailer } from "../src/mail";
 import { StateRunner } from "../src/runner";
+import { DEFAULT_CAPS, Uploads, type Caps } from "../src/uploads";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 
-export function makeServer(opts: { db?: Db; clock?: () => number; semesterStart?: number } = {}) {
+export const WORKER_TOKEN = "worker-test-token";
+
+export function makeServer(opts: { db?: Db; clock?: () => number; semesterStart?: number; caps?: Partial<Caps> } = {}) {
   const db = opts.db ?? openDb(":memory:");
   const mailer = memoryMailer();
   const auth = new Auth(db, mailer, "test-secret", opts.clock);
   const courses = new Courses(db);
   const runner = new StateRunner(db, { semesterStart: opts.semesterStart, courseFor: (id) => courses.fixturesFor(id) });
-  const app = createApp({ db, auth, runner, courses });
+  const uploads = new Uploads(db, courses, mkdtempSync(tmpdir() + "/syllabyte-files-"), { ...DEFAULT_CAPS, ...opts.caps }, opts.clock);
+  const app = createApp({ db, auth, runner, courses, uploads, workerToken: WORKER_TOKEN });
   const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
     app.request(path, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
 
@@ -37,5 +43,10 @@ export function makeServer(opts: { db?: Db; clock?: () => number; semesterStart?
       get: (path: string) => app.request(path, { headers: authz }),
     };
   }
-  return { app, db, auth, courses, mailer, post, signIn };
+  /** The worker's calls, with its token. */
+  const worker = {
+    post: (path: string, body: unknown) => post(path, body, { Authorization: `Bearer ${WORKER_TOKEN}` }),
+    get: (path: string) => app.request(path, { headers: { Authorization: `Bearer ${WORKER_TOKEN}` } }),
+  };
+  return { app, db, auth, courses, uploads, worker, mailer, post, signIn };
 }

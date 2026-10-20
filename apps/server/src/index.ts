@@ -6,6 +6,7 @@ import { Courses } from "./courses";
 import { openDb } from "./db";
 import { consoleMailer, resendMailer } from "./mail";
 import { StateRunner } from "./runner";
+import { Uploads } from "./uploads";
 
 const production = process.env.NODE_ENV === "production";
 const secret = process.env.SYLLABYTE_SECRET ?? (production ? "" : randomBytes(16).toString("hex"));
@@ -25,7 +26,8 @@ const semesterStart = process.env.SYLLABYTE_SEMESTER_START ? new Date(process.en
 const auth = new Auth(db, mailer, secret);
 const courses = new Courses(db);
 const runner = new StateRunner(db, { semesterStart, courseFor: (id) => courses.fixturesFor(id) });
-const app = createApp({ db, auth, runner, courses, corsOrigin: process.env.SYLLABYTE_CORS_ORIGIN });
+const uploads = new Uploads(db, courses, process.env.SYLLABYTE_FILES ?? "data/files");
+const app = createApp({ db, auth, runner, courses, uploads, workerToken: process.env.SYLLABYTE_WORKER_TOKEN, corsOrigin: process.env.SYLLABYTE_CORS_ORIGIN });
 
 const port = Number(process.env.PORT ?? 8788);
 serve({ fetch: app.fetch, port, hostname: "0.0.0.0" }, () => console.log(`SyllaByte server on http://0.0.0.0:${port}`));
