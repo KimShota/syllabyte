@@ -7,7 +7,7 @@ Responsibilities:
     resolution — ANTHROPIC_AUTH_TOKEN / `ant auth login` profile — if unset).
     ANTHROPIC_KEY_NAME names which environment variable holds the key to use
     (default ANTHROPIC_API_KEY), so a second key can be switched on in .env.
-  - Wrap client.messages.parse() for structured (Pydantic) outputs and
+  - Send structured (Pydantic) outputs the way client.messages.parse() does and
     client.messages.create() for plain text (used for Manim code generation,
     which doesn't fit a JSON schema).
   - Build `document` (PDF) and `image` (PNG) content blocks from local paths.
@@ -29,8 +29,9 @@ from pathlib import Path
 from typing import TypeVar
 
 import anthropic
+from anthropic.lib._parse._transform import transform_schema
 from dotenv import load_dotenv
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from syllabyte_common.models import LLMCallRecord, RunManifest
 
@@ -266,36 +267,31 @@ def structured(
         )
         return message.parsed
 
+    # The same request messages.parse() sends, but streamed (a large max_tokens is refused without streaming) and
+    # validated here, so a response cut off at max_tokens is recorded and reported as that, not as broken JSON.
     kwargs: dict = {
         "model": model,
         "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": content}],
-        "output_format": schema,
+        "output_config": {"format": {"type": "json_schema", "schema": transform_schema(TypeAdapter(schema).json_schema())}},
     }
     if system is not None:
         kwargs["system"] = system
 
     start = time.monotonic()
-    try:
-        response = get_client().messages.parse(**kwargs)
-    except anthropic.NotFoundError:
-        raise
-    except anthropic.RateLimitError:
-        raise
-    except anthropic.APIStatusError:
-        raise
-    except anthropic.APIConnectionError:
-        raise
+    with get_client().messages.stream(**kwargs) as stream:
+        response = stream.get_final_message()
     wall_seconds = time.monotonic() - start
-
-    if response.stop_reason == "refusal":
-        raise RuntimeError(f"[{stage}] request refused by the model (ku={ku_id})")
 
     _record_usage(
         manifest, stage=stage, ku_id=ku_id, model=model, usage=response.usage,
         wall_seconds=wall_seconds,
     )
-    return response.parsed_output
+    if response.stop_reason == "refusal":
+        raise RuntimeError(f"[{stage}] request refused by the model (ku={ku_id})")
+    if response.stop_reason == "max_tokens":
+        raise RuntimeError(f"[{stage}] the response was cut off at max_tokens={max_tokens} (ku={ku_id}); raise max_tokens")
+    return schema.model_validate_json("".join(block.text for block in response.content if block.type == "text"))
 
 
 def text(

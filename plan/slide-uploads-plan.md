@@ -1,7 +1,60 @@
 # Slide uploads (all at once, or lecture by lecture): plan
 
 Branch: `slide-uploads` (from `main` at a09aa7b). Status: **decisions settled (2026-10-20); steps 1–7 built the same
-day (see "Built" at the end); step 8, the one real run with LLM spend, waits for approval.**
+day (see "Built" at the end). A paid trial on L1–L3 of a real course (2026-10-20) led to the revision below
+(2026-10-21), which replaces U1, U2, U9, U10, U12 and parts of U11 and U13; it is being built.**
+
+## Revision (2026-10-21)
+
+**What the trial showed** (CS-UH 3253 Machine Learning: syllabus + 23 image-only PDF decks):
+- **The syllabus schedule drifts from what was taught after lecture 6** ("L7 - Classification (contd)…" is the
+  syllabus's lecture 7 "Clustering"; "L12 - Midterm Review" is not in the syllabus). Placing decks in the syllabus's
+  slots by the file name's number put 16 of 23 decks under the wrong title, marked sure.
+- **Neither file names nor covers can be relied on.** Every deck's cover is the same ("Machine Learning · Saurabh
+  Ray"), with no number or title; a file may be called `slides.pdf`.
+- **KUs and questions were good:** 17/7/10 KUs for L1–L3, cross-lecture prerequisites, every KU citing slides;
+  102 questions with answers balanced 34/34/34. $1.88 for three decks with Sonnet. One KU extraction was cut off at
+  max_tokens and passed on its retry (now: a higher limit, and a cut-off response is reported as such and costed).
+- **Most of the bank is never asked:** a check asked 4 questions per lecture, so L1's 51 questions would give one
+  student about 6. With students worldwide, most courses have one student and nothing is shared.
+
+| # | Decision (2026-10-21) | Replaces |
+|---|---|---|
+| V1 | **The decks are the lectures, in teaching order.** A **reader** (one cheap model call per deck, Sonnet) looks at the deck's content pages (a generic cover is skipped) and writes its title and a short summary of what it teaches. A **placement** call then orders the new decks among themselves and among the course's lectures, from those summaries, the syllabus's topics and the lectures already in the course. The file name is only a hint. The first uploader sees the suggested titles and order on the review screen, can fix them, and confirms. | U2, U13's file-name suggestion |
+| V2 | **One deck is one lecture.** Each new deck becomes its own lecture, normally the next one, earlier when its content clearly comes before an existing lecture. **An updated version** (most of its pages match a deck already in the course) is not processed: it is logged, and the student is told the slides are already in. No question about it is asked. | U1, U10, U12 |
+| V3 | **Only real lectures are shown.** The syllabus gives the course's name and code and topic hints for V1; its schedule is not a lecture list. The "Your lectures" setup screen goes; the app shows "N lectures so far" and an "Add the next lecture's slides" card. | U2, U11's lecture-list confirmation |
+| V4 | **Questions are written on demand** for a (KU, level), checked by the critic, and **saved** by the course's deck, so a later student with the same slides reuses the saved questions they have not answered before anything new is written. The next question is prepared while the student answers the current one. Questions already written (the trial's L1–L3) are kept as saved questions. Video checkpoint questions are written with the video. | The full 3-per-KU bank at processing |
+| V5 | **A precheck asks up to 10 questions on the lecture** (fewer when it has fewer KUs) **plus 2 review questions**, under the existing assessment rules (fixed length; "Not sure" counts toward the length, not the estimate; nothing asked twice; review goes to the least certain earlier lecture). Each question goes to the KU with the fewest answers from this student, ties to the KU that most later KUs build on, so important KUs come first and coverage spreads across the lecture. Its difficulty follows the student's current estimate for that lecture. | 4 + 2 (D8) |
+| V6 | **No separate baseline.** The first sitting is lecture 1's precheck; every lecture has its own precheck before its videos. Lectures not yet checked take a provisional level from everything answered so far (as today). | Week 0 baseline (D8, U9) |
+
+**Defaults taken (2026-10-21):** lecture ids stay stable when a deck is placed before an existing lecture (only the
+order changes, so recorded answers, levels and videos keep pointing at the right lecture); a lecture's first precheck
+question is written when its precheck card appears; when a question can't be written the student sees "Try again",
+and after repeated failures the sitting ends with the answers given; the demo course keeps its fixtures and
+baseline (its bank is complete), uploaded courses follow V4–V6.
+
+**Cost per course with one student** (estimate from the trial): KU extraction ≈ $0.15 per deck, the reader and
+placement ≈ $0.02 per deck, questions ≈ $0.025 each as asked (≈ 12 per lecture). The ML course: ≈ $4 KUs + ≈ $7
+questions over a semester, against ≈ $9 + KUs for the full bank; a second student with the same slides adds only the
+questions nobody has written yet.
+
+**Needs advisor sign-off (added):** dropping the Week 0 baseline (V6); longer prechecks (V5); questions written on
+demand instead of a bank reviewed in advance (V4: the critic still checks each one, but no person sees it before the
+student does). All stay inside the proposal's "a CAT before any video, per-KU readiness".
+
+**Build order (revision):**
+1. LLM call: a cut-off response is reported and costed (done); KU extraction max_tokens 32000 (done).
+2. Core: lecture order separate from lecture number (`position`); V5 precheck length and KU choice; V6 (uploaded
+   courses have no baseline); V4 selection that names the (KU, level) it needs when no saved question fits, and a
+   "preparing" state for the sitting.
+3. Python: the reader in the deck-read job; the placement job; the question job (one question, with critic); the deck
+   job without the bank; page keys for V2.
+4. Server: lectures created from confirmed decks with a position; placement jobs; review and confirm with titles and
+   order; updated-version detection; question jobs queued from what the student's sitting needs, with priority over
+   deck jobs; the lecture-list routes removed.
+5. App: no lecture-list screen; the review screen with titles and order; "Writing your next question…" in a sitting;
+   the course without syllabus slots.
+6. Checked with the stubbed worker end to end, then L4–L23 of the ML course for real (asks first).
 
 ## Why
 

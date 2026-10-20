@@ -75,7 +75,7 @@ def extract_deck_kus(
         content = [text_block(context + "\n\n" + _deck_as_text(deck))]
     out = structured(
         schema=UploadKUList, content=content, system=UPLOAD_SYSTEM, stage="extract_kus", model=model,
-        max_tokens=16000, manifest=manifest,
+        max_tokens=32000, manifest=manifest,
     )
     return clean_deck_kus(out.knowledge_units, deck, {k.id for k in earlier}, taken_ids)
 
