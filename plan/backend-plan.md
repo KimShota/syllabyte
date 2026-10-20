@@ -70,8 +70,9 @@ question bank, the same files the phone app bundles).
 
 ## Next slices
 
-1. **Facilitator tool** for the study timeline on the server (a researcher-only "move this student's clock"), and
-   whether the phone's local-only `setupDone` (first-run screens) should live on the server.
+1. ~~Facilitator tool~~ **built (2026-10-20):** `npm run facilitator` on the server and `POST /api/research/clock`
+   (see the server README). Still open: whether the phone's local-only `setupDone` (first-run screens) should live on
+   the server.
 2. **Videos and slides from storage:** serve rendered videos by signed URL (replaces `npm run media`); `POST
    /admin/variants` for the pipeline. Blocked on the professor's OK to host course material (plan §15.1).
 3. **Deployment:** one DigitalOcean droplet, Caddy for HTTPS, nightly database copy off the machine,
