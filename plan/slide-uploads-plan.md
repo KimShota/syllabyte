@@ -1,6 +1,7 @@
 # Slide uploads (all at once, or lecture by lecture): plan
 
-Branch: `slide-uploads` (from `main` at a09aa7b). Status: **decisions settled (2026-10-20); nothing built.**
+Branch: `slide-uploads` (from `main` at a09aa7b). Status: **decisions settled (2026-10-20); steps 1–7 built the same
+day (see "Built" at the end); step 8, the one real run with LLM spend, waits for approval.**
 
 ## Why
 
@@ -174,3 +175,40 @@ Each step its own commit, tests first where it is logic. No LLM spend without as
 - Hosting the worker (machine, queue, R2 for slides and videos), then push notifications ("Lecture 4 is ready").
 - Several courses per student (U4).
 - Handling a professor's updated deck properly (re-processing with KU mapping) instead of logging it (U12).
+
+## Built (2026-10-20)
+
+Commits on `slide-uploads`, each with tests: the core reads the course through a provider (`setFixtures`); course
+tables and `assembleCourse`; item writing moved into `assessment_agent`; the Python jobs (`ingestion_agent/uploads.py`,
+`upload_jobs.py`, `curriculum_alignment_agent/deck_kus.py`); the server's upload API and job queue
+(`apps/server/src/uploads.ts`); the worker (`ingestion_agent/worker.py`); the assessment changes (U9, U10, U18); the
+phone client and screens; the researcher's `npm run courses`.
+
+Checked: core 243 tests, server 76, Python 182 (+1 skipped without LibreOffice), phone 21 + typecheck + lint, web e2e
+108. The server tests include the key property (all decks at once and one at a time give the same course). End to end
+with the real server and the real Python worker (LLM stubbed): over HTTP with curl, and in the phone app's web build
+with Playwright (sign in, syllabus, lecture list, three decks at once, review, processing, then the baseline; a
+classmate joining with a deck already in the course and one nothing matched).
+
+**Where the build differs from the text above:**
+- **"First uploader" (U11) is the first student to confirm a deck's placement.** Anyone who uploaded the same slides
+  while they were still unplaced may place them; the first confirmation wins and fixes it for everyone.
+- **The baseline's lectures are fixed at its first answer** (`SittingState.lectures`), so slides processed mid-sitting
+  don't move its questions. The "no second check right after the baseline" rule uses those lectures.
+- **A placement suggestion waits for the worker to read the file** (the review screen shows "Reading…"). Lecture and
+  week numbers in the file name count as sure; title matches as sure at half the title's words.
+- **`Lecture` keeps `slide_start`/`slide_end`** (0 for uploaded courses) instead of gaining `deck_ids`: decks live on
+  the server, and nothing in the core needs them.
+- **Merging and pointing courses (U17)** use a `syllabus_aliases` table, and only before the moved students have
+  answered anything (their KUs and questions would otherwise come from two courses).
+- **U18 records the videos students need** (`video_requests`: one row per course, KU and level, with the KU's first
+  prerequisites, U8). Nothing makes them yet: that is `per-student-video-plan.md` step 5, a worker job of its own.
+
+**Not done yet:**
+- Step 8: one real run with the dev syllabus and decks (LLM spend; ask first), all at once and one by one.
+- PowerPoint conversion is tested only where LibreOffice is installed (not on this laptop).
+- Upload events in the research log (`deck_uploaded`, `deck_confirmed`, …); the `deck_uploads` table records every
+  upload and its outcome meanwhile.
+- Native iOS: the screens were checked in the web build only.
+- Deploying: the droplet needs `SYLLABYTE_WORKER_TOKEN`, a files folder, and the hosting decisions above.
+

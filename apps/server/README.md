@@ -5,7 +5,7 @@ Plan and status: `plan/backend-plan.md`.
 
 ```bash
 npm install
-npm test                 # 20 tests, no network
+npm test                 # 76 tests, no network
 npm run allowlist -- add you@nyu.edu researcher     # or: npm run allowlist -- students.csv
 npm run dev              # http://localhost:8788; sign-in codes are printed in this terminal
 ```
@@ -20,11 +20,44 @@ Environment (all optional in development):
 | `RESEND_API_KEY`, `MAIL_FROM` | send codes by email (Resend); without a key they are logged |
 | `SYLLABYTE_SEMESTER_START` | ISO date; week 1 for new students |
 | `SYLLABYTE_CORS_ORIGIN` | let a browser at this origin call the API (the phone app doesn't need it); development only |
+| `SYLLABYTE_FILES` | where uploaded syllabi and slides are kept, default `data/files` |
+| `SYLLABYTE_WORKER_TOKEN` | the upload worker's secret; without it the worker routes are off and uploads are never processed |
 
 Endpoints (all under `/api`): `POST auth/request-code`, `POST auth/verify`, `GET session`, `POST session/logout`,
 `POST rpc/<method>` (`{ "args": [...] }`; any method of the core's `Api`), `POST events`, `GET research/study.csv`
 (researchers), `GET health`. Send `Authorization: Bearer <token>`, and `X-Visit: <id of this app launch>` so the
 "next session" cap counts per visit.
+
+Uploads (`plan/slide-uploads-plan.md`): `GET courses/mine`, `POST courses` (multipart `syllabus`),
+`POST courses/:id/lectures` (the creator confirms the list), `POST courses/:id/slides` (multipart `files`),
+`GET courses/:id/uploads`, `POST courses/:id/uploads/confirm`, `POST research/jobs/:id/retry` (researchers). The worker
+(with `Authorization: Bearer $SYLLABYTE_WORKER_TOKEN`): `POST worker/claim`, `GET worker/jobs/:id/file`,
+`POST worker/jobs/:id/syllabus-key`, `POST worker/jobs/:id/result`, `POST worker/jobs/:id/fail`.
+
+## Uploaded courses and the worker
+
+A student's syllabus creates their course, or joins the course of anyone whose syllabus has the same text; their slide
+files are placed in its lectures. The Python worker reads and processes them (LLM calls: the lecture list once per
+course, then each new deck's KUs and questions), claiming jobs from this server. Until it has a host of its own it runs
+on a laptop, from the repository root:
+
+```bash
+SYLLABYTE_WORKER_TOKEN=... uv run python -m ingestion_agent.worker --server http://localhost:8788   # add --once to stop when the queue is empty
+```
+
+PowerPoint files need LibreOffice (`soffice`) on the worker's machine. Students never reorganize a course; the
+researcher fixes mistakes:
+
+```bash
+npm run courses -- list                                 # every course, its students and decks
+npm run courses -- show <course>                        # lectures, decks, updated versions, failed jobs
+npm run courses -- rename <course> <n> "<title>"
+npm run courses -- add-lecture <course> "<title>"
+npm run courses -- move-deck <deck> <n>
+npm run courses -- move-student <code|email> <course>   # before they have answered anything
+npm run courses -- merge <from-course> <into-course>    # its students and its syllabus join the other course
+npm run courses -- retry <job>
+```
 
 ## Running the phone against it
 
