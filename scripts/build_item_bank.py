@@ -30,58 +30,16 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 import build_ui_fixtures as ui  # noqa: E402  (the dev course's lectures, short titles, critic loop and slide loader)
 from assessment_agent.bank import (  # noqa: E402
-    TIER_BLOOM,
-    TIERS,
     KuBankGen,
     assemble_ku_items,
     balance_positions,
     lecture_topic_id,
-    stem_problems,
     validate_bank,
 )
+from assessment_agent.bank_writing import BANK_SYSTEM, bank_prompt, write_ku_bank  # noqa: E402,F401  (tests read the prompt here)
 from syllabyte_common.learner import Item  # noqa: E402
-from syllabyte_common.llm import DEFAULT_MODEL, PRICE_PER_MTOK, structured, text_block  # noqa: E402
+from syllabyte_common.llm import DEFAULT_MODEL, PRICE_PER_MTOK  # noqa: E402
 from syllabyte_common.models import CourseCorpus, KnowledgeUnit, KUList, RunManifest  # noqa: E402
-
-_STEM_RULE = "- The stem is one sentence, under 28 words, and self-contained."
-assert _STEM_RULE in ui.ITEM_SYSTEM, "build_ui_fixtures.ITEM_SYSTEM changed; update the stem rule here"
-_NEW_STEM_RULE = (
-    "- The stem is self-contained and under 40 words. If it sets up a situation or states a claim, the question comes "
-    "after it, and it always ends with a question mark."
-)
-BANK_SYSTEM = "\n".join(
-    l.replace(_STEM_RULE, _NEW_STEM_RULE)  # keeps what follows on the line: "Do not say 'according to the slide'…"
-    for l in ui.ITEM_SYSTEM.splitlines()
-    if not l.startswith("- difficulty_prior")
-)
-
-
-def bank_prompt(ku: KnowledgeUnit, prereq_titles: list[str], slide_text: str, extra: str = "") -> str:
-    prereq = "; ".join(prereq_titles) if prereq_titles else "none"
-    tiers = "\n".join(f"- {t} ({TIER_BLOOM[t]})" for t in TIERS)
-    return f"""Knowledge unit: {ku.title}
-Summary: {ku.summary}
-Bloom level the course analysis gave this unit: {ku.bloom_level}
-It builds on: {prereq}
-
-Write THREE questions about this knowledge unit for a pre-test of what a student already knows, one per tier:
-{tiers}
-
-- basic: one fact, definition or label from the slides.
-- applied: handle a new case in the slides' own setting: classify it, compute with it, or read it. It must need more than the basic question's lookup, and must not be the same lookup with another value.
-- advanced: judge a claim or design, spot what is wrong with an argument, or predict what changes when a condition changes. Vary the shape across units; do not always open with "A colleague claims".
-The three tiers must call for different kinds of thinking, not just different wording, and must be independent: answering one must not give away another, and none may reuse another's wording or options.
-
-Stay inside the slides. Every question, including the advanced one, must be answerable from the slides below alone. Use the slides' own example, people, data and notation; you may change the numbers or ask about another case in that same setting, but never bring in an analogy, example or fact from another domain. Where the slides state a number or a rule, use it exactly as stated. In the explanation and hint, describe a chart or table only as far as its text or image shows.
-
-Wrong options: each must be a plausible misconception about this idea. Never make a wrong option restate the claim the question asks the student to evaluate, never make it a true statement, and never make it merely the negation of the right answer.
-
-Set `slides` to the slide numbers that support the questions (one list for all three).
-Set `ku_difficulty` from -2 (very easy) to 2 (hard): how hard is this CONCEPT for a student meeting it for the first time. Rate the concept, not your questions; the three tiers are spread apart automatically.
-
-Slides (text and images follow):
-{slide_text}{extra}"""
-
 
 # --------------------------------------------------------------------------
 # cache <-> items
@@ -172,30 +130,9 @@ def generate_ku(ku: KnowledgeUnit, kus: dict[str, KnowledgeUnit], corpus: Course
     material = ui.slide_material(corpus, slides)
     prereqs = [ui.SHORT_TITLES.get(p, kus[p].title) for p in ku.prerequisites if p in kus]
     ui.log(f"{ku.id}: generating (slides {slides})")
-
-    def ask(extra: str) -> KuBankGen:
-        return structured(
-            schema=KuBankGen, content=[text_block(bank_prompt(ku, prereqs, material[0], extra)), *material[1]],
-            system=BANK_SYSTEM, stage="item_bank", ku_id=ku.id, model=args.model, max_tokens=6000, manifest=manifest,
-        )
-
-    def make(extra: str) -> KuBankGen:
-        g = ask(extra)
-        problems = stem_problems(g)
-        if problems:
-            ui.log(f"  {ku.id}: {problems} — asking again once")
-            g = ask(extra + "\n\nYour previous attempt had problems. Fix them:\n" + "\n".join(f"- {p}" for p in problems))
-        return g
-
-    def describe(g: KuBankGen) -> str:
-        return "\n".join(ui.mcq_text(f"as-{ku.id}-{t}", getattr(g, t)) for t in TIERS)
-
-    gen, flags = ui.generate_with_critic(
-        make=make, describe=describe, ids_of=lambda g: [f"as-{ku.id}-{t}" for t in TIERS], material=material,
-        stage=f"bank_{ku.id}", model=args.critic_model or args.model, manifest=manifest,
+    gen, flags = write_ku_bank(
+        ku, prereqs, material, model=args.model, critic_model=args.critic_model or args.model, manifest=manifest, log=ui.log,
     )
-    # anything the retry did not fix stays visible on the review sheet
-    flags += [{"id": f"as-{ku.id}-{p.split(':')[0]}", "issue": p.split(': ', 1)[1]} for p in stem_problems(gen)]
     return {"gen": gen.model_dump(), "flags": flags}
 
 

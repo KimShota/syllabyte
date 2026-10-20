@@ -35,6 +35,8 @@ from pydantic import BaseModel
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from animation_agent.ui_manifest import build_ui_manifest, checkpoint_for
+from assessment_agent.item_writing import ITEM_SYSTEM, mcq_text
+from assessment_agent.item_writing import generate_with_critic as _generate_with_critic
 from syllabyte_common.learner import (
     MCQ,
     Claim,
@@ -109,18 +111,7 @@ PACE_WPM = {1: 140, 2: 155, 3: 165}  # plan §7.4
 # LLM schemas + prompts
 # --------------------------------------------------------------------------
 
-ITEM_SYSTEM = """You write short multiple-choice questions for a university course's micro-learning app. Students see one question at a time on a phone.
 
-Rules:
-- Ground every question ONLY in the supplied slides and narration. Never use outside facts.
-- Exactly 3 options. Exactly one is correct. The two wrong options must be plausible (a common misconception) but clearly wrong given the material. Never use "all of the above" or "none of the above".
-- The stem is one sentence, under 28 words, and self-contained. Do not say "according to the slide" or "in the video".
-- Vary which option is correct (correct_index 0, 1 and 2 should all appear across a batch).
-- explanation: one or two plain sentences saying why the right option is right.
-- hint: a nudge toward the idea that does not reveal the answer, or null.
-- difficulty_prior: your estimate on a logit scale, -2 (very easy) to 2 (hard); 0 is medium.
-- Write math as plain text (for example "Y1 - Y0"), never LaTeX.
-- Keep options short (under 14 words each)."""
 
 
 class ClaimGen(BaseModel):
@@ -135,22 +126,6 @@ class VideoGen(BaseModel):
     sentence_frame_template: str  # one sentence with exactly two blanks written ___
     sentence_frame_answers: list[str]
     claims: list[ClaimGen]
-
-
-class Verdict(BaseModel):
-    id: str
-    ok: bool
-    issue: str = ""
-
-
-class Verdicts(BaseModel):
-    verdicts: list[Verdict]
-
-
-CRITIC_SYSTEM = """You check quiz items and factual claims against course material. Be strict but fair.
-For every item verify: (1) the keyed answer is correct according to the material; (2) no other option is also defensible; (3) the wrong options are not secretly correct; (4) the stem is self-contained and unambiguous.
-For every claim verify it is a statement the cited narration actually makes and the slides support, with no added facts.
-Return one verdict per id. Set ok=false only for a real problem and say what it is in one sentence."""
 
 
 def video_prompt(ku: KnowledgeUnit, script: dict, slide_text: str, claim_segments: list[int], last_deliver: int, extra: str = "") -> str:
@@ -209,36 +184,8 @@ def cached(path: Path, regen: bool, make):
     return data
 
 
-def critic_pass(items_text: str, material_text: str, images: list[dict], ids: list[str], *, stage: str, model: str, manifest: RunManifest) -> list[Verdict]:
-    prompt = (
-        f"Course material (slides):\n{material_text}\n\nItems and claims to check "
-        f"(ids: {', '.join(ids)}):\n{items_text}"
-    )
-    result = structured(
-        schema=Verdicts, content=[text_block(prompt), *images], system=CRITIC_SYSTEM,
-        stage=stage, model=model, max_tokens=4000, manifest=manifest,
-    )
-    return result.verdicts
-
-
-def mcq_text(id_: str, m: MCQ) -> str:
-    opts = "\n".join(f"   {'ABC'[i]}. {o}{'  <-- keyed' if i == m.correct_index else ''}" for i, o in enumerate(m.options))
-    return f"[{id_}] {m.stem}\n{opts}\n   explanation: {m.explanation}"
-
-
-def generate_with_critic(*, make, describe, ids_of, material: tuple[str, list[dict]], stage: str, model: str, manifest: RunManifest):
-    """make(extra) -> generated; describe(gen) -> text for the critic; ids_of(gen) -> ids.
-    Returns (gen, remaining_flags)."""
-    gen = make("")
-    verdicts = critic_pass(describe(gen), material[0], material[1], ids_of(gen), stage=f"{stage}_critic", model=model, manifest=manifest)
-    bad = [v for v in verdicts if not v.ok]
-    if bad:
-        log(f"  {stage}: critic objected to {[v.id for v in bad]} — regenerating once")
-        feedback = "\n\nA reviewer found problems in your previous attempt. Fix them:\n" + "\n".join(f"- {v.id}: {v.issue}" for v in bad)
-        gen = make(feedback)
-        verdicts = critic_pass(describe(gen), material[0], material[1], ids_of(gen), stage=f"{stage}_critic2", model=model, manifest=manifest)
-        bad = [v for v in verdicts if not v.ok]
-    return gen, [{"id": v.id, "issue": v.issue} for v in bad]
+def generate_with_critic(**kw):
+    return _generate_with_critic(log=log, **kw)
 
 
 def balance_positions(items: list[Item]) -> None:
