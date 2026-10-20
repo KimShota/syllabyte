@@ -18,7 +18,8 @@ import traceback
 from pathlib import Path
 
 import httpx
-from syllabyte_common.llm import DEFAULT_MODEL
+from syllabyte_common.llm import DEFAULT_MODEL, PRICE_PER_MTOK
+from syllabyte_common.models import RunManifest
 
 from ingestion_agent.upload_jobs import run_deck_job, run_deck_read_job, run_link_pass_job, run_syllabus_job
 from ingestion_agent.uploads import UploadError
@@ -34,6 +35,7 @@ class Worker:
         self.work_dir = Path(work_dir)
         self.model = model
         self.critic_model = critic_model
+        self.spent_usd = 0.0
 
     def _post(self, path: str, body: dict) -> dict:
         r = self.client.post(path, json=body)
@@ -56,10 +58,13 @@ class Worker:
                 r.raise_for_status()
                 path = work / Path(job["file_name"]).name
                 path.write_bytes(r.content)
-            result = self._run(job_id, kind, payload, path, work)
+            manifest = RunManifest(run_id=f"{kind}-{job_id}")
+            result = self._run(job_id, kind, payload, path, work, manifest)
             if result is not None:
                 self._post(f"/api/worker/jobs/{job_id}/result", {"result": result})
-            log(f"{kind} {job_id}: done")
+            cost = manifest.total_cost_usd(PRICE_PER_MTOK)
+            self.spent_usd += cost
+            log(f"{kind} {job_id}: done ({len(manifest.llm_calls)} LLM calls, ${cost:.3f}; ${self.spent_usd:.2f} this session)")
         except UploadError as e:
             log(f"{kind} {job_id}: the file can't be used: {e}")
             self._post(f"/api/worker/jobs/{job_id}/fail", {"error": str(e), "user_message": str(e)})
@@ -70,7 +75,7 @@ class Worker:
             shutil.rmtree(work, ignore_errors=True)
         return True
 
-    def _run(self, job_id: str, kind: str, payload: dict, path: Path | None, work: Path) -> dict | None:
+    def _run(self, job_id: str, kind: str, payload: dict, path: Path | None, work: Path, manifest: RunManifest) -> dict | None:
         if kind == "syllabus":
             joined = []
 
@@ -79,15 +84,15 @@ class Worker:
                 joined.append(not new)
                 return new
 
-            out = run_syllabus_job(path, is_new=is_new, model=self.model)
+            out = run_syllabus_job(path, is_new=is_new, model=self.model, manifest=manifest)
             # a known course is joined when its key arrives; there is nothing more to send
             return None if joined and joined[0] else out
         if kind == "deck_read":
             return run_deck_read_job(path, work, payload["deck_name"])
         if kind == "deck":
-            return run_deck_job(payload, path, work, model=self.model, critic_model=self.critic_model, log=log)
+            return run_deck_job(payload, path, work, model=self.model, critic_model=self.critic_model, manifest=manifest, log=log)
         if kind == "link_pass":
-            return run_link_pass_job(payload, model=self.model)
+            return run_link_pass_job(payload, model=self.model, manifest=manifest)
         raise ValueError(f"unknown job kind {kind}")
 
 
