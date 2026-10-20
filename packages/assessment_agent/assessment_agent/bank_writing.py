@@ -27,6 +27,15 @@ BANK_SYSTEM = "\n".join(
 )
 
 
+TIER_TASKS = {
+    "basic": "- basic: one fact, definition or label from the slides.",
+    "applied": "- applied: handle a new case in the slides' own setting: classify it, compute with it, or read it. It must need more than the basic question's lookup, and must not be the same lookup with another value.",
+    "advanced": '- advanced: judge a claim or design, spot what is wrong with an argument, or predict what changes when a condition changes. Vary the shape across units; do not always open with "A colleague claims".',
+}
+STAY_IN_SLIDES = "Stay inside the slides. Every question, including the advanced one, must be answerable from the slides below alone. Use the slides' own example, people, data and notation; you may change the numbers or ask about another case in that same setting, but never bring in an analogy, example or fact from another domain. Where the slides state a number or a rule, use it exactly as stated. In the explanation and hint, describe a chart or table only as far as its text or image shows."
+WRONG_OPTIONS = "Wrong options: each must be a plausible misconception about this idea. Never make a wrong option restate the claim the question asks the student to evaluate, never make it a true statement, and never make it merely the negation of the right answer."
+
+
 def bank_prompt(ku: KnowledgeUnit, prereq_titles: list[str], slide_text: str, extra: str = "") -> str:
     prereq = "; ".join(prereq_titles) if prereq_titles else "none"
     tiers = "\n".join(f"- {t} ({TIER_BLOOM[t]})" for t in TIERS)
@@ -38,14 +47,14 @@ It builds on: {prereq}
 Write THREE questions about this knowledge unit for a pre-test of what a student already knows, one per tier:
 {tiers}
 
-- basic: one fact, definition or label from the slides.
-- applied: handle a new case in the slides' own setting: classify it, compute with it, or read it. It must need more than the basic question's lookup, and must not be the same lookup with another value.
-- advanced: judge a claim or design, spot what is wrong with an argument, or predict what changes when a condition changes. Vary the shape across units; do not always open with "A colleague claims".
+{TIER_TASKS["basic"]}
+{TIER_TASKS["applied"]}
+{TIER_TASKS["advanced"]}
 The three tiers must call for different kinds of thinking, not just different wording, and must be independent: answering one must not give away another, and none may reuse another's wording or options.
 
-Stay inside the slides. Every question, including the advanced one, must be answerable from the slides below alone. Use the slides' own example, people, data and notation; you may change the numbers or ask about another case in that same setting, but never bring in an analogy, example or fact from another domain. Where the slides state a number or a rule, use it exactly as stated. In the explanation and hint, describe a chart or table only as far as its text or image shows.
+{STAY_IN_SLIDES}
 
-Wrong options: each must be a plausible misconception about this idea. Never make a wrong option restate the claim the question asks the student to evaluate, never make it a true statement, and never make it merely the negation of the right answer.
+{WRONG_OPTIONS}
 
 Set `slides` to the slide numbers that support the questions (one list for all three).
 Set `ku_difficulty` from -2 (very easy) to 2 (hard): how hard is this CONCEPT for a student meeting it for the first time. Rate the concept, not your questions; the three tiers are spread apart automatically.

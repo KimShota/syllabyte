@@ -79,6 +79,12 @@ def order_tiers(betas: Mapping[ItemTier, float]) -> dict[ItemTier, float]:
     return {t: round(out[t], 4) for t in TIERS}
 
 
+def tier_difficulties(ku_difficulty: float) -> dict[ItemTier, float]:
+    """A KU's question difficulty at each tier, ordered: the betas its bank items get, and what an uploaded KU carries
+    before any question on it is written (plan/slide-uploads-plan.md V4)."""
+    return order_tiers({t: tier_beta(t, ku_difficulty) for t in TIERS})
+
+
 def stem_problems(gen: KuBankGen) -> list[str]:
     """Stems that are not a question the student can answer (the model likes to end an advanced stem on a claim
     with no question, so the student has to guess the task)."""
@@ -101,7 +107,7 @@ def lecture_topic_id(lecture_n: int) -> str:
 def assemble_ku_items(ku_id: str, topic_id: str, gen: KuBankGen, deck_name: str = "slides") -> list[Item]:
     """The KU's three bank items, difficulty set and ordered, answers not yet balanced. `deck_name`: the deck the
     slide numbers refer to (the dev course has one, "slides")."""
-    betas = order_tiers({t: tier_beta(t, gen.ku_difficulty) for t in TIERS})
+    betas = tier_difficulties(gen.ku_difficulty)
     refs = [SlideRef(deck_name=deck_name, slide_number=n) for n in gen.slides]
     items = []
     for t in TIERS:

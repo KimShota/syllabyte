@@ -6,6 +6,12 @@ and posts the results. Until the worker has a host of its own it runs on a lapto
 
 A job whose file is the problem (a scan, a damaged file, Keynote) fails with a message the student sees and is not
 retried; any other error is reported and the server queues the job once more.
+
+Question jobs (a student's check is waiting for them, plan/slide-uploads-plan.md V4) come before anything else the
+server has queued. A long deck job still holds a lone worker, so a second worker that only writes questions keeps
+checks moving:
+
+    uv run python -m ingestion_agent.worker --kinds question
 """
 
 from __future__ import annotations
@@ -21,8 +27,13 @@ import httpx
 from syllabyte_common.llm import DEFAULT_MODEL, PRICE_PER_MTOK
 from syllabyte_common.models import RunManifest
 
-from ingestion_agent.upload_jobs import run_deck_job, run_deck_read_job, run_link_pass_job, run_syllabus_job
-from ingestion_agent.uploads import UploadError
+from ingestion_agent.upload_jobs import (
+    run_deck_job, run_deck_read_job, run_link_pass_job, run_placement_job, run_question_job, run_syllabus_job,
+)
+from ingestion_agent.uploads import UploadError, read_deck
+from syllabyte_common.models import SlideDeck
+
+KINDS = ("syllabus", "deck_read", "placement", "deck", "question", "link_pass")
 
 
 def log(msg: str) -> None:
@@ -30,12 +41,18 @@ def log(msg: str) -> None:
 
 
 class Worker:
-    def __init__(self, client: httpx.Client, work_dir: str | Path, *, model: str = DEFAULT_MODEL, critic_model: str | None = None):
+    def __init__(
+        self, client: httpx.Client, work_dir: str | Path, *, model: str = DEFAULT_MODEL, critic_model: str | None = None,
+        kinds: list[str] | None = None,
+    ):
         self.client = client
         self.work_dir = Path(work_dir)
         self.model = model
         self.critic_model = critic_model
+        self.kinds = kinds
         self.spent_usd = 0.0
+        # decks rendered for question jobs, kept between jobs so a check's next question does not render it again
+        self.decks: dict[str, SlideDeck] = {}
 
     def _post(self, path: str, body: dict) -> dict:
         r = self.client.post(path, json=body)
@@ -44,7 +61,7 @@ class Worker:
 
     def run_once(self) -> bool:
         """Claims and runs one job; False when there was nothing to do."""
-        job = self._post("/api/worker/claim", {})["job"]
+        job = self._post("/api/worker/claim", {"kinds": self.kinds} if self.kinds else {})["job"]
         if not job:
             return False
         job_id, kind, payload = job["id"], job["kind"], job["payload"]
@@ -53,7 +70,7 @@ class Worker:
         work.mkdir(parents=True, exist_ok=True)
         try:
             path = None
-            if job.get("file_name"):
+            if job.get("file_name") and not (kind == "question" and payload["deck_id"] in self.decks):
                 r = self.client.get(f"/api/worker/jobs/{job_id}/file")
                 r.raise_for_status()
                 path = work / Path(job["file_name"]).name
@@ -88,12 +105,24 @@ class Worker:
             # a known course is joined when its key arrives; there is nothing more to send
             return None if joined and joined[0] else out
         if kind == "deck_read":
-            return run_deck_read_job(path, work, payload["deck_name"])
+            return run_deck_read_job(path, work, payload["deck_name"], payload=payload, manifest=manifest)
+        if kind == "placement":
+            return run_placement_job(payload, manifest=manifest)
+        if kind == "question":
+            return run_question_job(payload, self._deck(payload["deck_id"], path), model=self.model, critic_model=self.critic_model, manifest=manifest, log=log)
         if kind == "deck":
             return run_deck_job(payload, path, work, model=self.model, critic_model=self.critic_model, manifest=manifest, log=log)
         if kind == "link_pass":
             return run_link_pass_job(payload, model=self.model, manifest=manifest)
         raise ValueError(f"unknown job kind {kind}")
+
+
+    def _deck(self, deck_id: str, path: Path | None) -> SlideDeck:
+        if deck_id not in self.decks:
+            assert path is not None, "the server sends a question job's deck"
+            _, deck = read_deck(path, self.work_dir / "decks" / deck_id, deck_id)
+            self.decks[deck_id] = deck
+        return self.decks[deck_id]
 
 
 def main() -> None:
@@ -105,12 +134,16 @@ def main() -> None:
     parser.add_argument("--critic-model", default=None)
     parser.add_argument("--poll", type=float, default=5.0, help="seconds between checks when there is nothing to do")
     parser.add_argument("--once", action="store_true", help="run the queued jobs, then stop")
+    parser.add_argument("--kinds", default=None, help=f"only these job kinds, comma-separated ({', '.join(KINDS)})")
     args = parser.parse_args()
     if not args.token:
         parser.error("set --token or SYLLABYTE_WORKER_TOKEN")
 
     with httpx.Client(base_url=args.server, headers={"Authorization": f"Bearer {args.token}"}, timeout=120) as client:
-        worker = Worker(client, args.work_dir, model=args.model, critic_model=args.critic_model)
+        kinds = [k.strip() for k in args.kinds.split(",")] if args.kinds else None
+        if kinds and set(kinds) - set(KINDS):
+            parser.error(f"unknown kinds: {', '.join(sorted(set(kinds) - set(KINDS)))}")
+        worker = Worker(client, args.work_dir, model=args.model, critic_model=args.critic_model, kinds=kinds)
         log(f"polling {args.server}")
         while True:
             try:

@@ -17,6 +17,9 @@ from curriculum_alignment_agent.ku_extractor import SYSTEM_PROMPT, _deck_as_text
 
 class UploadKU(KnowledgeUnit):
     short_title: str = Field(description="2 to 4 words for a phone screen, e.g. 'Potential outcomes'")
+    # how hard the concept is for a first-time learner, -2..2: sets its questions' difficulty before any is written
+    # (plan/slide-uploads-plan.md V4; the bank asked for it as ku_difficulty)
+    difficulty: float = Field(default=0.0, ge=-3, le=3)
 
 
 class UploadKUList(BaseModel):
@@ -40,7 +43,9 @@ UPLOAD_SYSTEM = SYSTEM_PROMPT.replace(
     """  - Lists prerequisites: ids of OTHER Knowledge Units it directly builds on, either from this deck (ids you \
 invent consistently, e.g. "ku-big-o-definition") or from the earlier lectures' units listed in the request (use \
 their ids exactly). Only direct prerequisites a student must know first, not everything related.
-  - Has a short_title of 2 to 4 words for a phone screen.""",
+  - Has a short_title of 2 to 4 words for a phone screen.
+  - Has a difficulty from -2 (very easy) to 2 (hard): how hard this CONCEPT is for a student meeting it for the first \
+time; 0 is medium.""",
 )
 
 

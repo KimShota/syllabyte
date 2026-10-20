@@ -208,16 +208,31 @@ STUB_PAGES: dict[str, list[str]] = {}
 STUB_EARLIER: dict[str, str] = {}
 
 
-def test_a_deck_job_returns_kus_and_a_valid_item_bank(tmp_path, monkeypatch):
+def deck_payload(**extra):
+    return {
+        "deck_id": "d2", "course_name": "C", "syllabus_text": "S", "lecture_n": 2, "lecture_title": "Two",
+        "earlier": [{"id": "ku-alpha", "title": "Alpha", "summary": "", "lecture_n": 1}], "taken_ids": ["ku-alpha"], **extra,
+    }
+
+
+def test_a_deck_job_returns_kus_with_tier_difficulties_and_no_questions(tmp_path, monkeypatch):
     stub_llm(monkeypatch)
     STUB_PAGES["d2"] = ["Gamma first", "Delta second"]
     STUB_EARLIER["d2"] = "ku-alpha"
     pdf = make_pdf(tmp_path / "two.pdf", STUB_PAGES["d2"])
-    payload = {
-        "deck_id": "d2", "course_name": "C", "syllabus_text": "S", "lecture_n": 2, "lecture_title": "Two",
-        "earlier": [{"id": "ku-alpha", "title": "Alpha", "summary": "", "lecture_n": 1}], "taken_ids": ["ku-alpha"],
-    }
-    out = upload_jobs.run_deck_job(payload, pdf, tmp_path / "work", log=lambda m: None)
+    out = upload_jobs.run_deck_job(deck_payload(), pdf, tmp_path / "work", log=lambda m: None)
+    assert [(k["id"], k["prerequisites"]) for k in out["kus"]] == [("ku-gamma", ["ku-alpha"]), ("ku-delta", ["ku-gamma"])]
+    assert out["items"] == []
+    # difficulty 0: the plain tier offsets, ordered
+    assert out["kus"][0]["tier_difficulty"] == {"basic": -1.0, "applied": 0.0, "advanced": 1.0}
+
+
+def test_a_deck_job_can_still_write_the_full_bank(tmp_path, monkeypatch):
+    stub_llm(monkeypatch)
+    STUB_PAGES["d2"] = ["Gamma first", "Delta second"]
+    STUB_EARLIER["d2"] = "ku-alpha"
+    pdf = make_pdf(tmp_path / "two.pdf", STUB_PAGES["d2"])
+    out = upload_jobs.run_deck_job(deck_payload(bank=True), pdf, tmp_path / "work", log=lambda m: None)
     assert [(k["id"], k["prerequisites"]) for k in out["kus"]] == [("ku-gamma", ["ku-alpha"]), ("ku-delta", ["ku-gamma"])]
     assert {k["short_title"] for k in out["kus"]} == {"ku-gamma", "ku-delta"}
     assert len(out["items"]) == 6
@@ -253,3 +268,74 @@ def test_a_powerpoint_deck_is_read_as_its_pdf(tmp_path):
     read, deck = read_deck(make_pptx(tmp_path / "a.pptx", ["Alpha", "Beta"]), tmp_path / "w", "d1")
     assert read.pdf_path.endswith(".pdf") and read.page_count == 2 and deck.has_images
     assert read.first_title == "Alpha"
+
+
+# --------------------------------------------------------------------------
+# on-demand questions, reading and placing decks (V1, V2, V4)
+# --------------------------------------------------------------------------
+
+
+def test_a_question_job_writes_one_checked_question_at_the_tier(tmp_path, monkeypatch):
+    from assessment_agent import question_writing
+
+    seen = {}
+
+    def write(**kw):
+        seen["prompt"] = kw["content"][0]["text"]
+        return question_writing.QuestionGen(question=BankMCQ(stem="Which is right?", options=["yes", "no", "maybe"], correct_index=0, explanation="Because."), slides=[2])
+
+    monkeypatch.setattr(question_writing, "structured", write)
+    monkeypatch.setattr(item_writing, "structured", lambda **kw: item_writing.Verdicts(verdicts=[]))
+    _, deck = read_deck(make_pdf(tmp_path / "d.pdf", ["Alpha page", "Beta page"]), tmp_path / "w", "d7")
+    payload = {
+        "item_id": "as-ku-a-applied-2", "ku": uku("ku-a", slides=[1, 2]).model_dump(mode="json"), "prereq_titles": [],
+        "tier": "applied", "beta": 0.25, "target_index": 2, "avoid": ["What is alpha?"],
+    }
+    out = upload_jobs.run_question_job(payload, deck, log=lambda m: None)
+    item = out["item"]
+    assert (item["id"], item["ku_id"], item["tier"], item["difficulty_prior"]) == ("as-ku-a-applied-2", "ku-a", "applied", 0.25)
+    assert item["correct_index"] == 2 and item["options"][2] == "yes"
+    assert [(r["deck_name"], r["slide_number"]) for r in item["source_refs"]] == [("d7", 2)]
+    assert "What is alpha?" in seen["prompt"] and "at the applied tier" in seen["prompt"]
+    assert out["flags"] == []
+
+
+def test_identical_pages_have_identical_keys(tmp_path):
+    a, _ = read_deck(make_pdf(tmp_path / "a.pdf", ["One", "Two", "Three"]), tmp_path / "wa", "a")
+    b, _ = read_deck(make_pdf(tmp_path / "b.pdf", ["One", "Two", "Changed"]), tmp_path / "wb", "b")
+    assert a.page_keys[:2] == b.page_keys[:2] and a.page_keys[2] != b.page_keys[2]
+
+
+def test_the_reader_reads_the_first_pages_and_a_few_more():
+    from ingestion_agent.placement import pages_to_read
+
+    assert pages_to_read(3) == [1, 2, 3]
+    assert pages_to_read(28)[:7] == [1, 2, 3, 4, 5, 6, 7] and len(pages_to_read(28)) == 10
+
+
+def test_a_deck_the_course_already_has_is_not_read_by_the_model(tmp_path, monkeypatch):
+    from ingestion_agent import placement
+
+    calls = []
+    monkeypatch.setattr(placement, "structured", lambda **kw: calls.append(kw) or placement.DeckSummary(title="Sorting", summary="s", lecture_number=None, is_lecture=True))
+    pdf = make_pdf(tmp_path / "d.pdf", ["Sorting", "Merge sort"])
+    first = upload_jobs.run_deck_read_job(pdf, tmp_path / "w1", "d1", payload={"course_name": "C", "file_name": "slides.pdf"})
+    assert first["summary"]["title"] == "Sorting" and len(calls) == 1
+    again = upload_jobs.run_deck_read_job(pdf, tmp_path / "w2", "d2", payload={"course_name": "C", "known_keys": [first["content_key"]]})
+    assert "summary" not in again and len(calls) == 1
+
+
+def test_placement_keeps_the_lectures_order_and_puts_left_out_decks_last():
+    from ingestion_agent.placement import Placement, clean_placement
+
+    out = clean_placement(Placement(order=["L2", "new-a", "L1", "x", "new-a"], unsure=[]), ["L1", "L2"], ["new-a", "new-b"])
+    assert out.order == ["L1", "new-a", "L2", "new-b"]
+    assert out.unsure == ["new-b"]
+
+
+def test_one_deck_in_an_empty_course_needs_no_placement_call(monkeypatch):
+    from ingestion_agent import placement
+
+    monkeypatch.setattr(placement, "structured", lambda **kw: pytest.fail("no call expected"))
+    out = upload_jobs.run_placement_job({"course_name": "C", "new": [{"id": "d1", "title": "T", "summary": ""}]})
+    assert out == {"order": ["d1"], "unsure": []}

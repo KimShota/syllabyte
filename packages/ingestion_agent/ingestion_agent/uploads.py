@@ -18,7 +18,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 from syllabyte_common.llm import DEFAULT_MODEL, structured, text_block
-from syllabyte_common.models import RunManifest, SlideDeck
+from syllabyte_common.models import RunManifest, Slide, SlideDeck
 
 from ingestion_agent.slide_parser import parse_slide_deck
 from ingestion_agent.syllabus_parser import parse_syllabus
@@ -134,6 +134,16 @@ def to_pdf(path: str | Path, out_dir: str | Path) -> Path:
     return pdf
 
 
+def page_key(slide: Slide) -> str:
+    """One page's text (spacing normalized) and rendered image."""
+    h = hashlib.sha256()
+    h.update(re.sub(r"\s+", " ", slide.text).strip().encode())
+    h.update(b"\0")
+    if slide.image_path:
+        h.update(hashlib.sha256(Path(slide.image_path).read_bytes()).digest())
+    return h.hexdigest()
+
+
 def deck_content_key(deck: SlideDeck) -> str:
     """Each page's text (spacing normalized) and rendered image (U6): two copies of the same slides match."""
     h = hashlib.sha256()
@@ -162,6 +172,8 @@ class DeckRead(BaseModel):
     page_count: int
     first_title: str
     pages: list[str]  # each page's text
+    # each page's key: a deck most of whose pages are already in the course is an updated version (V2)
+    page_keys: list[str] = []
 
 
 def read_deck(path: str | Path, work_dir: str | Path, deck_name: str) -> tuple[DeckRead, SlideDeck]:
@@ -180,6 +192,6 @@ def read_deck(path: str | Path, work_dir: str | Path, deck_name: str) -> tuple[D
     )
     read = DeckRead(
         deck_name=deck_name, pdf_path=str(pdf), content_key=deck_content_key(deck), page_count=len(deck.slides),
-        first_title=first_title(deck), pages=[s.text for s in deck.slides],
+        first_title=first_title(deck), pages=[s.text for s in deck.slides], page_keys=[page_key(s) for s in deck.slides],
     )
     return read, deck
