@@ -54,3 +54,22 @@ Files are in `deploy/`.
 The server is at **https://api.syllabyte.app** (Cloudflare DNS `A` record `api` -> the droplet, "DNS only"; Caddy gets
 the certificate by itself). It is still in test mode: with no `RESEND_API_KEY` the sign-in codes are printed in the log.
 For real students set `NODE_ENV=production`, `RESEND_API_KEY` and `MAIL_FROM` in `/etc/syllabyte/env`.
+
+## Facilitator: moving a student's study clock
+
+The study runs over weeks, and the phone's demo menu is hidden when a server is configured, so the facilitator moves a
+test student's clock from the server instead. It only moves forward (recorded times must stay in order), never touches
+other students, survives restarts, and a student cannot set it. `reset` exists for test accounts.
+
+On the droplet (same environment as the allowlist command above):
+
+```
+npm run facilitator -- list                    # every participant code, its clock offset
+npm run facilitator -- advance S-ABCDE 7       # a week later: the next lecture check is due
+npm run facilitator -- module S-ABCDE 1        # just past module 1's last lecture week: its questionnaire is due
+npm run facilitator -- reset S-ABCDE           # back to real time (test accounts only)
+```
+
+Researchers can do the same over HTTP: `POST /api/research/clock` with `{ participant_code, days }`, `{ participant_code,
+module }`, `{ participant_code, reset: true }`, or just `{ participant_code }` to read it. Anyone not on the allowlist as
+a `researcher` gets 403.

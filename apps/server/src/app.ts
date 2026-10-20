@@ -3,6 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { studyCsv } from "@syllabyte/core/logic/instruments";
 import { Auth, type User } from "./auth";
+import { advanceClock, advanceToModuleEnd, getClock, resetClock } from "./clock";
 import type { Db } from "./db";
 import { RPC_METHODS, StateRunner, callMethod, trackClientEvents, type ClientEvent } from "./runner";
 
@@ -29,7 +30,7 @@ async function json(c: Context): Promise<Record<string, unknown>> {
 }
 
 /** Everything the phone calls, under /api. Built without a socket so tests can use `app.request`. */
-export function createApp({ auth, runner, corsOrigin }: Deps): Hono<Env> {
+export function createApp({ db, auth, runner, corsOrigin }: Deps): Hono<Env> {
   const app = new Hono<Env>();
   if (corsOrigin) app.use("/api/*", cors({ origin: corsOrigin, allowHeaders: ["Authorization", "Content-Type", "X-Visit"], allowMethods: ["GET", "POST", "OPTIONS"] }));
   app.use("*", bodyLimit({ maxSize: 512 * 1024, onError: (c) => c.json({ error: "too large" }, 413) }));
@@ -116,6 +117,29 @@ export function createApp({ auth, runner, corsOrigin }: Deps): Hono<Env> {
       .filter((s) => s.consent === "research")
       .map((s) => ({ participant_code: s.participant_code, condition: s.condition, study: s.study }));
     return c.body(studyCsv(participants), 200, { "Content-Type": "text/csv; charset=utf-8" });
+  });
+
+  /**
+   * The facilitator's study-clock control (src/clock.ts), researchers only. Body: { participant_code } plus one of
+   * { days }, { module } (just past that module's last lecture week) or { reset: true }; no action just reads it.
+   */
+  app.post("/api/research/clock", async (c) => {
+    if (c.get("user").role !== "researcher") return c.json({ error: "researchers only" }, 403);
+    const body = (await c.req.json().catch(() => null)) as { participant_code?: string; days?: number; module?: number; reset?: boolean } | null;
+    const code = body?.participant_code;
+    if (!code || typeof code !== "string") return c.json({ error: "participant_code is required" }, 400);
+    try {
+      const out = body?.reset
+        ? resetClock(db, code)
+        : typeof body?.module === "number"
+          ? advanceToModuleEnd(db, code, body.module)
+          : typeof body?.days === "number"
+            ? advanceClock(db, code, body.days)
+            : getClock(db, code);
+      return out ? c.json(out) : c.json({ error: "no such participant" }, 404);
+    } catch (e) {
+      return c.json({ error: (e as Error).message }, 400);
+    }
   });
 
   return app;

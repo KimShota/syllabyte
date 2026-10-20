@@ -51,10 +51,17 @@ export class StateRunner {
     const row = this.db.prepare("SELECT json FROM user_state WHERE user_id = ?").get(user.id) as { json: string } | undefined;
     const base = freshState();
     base.participant_code = user.participant_code;
+    base.clock_offset_ms = this.clockOffset(user.id);
     if (this.opts.semesterStart) base.semester_start = startOfWeek(this.opts.semesterStart);
     if (!row) return base;
     const parsed = JSON.parse(row.json) as DemoState;
-    return { ...base, ...parsed, participant_code: user.participant_code, clock_offset_ms: 0 };
+    return { ...base, ...parsed, participant_code: user.participant_code, clock_offset_ms: this.clockOffset(user.id) };
+  }
+
+  /** How far the facilitator has moved this student's study clock (src/clock.ts); 0 for everyone else. */
+  private clockOffset(userId: string): number {
+    const row = this.db.prepare("SELECT offset_ms FROM study_clock WHERE user_id = ?").get(userId) as { offset_ms: number } | undefined;
+    return row?.offset_ms ?? 0;
   }
 
   private save(userId: string): void {
