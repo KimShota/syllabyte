@@ -66,8 +66,12 @@ export class Courses {
     return (this.db.prepare("SELECT * FROM courses WHERE id = ?").get(courseId) as CourseRow | undefined) ?? null;
   }
 
+  /** The course a syllabus belongs to: its own, or the one the researcher pointed it at (U17). */
   byKey(syllabusKey: string): CourseRow | null {
-    return (this.db.prepare("SELECT * FROM courses WHERE syllabus_key = ?").get(syllabusKey) as CourseRow | undefined) ?? null;
+    const own = this.db.prepare("SELECT * FROM courses WHERE syllabus_key = ?").get(syllabusKey) as CourseRow | undefined;
+    if (own) return own;
+    const alias = this.db.prepare("SELECT course_id FROM syllabus_aliases WHERE syllabus_key = ?").get(syllabusKey) as { course_id: string } | undefined;
+    return alias ? this.get(alias.course_id) : null;
   }
 
   /** The student's course; one per student for now (U4). */
@@ -117,6 +121,13 @@ export class Courses {
    * The course's decks in course order: by lecture, then when they were placed (part 1 before part 2), then id, so the
    * order never depends on timing ties. Unplaced decks come last.
    */
+  renameLecture(lectureId: string, title: string): void {
+    const l = this.db.prepare("SELECT course_id FROM lectures WHERE id = ?").get(lectureId) as { course_id: string } | undefined;
+    if (!l) throw new Error(`unknown lecture ${lectureId}`);
+    this.db.prepare("UPDATE lectures SET title = ? WHERE id = ?").run(title, lectureId);
+    this.touched(l.course_id);
+  }
+
   decks(courseId: string): DeckRow[] {
     return this.db
       .prepare(

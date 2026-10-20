@@ -75,6 +75,12 @@ CREATE TABLE IF NOT EXISTS courses (
   created_at            INTEGER NOT NULL,
   lectures_confirmed_at INTEGER
 );
+-- A syllabus that belongs to another course (U17): the researcher pointed it there, or merged its course into that one.
+CREATE TABLE IF NOT EXISTS syllabus_aliases (
+  syllabus_key TEXT PRIMARY KEY,
+  course_id    TEXT NOT NULL REFERENCES courses (id) ON DELETE CASCADE,
+  added_at     INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS course_members (
   course_id TEXT NOT NULL REFERENCES courses (id) ON DELETE CASCADE,
   user_id   TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
