@@ -3,9 +3,9 @@ import type { Db } from "./db";
 import { UploadError, type Uploads } from "./uploads";
 
 /**
- * The researcher's fixes for uploaded courses (plan/slide-uploads-plan.md U11, U12, U17), behind
- * `npm run courses`. Students never reorganize a course; these are for mistakes: a wrong lecture title or placement,
- * one course split in two by slightly different syllabi, a failed job.
+ * The researcher's fixes for uploaded courses (plan/slide-uploads-plan.md U11, U17, V1), behind `npm run courses`.
+ * Students never reorganize a course; these are for mistakes: a wrong lecture title or order, one course split in two
+ * by slightly different syllabi, a failed job.
  */
 
 export function courseSummaries(db: Db) {
@@ -28,8 +28,9 @@ export function courseDetail(db: Db, courses: Courses, courseId: string) {
   const lectures = courses.lectures(courseId);
   const decks = courses.decks(courseId);
   return {
-    course: { id: c.id, code: c.code, name: c.name, confirmed: c.lectures_confirmed_at !== null },
-    lectures: lectures.map((l) => ({
+    course: { id: c.id, code: c.code, name: c.name },
+    lectures: lectures.map((l, i) => ({
+      position: i + 1,
       n: l.n,
       title: l.title,
       decks: decks.filter((d) => d.lecture_id === l.id).map((d) => ({ id: d.id, file: d.file_name, status: d.status, error: d.error })),
@@ -51,24 +52,22 @@ export function renameLecture(courses: Courses, courseId: string, n: number, tit
   courses.renameLecture(l.id, title.trim());
 }
 
-/** Adds a lecture after the last one (a syllabus that missed one, or a course without a schedule). */
-export function appendLecture(courses: Courses, courseId: string, title: string): number {
-  const n = (courses.lectures(courseId).at(-1)?.n ?? 0) + 1;
-  courses.addLecture(courseId, { n, title: title.trim(), week: null }, "upload");
-  return n;
-}
-
 /**
- * Puts a deck in another lecture. Its KUs stay as they are; they now count for that lecture's level and checks.
- * Students who already took a check on either lecture keep their answers.
+ * Moves lecture `n` to just after lecture `after` (0: first), for a deck placed in the wrong order. Its number, KUs,
+ * questions and students' answers stay; only the teaching order changes, and with it which lectures count as earlier.
  */
-export function moveDeck(db: Db, courses: Courses, deckId: string, lectureN: number): void {
-  const deck = courses.deck(deckId);
-  if (!deck) throw new UploadError(`no deck ${deckId}`, 404);
-  const l = courses.lectures(deck.course_id).find((x) => x.n === lectureN);
-  if (!l) throw new UploadError(`no lecture ${lectureN}`, 404);
-  db.prepare("UPDATE decks SET lecture_id = ? WHERE id = ?").run(l.id, deckId);
-  courses.touched(deck.course_id);
+export function moveLecture(courses: Courses, db: Db, courseId: string, n: number, after: number): void {
+  const list = courses.lectures(courseId);
+  const l = list.find((x) => x.n === n);
+  if (!l) throw new UploadError(`no lecture ${n}`, 404);
+  const rest = list.filter((x) => x.n !== n);
+  const at = after === 0 ? 0 : rest.findIndex((x) => x.n === after) + 1;
+  if (after !== 0 && at === 0) throw new UploadError(`no lecture ${after}`, 404);
+  const pos = (x: (typeof list)[number] | undefined) => (x ? (x.position ?? x.n) : null);
+  const before = at === 0 ? 0 : pos(rest[at - 1])!;
+  const next = pos(rest[at]);
+  db.prepare("UPDATE lectures SET position = ? WHERE id = ?").run(next === null ? before + 1 : (before + next) / 2, l.id);
+  courses.touched(courseId);
 }
 
 function studentByCodeOrEmail(db: Db, who: string): { id: string; participant_code: string } {
@@ -115,6 +114,7 @@ export function mergeCourses(db: Db, courses: Courses, fromId: string, intoId: s
     db.prepare("UPDATE syllabus_aliases SET course_id = ? WHERE course_id = ?").run(intoId, fromId);
     db.prepare("UPDATE syllabus_uploads SET course_id = ? WHERE course_id = ?").run(intoId, fromId);
     db.prepare("DELETE FROM deck_uploads WHERE course_id = ?").run(fromId);
+    db.prepare("DELETE FROM questions WHERE course_id = ?").run(fromId);
     db.prepare("DELETE FROM decks WHERE course_id = ?").run(fromId);
     db.prepare("DELETE FROM jobs WHERE course_id = ?").run(fromId);
     db.prepare("DELETE FROM courses WHERE id = ?").run(fromId);

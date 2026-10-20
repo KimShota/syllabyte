@@ -1,21 +1,27 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
-import type { DeckResult } from "@syllabyte/core/logic/assemble";
-import type { LectureStateView as LectureState, UploadView } from "@syllabyte/core/api/types";
-import type { Courses, DeckRow, LectureRow } from "./courses";
-
-export type { LectureState, UploadView };
+import type { DeckKu, DeckResult } from "@syllabyte/core/logic/assemble";
+import { tierDifficulty } from "@syllabyte/core/logic/kuProfile";
+import type { LectureStateView as LectureState, UploadOrderEntry, UploadView } from "@syllabyte/core/api/types";
+import type { Item, ItemTier, QuestionNeed } from "@syllabyte/core/types";
+import type { Courses, DeckRow } from "./courses";
 import type { Db } from "./db";
 
+export type { LectureState, UploadView };
+
 /**
- * Uploads (plan/slide-uploads-plan.md): a student's syllabus creates or joins a shared course, their slide files
- * become decks placed in its lectures, and the Python worker does the reading and processing through a job queue.
+ * Uploads (plan/slide-uploads-plan.md, revised 2026-10-21 as V1-V6): a student's syllabus creates or joins a shared
+ * course, each slide file they confirm becomes one lecture of it, and the Python worker does the reading, the KUs and
+ * the questions through a job queue.
  *
- *   syllabus   -> job 'syllabus'  -> join the course with the same key, or create it with the lecture list (U2, U6)
- *   slide file -> job 'deck_read' -> the same deck already in the course (free), or a new deck (caps, U16)
- *   confirm    -> place new decks (U11, U12) -> job 'deck' per deck, one lecture after another (U3)
- *   deck done  -> job 'link_pass' when later lectures already have KUs (U7)
+ *   syllabus    -> job 'syllabus'  -> join the course with the same key, or create it, keeping its topics as hints
+ *   slide file  -> job 'deck_read' -> the same deck already in the course (free), an updated version of one (logged),
+ *                                     or a new deck the reader says what it teaches (caps, U16)
+ *   all read    -> job 'placement' -> the new decks' suggested titles and order among the lectures (V1)
+ *   confirm     -> a lecture per new deck, where the student put it -> job 'deck' in course order (U3)
+ *   deck done   -> job 'link_pass' when later lectures already have KUs (U7)
+ *   a check     -> job 'question' for the (KU, tier) a student's check needs, before anything else (V4)
  */
 
 export interface Caps {
@@ -31,6 +37,11 @@ const SLIDE_TYPES = new Set([".pdf", ".pptx"]);
 const STALE_CLAIM_MS = 30 * 60 * 1000;
 const MAX_ATTEMPTS = 2;
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** a deck most of whose pages are already in a deck of the course is an updated version of it (V2) */
+const UPDATED_VERSION_SHARE = 0.5;
+const TIERS: ItemTier[] = ["basic", "applied", "advanced"];
+/** a student's check is waiting for these */
+const PRIORITY = { question: -10, deck_read: 1, placement: 2, syllabus: 0, deck: 10, link_pass: 50 } as const;
 
 export class UploadError extends Error {
   constructor(
@@ -41,7 +52,7 @@ export class UploadError extends Error {
   }
 }
 
-export type JobKind = "syllabus" | "deck_read" | "deck" | "link_pass";
+export type JobKind = "syllabus" | "deck_read" | "placement" | "deck" | "question" | "link_pass";
 interface JobRow {
   id: string;
   kind: JobKind;
@@ -75,15 +86,30 @@ interface DeckUploadRow {
   byte_size: number;
   status: "reading" | "read" | "confirmed" | "failed";
   deck_id: string | null;
-  outcome: "new" | "existing" | "extra_part" | "updated_version" | "over_cap" | "unreadable" | null;
+  outcome: UploadView["outcome"];
   created_at: number;
   error: string | null;
+}
+
+/** What the reader said a deck teaches (ingestion_agent/placement.py). */
+interface DeckSummary {
+  title: string;
+  summary: string;
+  lecture_number: number | null;
+  is_lecture: boolean;
 }
 
 export interface DeckParse {
   page_count: number;
   first_title: string;
   pages: string[];
+  page_keys?: string[];
+  summary?: DeckSummary;
+}
+
+interface Suggestion {
+  position: number;
+  sure: boolean;
 }
 
 interface Schedule {
@@ -101,39 +127,16 @@ export interface ClaimedJob {
   file_name: string | null;
 }
 
-const STOP = new Set(["the", "and", "for", "with", "from", "into", "lecture", "week", "slides", "slide", "class", "part", "notes", "pdf", "pptx", "intro"]);
-const words = (s: string) =>
-  new Set(
-    s
-      .toLowerCase()
-      .replace(/\.(pdf|pptx)$/i, "")
-      .split(/[^a-z0-9]+/)
-      .filter((w) => w.length >= 3 && !STOP.has(w) && !/^\d+$/.test(w)),
-  );
+const parseOf = (deck: DeckRow): DeckParse => JSON.parse(deck.parse_json) as DeckParse;
+const stem = (fileName: string) => fileName.replace(/\.[a-z0-9]+$/i, "");
+const questionKey = (n: QuestionNeed) => `${n.ku_id}|${n.tier}`;
 
 /**
- * Which lecture a deck looks like (U13): a lecture or week number in the file name ("lecture03.pdf", "wk_3",
- * "L3 sorting.pdf") is sure; otherwise the lecture whose title shares the most words with the file name and the
- * first slide's title, sure when it covers half the title's words. Null when nothing matches.
+ * Positions for new decks placed between two lectures (V1): evenly between `before` and `after`, or one apart after
+ * the last lecture. Lecture numbers never change; only the order does.
  */
-export function suggestLecture(fileName: string, firstTitle: string, lectures: Pick<LectureRow, "n" | "title" | "week">[]): { n: number | null; sure: boolean } {
-  const num = /(?:^|[^a-z])(lecture|lec|week|wk|class|session|l|w)[\s_-]*0*(\d{1,2})(?!\d)/i.exec(fileName) ?? /^0*(\d{1,2})(?=[\s_.-])/.exec(fileName);
-  if (num) {
-    const kind = num.length > 2 ? num[1].toLowerCase() : "lecture";
-    const n = Number(num[num.length - 1]);
-    const byWeek = kind === "week" || kind === "wk" || kind === "w";
-    const hit = byWeek ? lectures.find((l) => l.week === n) ?? lectures.find((l) => l.n === n) : lectures.find((l) => l.n === n);
-    if (hit) return { n: hit.n, sure: true };
-  }
-  const have = new Set([...words(fileName), ...words(firstTitle)]);
-  let best: { n: number; score: number } | null = null;
-  for (const l of lectures) {
-    const want = words(l.title);
-    if (want.size === 0) continue;
-    const score = [...want].filter((w) => have.has(w)).length / want.size;
-    if (score > 0 && (!best || score > best.score)) best = { n: l.n, score };
-  }
-  return best ? { n: best.n, sure: best.score >= 0.5 } : { n: null, sure: false };
+function spread(before: number, after: number | null, count: number): number[] {
+  return Array.from({ length: count }, (_, k) => (after === null ? before + k + 1 : before + ((after - before) * (k + 1)) / (count + 1)));
 }
 
 export class Uploads {
@@ -171,11 +174,11 @@ export class Uploads {
     this.db
       .prepare("INSERT INTO syllabus_uploads (id, user_id, file_name, file_path, status, created_at) VALUES (?, ?, ?, ?, 'reading', ?)")
       .run(id, userId, fileName, path, this.now());
-    this.enqueue("syllabus", id, null, 0);
+    this.enqueue("syllabus", id, null);
     return { upload_id: id };
   }
 
-  /** The worker read the syllabus: is it a new course? A known one is joined right away (no lecture list call). */
+  /** The worker read the syllabus: is it a new course? A known one is joined right away (no model call). */
   syllabusKey(jobId: string, key: string): { is_new: boolean } {
     const up = this.syllabusUploadOf(jobId);
     const existing = this.courses.byKey(key);
@@ -190,23 +193,23 @@ export class Uploads {
     this.db.prepare("UPDATE syllabus_uploads SET status = 'joined', course_id = ? WHERE id = ?").run(courseId, up.id);
   }
 
+  /** A new course: no lectures until slides are confirmed (V3); the syllabus's schedule is kept as topic hints. */
   private syllabusResult(jobId: string, r: { key: string; text: string; schedule?: Schedule }): void {
     const up = this.syllabusUploadOf(jobId);
     if (up.status !== "reading") return;
     const existing = this.courses.byKey(r.key);
     if (existing || !r.schedule) {
-      // created by someone else meanwhile (or the worker skipped the list because it was not new)
-      if (!existing) throw new Error("a syllabus result without a lecture list for a new course");
+      // created by someone else meanwhile (or the worker skipped the schedule because it was not new)
+      if (!existing) throw new Error("a syllabus result without a schedule for a new course");
       this.joinCourse(up, existing.id);
       return;
     }
-    const name = r.schedule.course_name.trim() || up.file_name.replace(/\.[a-z]+$/i, "");
+    const name = r.schedule.course_name.trim() || stem(up.file_name);
     const courseId = this.courses.create({
       syllabusKey: r.key, code: r.schedule.course_code.trim(), name, syllabusText: r.text, syllabusPath: up.file_path, createdBy: up.user_id, status: "ready",
     });
-    const lectures = r.schedule.lectures.map((l, i) => ({ n: i + 1, title: l.title, week: l.week ?? null }));
-    if (lectures.length) this.courses.setLectures(courseId, lectures, "syllabus");
-    this.db.prepare("UPDATE courses SET schedule_found = ? WHERE id = ?").run(lectures.length ? 1 : 0, courseId);
+    const topics = r.schedule.lectures.map((l) => l.title.trim()).filter(Boolean);
+    this.db.prepare("UPDATE courses SET schedule_found = ?, topics_json = ? WHERE id = ?").run(topics.length ? 1 : 0, JSON.stringify(topics), courseId);
     this.courses.addMember(courseId, up.user_id);
     this.db.prepare("UPDATE syllabus_uploads SET status = 'created', course_id = ? WHERE id = ?").run(courseId, up.id);
   }
@@ -227,53 +230,17 @@ export class Uploads {
       return { status: "none" as const };
     }
     const c = this.courses.get(courseId)!;
-    return {
-      status: "ready" as const,
-      course: {
-        id: c.id,
-        code: c.code,
-        name: c.name,
-        schedule_found: c.schedule_found === 1,
-        lectures_confirmed: c.lectures_confirmed_at !== null,
-        /** this student created the course, so they confirm the lecture list (U11) */
-        is_creator: c.created_by === userId,
-        lectures: this.lectureStates(courseId),
-      },
-    };
+    return { status: "ready" as const, course: { id: c.id, code: c.code, name: c.name, lectures: this.lectureStates(courseId) } };
   }
 
-  /** Each lecture and its decks, for the roadmap's states (U14). */
+  /** Each lecture in teaching order, with its deck's state (U14). */
   lectureStates(courseId: string): LectureState[] {
     const decks = this.courses.decks(courseId);
     return this.courses.lectures(courseId).map((l) => {
       const mine = decks.filter((d) => d.lecture_id === l.id);
-      const state: LectureState["state"] = mine.some((d) => d.status === "ready")
-        ? "ready"
-        : mine.some((d) => d.status === "queued" || d.status === "processing")
-          ? "analyzing"
-          : mine.some((d) => d.status === "failed")
-            ? "failed"
-            : "waiting";
-      return { n: l.n, title: l.title, week: l.week, state, decks: mine.map((d) => ({ id: d.id, file_name: d.file_name, status: d.status })) };
+      const state: LectureState["state"] = mine.some((d) => d.status === "ready") ? "ready" : mine.some((d) => d.status === "failed") ? "failed" : "analyzing";
+      return { n: l.n, position: l.position ?? l.n, title: l.title, state, decks: mine.map((d) => ({ id: d.id, file_name: d.file_name, status: d.status })) };
     });
-  }
-
-  /** The creator confirms or edits the lecture list read from the syllabus (U11); then it is fixed. */
-  confirmLectures(userId: string, courseId: string, list?: { n: number; title: string; week: number | null }[]): void {
-    const c = this.member(userId, courseId);
-    if (c.created_by !== userId) throw new UploadError("Only the student who added this course can change its lectures.", 403);
-    if (c.lectures_confirmed_at !== null) throw new UploadError("This course's lectures are already confirmed.", 409);
-    if (list) {
-      const titles = list.map((l) => String(l.title ?? "").trim());
-      if (titles.some((t) => !t || t.length > 120)) throw new UploadError("Every lecture needs a title (up to 120 characters).");
-      if (list.length > 60) throw new UploadError("A course can have at most 60 lectures.");
-      this.courses.setLectures(
-        courseId,
-        list.map((l, i) => ({ n: i + 1, title: titles[i], week: Number.isInteger(l.week) ? l.week : null })),
-        "syllabus",
-      );
-    }
-    this.db.prepare("UPDATE courses SET lectures_confirmed_at = ? WHERE id = ?").run(this.now(), courseId);
   }
 
   private member(userId: string, courseId: string) {
@@ -301,19 +268,38 @@ export class Uploads {
       this.db
         .prepare("INSERT INTO deck_uploads (id, user_id, course_id, file_name, file_path, byte_size, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'reading', ?)")
         .run(id, userId, courseId, f.name, path, f.bytes.byteLength, this.now());
-      this.enqueue("deck_read", id, courseId, 1);
+      this.enqueue("deck_read", id, courseId);
       ids.push(id);
     }
     return this.uploadViews(userId, courseId).filter((u) => ids.includes(u.id));
   }
 
-  /** The worker read a slide file: the same deck already in the course, or a new one within the caps (U16). */
+  /** The deck of the course most of whose pages `keys` has: what a new upload would be an updated version of (V2). */
+  private updatedVersionOf(courseId: string, keys: string[]): DeckRow | null {
+    if (!keys.length) return null;
+    let best: { deck: DeckRow; share: number } | null = null;
+    for (const d of this.courses.decks(courseId)) {
+      const theirs = new Set(parseOf(d).page_keys ?? []);
+      if (!theirs.size) continue;
+      const share = keys.filter((k) => theirs.has(k)).length / keys.length;
+      if (share > UPDATED_VERSION_SHARE && (!best || share > best.share)) best = { deck: d, share };
+    }
+    return best?.deck ?? null;
+  }
+
+  /** The worker read a slide file: a deck already in the course, an updated version of one, or a new deck (U16). */
   private deckReadResult(jobId: string, r: { content_key: string } & DeckParse): void {
     const job = this.job(jobId);
     const up = this.db.prepare("SELECT * FROM deck_uploads WHERE id = ?").get(job.target_id) as unknown as DeckUploadRow;
     const same = this.db.prepare("SELECT id FROM decks WHERE course_id = ? AND content_key = ?").get(up.course_id, r.content_key) as { id: string } | undefined;
     if (same) {
       this.db.prepare("UPDATE deck_uploads SET status = 'read', deck_id = ?, outcome = 'existing' WHERE id = ?").run(same.id, up.id);
+      return;
+    }
+    const older = this.updatedVersionOf(up.course_id, r.page_keys ?? []);
+    if (older) {
+      // not processed: everyone keeps the KUs and videos of the slides already in; the upload is logged (U12, V2)
+      this.db.prepare("UPDATE deck_uploads SET status = 'read', deck_id = ?, outcome = 'updated_version' WHERE id = ?").run(older.id, up.id);
       return;
     }
     const inCourse = (this.db.prepare("SELECT COUNT(*) AS n FROM decks WHERE course_id = ?").get(up.course_id) as { n: number }).n;
@@ -330,7 +316,7 @@ export class Uploads {
       this.db.prepare("UPDATE deck_uploads SET status = 'failed', outcome = 'over_cap', error = ? WHERE id = ?").run(over, up.id);
       return;
     }
-    const parse: DeckParse = { page_count: r.page_count, first_title: r.first_title, pages: r.pages };
+    const parse: DeckParse = { page_count: r.page_count, first_title: r.first_title, pages: r.pages, page_keys: r.page_keys ?? [], ...(r.summary ? { summary: r.summary } : {}) };
     // the deck takes the upload's id: the worker already cited its slides under that name
     this.db
       .prepare(
@@ -340,7 +326,78 @@ export class Uploads {
     this.db.prepare("UPDATE deck_uploads SET status = 'read', deck_id = ?, outcome = 'new' WHERE id = ?").run(up.id, up.id);
   }
 
-  /** The student's uploads not yet confirmed, and the ones that failed, for the review screen (U13). */
+  /** The new decks this student uploaded and nobody has placed yet. */
+  private unplacedOf(userId: string, courseId: string): DeckRow[] {
+    return this.db
+      .prepare(
+        `SELECT d.* FROM decks d JOIN deck_uploads u ON u.deck_id = d.id
+         WHERE u.user_id = ? AND u.course_id = ? AND u.status = 'read' AND u.outcome = 'new' AND d.lecture_id IS NULL AND d.status = 'unplaced'
+         ORDER BY u.created_at, u.rowid`,
+      )
+      .all(userId, courseId) as unknown as DeckRow[];
+  }
+
+  /** Once every file the student sent is read, one placement call orders the new ones (V1). */
+  private maybePlace(userId: string, courseId: string): void {
+    const reading = this.db.prepare("SELECT 1 FROM deck_uploads WHERE user_id = ? AND course_id = ? AND status = 'reading'").get(userId, courseId);
+    if (reading) return;
+    const decks = this.unplacedOf(userId, courseId);
+    if (!decks.length) return;
+    this.db.prepare(`UPDATE decks SET suggestion_json = NULL WHERE id IN (${decks.map(() => "?").join(",")})`).run(...decks.map((d) => d.id));
+    const target = `${userId}|${courseId}`;
+    const queued = this.db.prepare("SELECT 1 FROM jobs WHERE kind = 'placement' AND target_id = ? AND status = 'queued'").get(target);
+    if (!queued) this.enqueue("placement", target, courseId);
+  }
+
+  private placementPayload(target: string) {
+    const [userId, courseId] = target.split("|");
+    const course = this.courses.get(courseId)!;
+    const decks = this.courses.decks(courseId);
+    const lectures = this.courses.lectures(courseId).map((l) => {
+      const deck = decks.find((d) => d.lecture_id === l.id);
+      return { id: `lecture:${l.n}`, title: l.title, summary: deck ? (parseOf(deck).summary?.summary ?? "") : "" };
+    });
+    const fresh = this.unplacedOf(userId, courseId).map((d) => {
+      const p = parseOf(d);
+      return { id: d.id, file_name: d.file_name, title: p.summary?.title || p.first_title || stem(d.file_name), summary: p.summary?.summary ?? "", lecture_number: p.summary?.lecture_number ?? null };
+    });
+    return { course_name: course.name, topics: JSON.parse(course.topics_json || "[]") as string[], lectures, new: fresh };
+  }
+
+  /** Positions for the new decks from the order the placement call gave (unknown ids are ignored). */
+  private placementResult(j: JobRow, r: { order: string[]; unsure: string[] }): void {
+    const [userId, courseId] = j.target_id.split("|");
+    const decks = new Map(this.unplacedOf(userId, courseId).map((d) => [d.id, d]));
+    const posOf = new Map(this.courses.lectures(courseId).map((l) => [`lecture:${l.n}`, l.position ?? l.n]));
+    const order = (Array.isArray(r.order) ? r.order : []).filter((id) => posOf.has(id) || decks.has(id));
+    for (const id of decks.keys()) if (!order.includes(id)) order.push(id);
+    const unsure = new Set(Array.isArray(r.unsure) ? r.unsure : []);
+    this.positionsFor(order, posOf, (id) => decks.has(id), (id, position) => {
+      const p = parseOf(decks.get(id)!);
+      const s: Suggestion = { position, sure: !unsure.has(id) && p.summary?.is_lecture !== false };
+      this.db.prepare("UPDATE decks SET suggestion_json = ? WHERE id = ?").run(JSON.stringify(s), id);
+    });
+  }
+
+  /** Walks `order` (lecture keys with positions, and new ids) and gives each new id a position between its neighbours. */
+  private positionsFor(order: string[], posOf: Map<string, number>, isNew: (id: string) => boolean, set: (id: string, position: number) => void): void {
+    let before = 0;
+    let run: string[] = [];
+    const flush = (after: number | null) => {
+      spread(before, after, run.length).forEach((p, k) => set(run[k], p));
+      run = [];
+    };
+    for (const id of order) {
+      if (isNew(id)) run.push(id);
+      else if (posOf.has(id)) {
+        flush(posOf.get(id)!);
+        before = posOf.get(id)!;
+      }
+    }
+    flush(null);
+  }
+
+  /** The student's uploads not yet confirmed, and the ones that failed, for the review screen. */
   uploadViews(userId: string, courseId: string): UploadView[] {
     const lectures = this.courses.lectures(courseId);
     const rows = this.db
@@ -348,72 +405,159 @@ export class Uploads {
       .all(userId, courseId) as unknown as DeckUploadRow[];
     return rows.map((u) => {
       const deck = u.deck_id ? this.courses.deck(u.deck_id) : null;
-      const parse = deck ? (JSON.parse(deck.parse_json) as DeckParse) : null;
-      const placed = deck?.lecture_id ? lectures.find((l) => l.id === deck.lecture_id)?.n ?? null : null;
-      const guess = deck && !placed ? suggestLecture(u.file_name, parse!.first_title, lectures) : { n: null, sure: false };
+      const parse = deck ? parseOf(deck) : null;
+      const lecture = deck?.lecture_id ? lectures.find((l) => l.id === deck.lecture_id) : undefined;
+      const canPlace = Boolean(deck && u.status === "read" && u.outcome === "new" && !deck.lecture_id && deck.status === "unplaced");
+      const suggestion = canPlace && deck!.suggestion_json ? (JSON.parse(deck!.suggestion_json) as Suggestion) : null;
       return {
         id: u.id,
         file_name: u.file_name,
         status: u.status,
         outcome: u.outcome,
         error: u.error,
-        deck: deck ? { id: deck.id, first_title: parse!.first_title, page_count: parse!.page_count, status: deck.status } : null,
-        placed_lecture_n: placed,
-        suggested_lecture_n: guess.n,
-        suggestion_sure: guess.sure,
-        can_place: Boolean(deck && !deck.lecture_id && deck.status === "unplaced"),
+        deck: deck ? { id: deck.id, page_count: parse!.page_count, status: deck.status } : null,
+        title: lecture?.title ?? (parse ? parse.summary?.title || parse.first_title || stem(u.file_name) : null),
+        summary: parse?.summary?.summary ?? null,
+        placed_lecture_n: lecture?.n ?? null,
+        placing: u.status === "reading" || (canPlace && !suggestion),
+        suggested_position: suggestion?.position ?? null,
+        suggestion_sure: suggestion?.sure ?? false,
+        can_place: canPlace,
       };
     });
   }
 
   /**
-   * "Confirm all" (U13). Each read upload either is already placed (U11: nothing to choose), or is placed in the
-   * chosen lecture. A lecture that already has slides needs the student's answer (U12): an extra part is placed and
-   * processed, an updated version is logged and not processed. Without a lecture list (U2), choosing a number past
-   * the end adds that lecture, titled from the deck's first slide.
+   * "Confirm all" (V1). `order`: the course's lectures, all of them in their order, and this student's new decks where
+   * they go. Each new deck becomes a lecture at that place, titled as the student left it, and is queued for
+   * processing; uploads that need no placing (already in the course, an updated version) are just confirmed.
    */
-  confirmUploads(userId: string, courseId: string, choices: { upload_id: string; lecture_n?: number; kind?: "extra_part" | "updated_version" }[]): UploadView[] {
-    const c = this.member(userId, courseId);
-    for (const ch of choices) {
-      const up = this.db.prepare("SELECT * FROM deck_uploads WHERE id = ? AND user_id = ?").get(ch.upload_id, userId) as DeckUploadRow | undefined;
-      if (!up || up.course_id !== courseId) throw new UploadError("Unknown upload.", 404);
-      if (up.status !== "read") continue;
-      const deck = this.courses.deck(up.deck_id!)!;
-      if (deck.lecture_id || deck.status !== "unplaced") {
-        this.db.prepare("UPDATE deck_uploads SET status = 'confirmed' WHERE id = ?").run(up.id);
-        continue;
-      }
-      if (!Number.isInteger(ch.lecture_n) || ch.lecture_n! < 1) throw new UploadError(`Choose a lecture for ${up.file_name}.`);
-      let lecture = this.courses.lectures(courseId).find((l) => l.n === ch.lecture_n);
-      if (!lecture) {
-        const last = this.courses.lectures(courseId).at(-1)?.n ?? 0;
-        if (c.schedule_found === 1 || ch.lecture_n !== last + 1) throw new UploadError(`There is no lecture ${ch.lecture_n}.`);
-        const parse = JSON.parse(deck.parse_json) as DeckParse;
-        this.courses.addLecture(courseId, { n: ch.lecture_n!, title: parse.first_title || up.file_name.replace(/\.[a-z]+$/i, ""), week: null }, "upload");
-        lecture = this.courses.lectures(courseId).find((l) => l.n === ch.lecture_n)!;
-      }
-      const hasSlides = this.courses.decks(courseId).some((d) => d.lecture_id === lecture!.id);
-      if (hasSlides && !ch.kind) throw new UploadError(`Lecture ${lecture.n} already has slides. Is ${up.file_name} an extra part, or an updated version of the same slides?`, 409);
-      if (hasSlides && ch.kind === "updated_version") {
-        this.db.prepare("UPDATE deck_uploads SET status = 'confirmed', outcome = 'updated_version' WHERE id = ?").run(up.id);
-        continue;
-      }
-      this.db.prepare("UPDATE decks SET lecture_id = ?, status = 'queued', placed_at = ? WHERE id = ?").run(lecture.id, this.now(), deck.id);
-      this.db
-        .prepare("UPDATE deck_uploads SET status = 'confirmed', outcome = ? WHERE id = ?")
-        .run(hasSlides ? "extra_part" : "new", up.id);
-      this.enqueue("deck", deck.id, courseId, 10 + lecture.n);
-      this.courses.touched(courseId);
+  confirmUploads(userId: string, courseId: string, order: UploadOrderEntry[]): UploadView[] {
+    this.member(userId, courseId);
+    const rows = this.db.prepare("SELECT * FROM deck_uploads WHERE user_id = ? AND course_id = ? AND status = 'read'").all(userId, courseId) as unknown as DeckUploadRow[];
+    const placeable = new Map(
+      rows.flatMap((u) => {
+        const deck = u.deck_id ? this.courses.deck(u.deck_id) : null;
+        return u.outcome === "new" && deck && !deck.lecture_id && deck.status === "unplaced" ? [[u.id, { up: u, deck }] as const] : [];
+      }),
+    );
+    const lectures = this.courses.lectures(courseId);
+    const given = order.filter((e): e is { lecture_n: number } => "lecture_n" in e).map((e) => e.lecture_n);
+    if (given.join(",") !== lectures.map((l) => l.n).join(",")) {
+      throw new UploadError("The course changed while you were placing your slides. Check the order and confirm again.", 409);
     }
+    const titles = new Map<string, string>();
+    const keys: string[] = [];
+    for (const e of order) {
+      if ("lecture_n" in e) {
+        keys.push(`lecture:${e.lecture_n}`);
+        continue;
+      }
+      if (keys.includes(e.upload_id)) throw new UploadError("A file is listed twice.");
+      if (!placeable.has(e.upload_id)) continue; // placed by a classmate meanwhile, or nothing to place
+      const p = parseOf(placeable.get(e.upload_id)!.deck);
+      const title = (e.title ?? p.summary?.title ?? p.first_title ?? "").trim() || stem(placeable.get(e.upload_id)!.up.file_name);
+      if (title.length > 120) throw new UploadError("A lecture title can be up to 120 characters.");
+      titles.set(e.upload_id, title);
+      keys.push(e.upload_id);
+    }
+    const missing = [...placeable.values()].find(({ up }) => !titles.has(up.id));
+    if (missing) throw new UploadError(`Place ${missing.up.file_name} among the lectures.`);
+
+    const posOf = new Map(lectures.map((l) => [`lecture:${l.n}`, l.position ?? l.n]));
+    const positions = new Map<string, number>();
+    this.positionsFor(keys, posOf, (id) => titles.has(id), (id, p) => positions.set(id, p));
+    for (const key of keys) {
+      if (!titles.has(key)) continue;
+      const { up, deck } = placeable.get(key)!;
+      const lecture = this.courses.addLecture(courseId, { title: titles.get(key)!, position: positions.get(key)! });
+      this.db.prepare("UPDATE decks SET lecture_id = ?, status = 'queued', placed_at = ?, suggestion_json = NULL WHERE id = ?").run(lecture.id, this.now(), deck.id);
+      this.enqueue("deck", deck.id, courseId);
+    }
+    for (const u of rows) this.db.prepare("UPDATE deck_uploads SET status = 'confirmed' WHERE id = ?").run(u.id);
+    this.courses.touched(courseId);
     return this.uploadViews(userId, courseId);
+  }
+
+  // ------------------------------------------------------------------ questions written on demand (V4)
+
+  /** After a student's request: queue the questions their checks need that nobody is writing yet. */
+  requestQuestions(userId: string, needs: QuestionNeed[]): void {
+    const courseId = this.courses.courseOf(userId);
+    if (!courseId || !needs.length) return;
+    for (const need of needs) {
+      const busy = this.db
+        .prepare("SELECT 1 FROM jobs WHERE course_id = ? AND kind = 'question' AND target_id = ? AND status IN ('queued', 'claimed', 'failed')")
+        .get(courseId, questionKey(need));
+      if (!busy) this.enqueue("question", questionKey(need), courseId);
+    }
+  }
+
+  /** "Try again" on a check stuck on a question the worker gave up on. */
+  retryQuestion(userId: string, need: QuestionNeed): void {
+    const courseId = this.courses.courseOf(userId);
+    if (!courseId) throw new UploadError("You have no course yet.", 404);
+    this.db
+      .prepare("UPDATE jobs SET status = 'queued', attempts = 0, error = NULL, finished_at = NULL WHERE course_id = ? AND kind = 'question' AND target_id = ? AND status = 'failed'")
+      .run(courseId, questionKey(need));
+    this.courses.touched(courseId);
+  }
+
+  /** The KU a question job is for, as the deck job returned it, and its deck. */
+  private kuOf(courseId: string, kuId: string): { ku: DeckKu; deck: DeckRow } | null {
+    for (const deck of this.courses.decks(courseId)) {
+      if (deck.status !== "ready" || !deck.result_json) continue;
+      const ku = (JSON.parse(deck.result_json) as DeckResult).kus.find((k) => k.id === kuId);
+      if (ku) return { ku, deck };
+    }
+    return null;
+  }
+
+  private questionPayload(j: JobRow): Record<string, unknown> {
+    const [kuId, tier] = j.target_id.split("|") as [string, ItemTier];
+    const found = this.kuOf(j.course_id!, kuId);
+    if (!found) throw new UploadError(`no KU ${kuId} in this course`, 404);
+    const fx = this.courses.fixtures(j.course_id!);
+    const entry = fx.course.kus.find((k) => k.id === kuId)!;
+    const own = fx.items.filter((i) => i.ku_id === kuId && i.context === "assessment");
+    const sameTier = own.filter((i) => i.tier === tier).length;
+    const ids = new Set(fx.items.map((i) => i.id));
+    let k = sameTier + 1;
+    while (ids.has(`as-${kuId}-${tier}-${k}`)) k += 1;
+    const rank = [...fx.course.kus.map((x) => x.id)].sort().indexOf(kuId);
+    const titles = new Map(fx.course.kus.map((x) => [x.id, x.title]));
+    return {
+      deck_id: found.deck.id,
+      item_id: `as-${kuId}-${tier}-${k}`,
+      ku: found.ku,
+      prereq_titles: entry.prerequisites.map((p) => titles.get(p)).filter(Boolean),
+      tier,
+      beta: tierDifficulty(entry, fx.items)[tier],
+      // answers spread over A/B/C across the course, as a bank's are (assessment_agent/bank.py balance_positions)
+      target_index: (rank + TIERS.indexOf(tier) + sameTier) % 3,
+      avoid: own.map((i) => i.stem),
+    };
+  }
+
+  private questionResult(j: JobRow, r: { item?: Item; flags?: unknown[] }): void {
+    const [kuId, tier] = j.target_id.split("|");
+    const item = r.item;
+    if (!item || item.ku_id !== kuId || item.tier !== tier || item.context !== "assessment" || !Array.isArray(item.options) || item.options.length < 3) {
+      throw new UploadError("a question result needs an assessment item on the job's KU and tier");
+    }
+    if (!(item.correct_index >= 0 && item.correct_index < item.options.length)) throw new UploadError("the keyed answer is not one of the options");
+    const found = this.kuOf(j.course_id!, kuId);
+    if (!found) return;
+    if (this.db.prepare("SELECT 1 FROM questions WHERE id = ?").get(item.id)) return;
+    this.courses.addQuestion(j.course_id!, found.deck.id, item, Array.isArray(r.flags) ? r.flags : []);
   }
 
   // ------------------------------------------------------------------ the job queue
 
-  private enqueue(kind: JobKind, targetId: string, courseId: string | null, priority: number): void {
+  private enqueue(kind: JobKind, targetId: string, courseId: string | null): void {
     this.db
       .prepare("INSERT INTO jobs (id, kind, target_id, course_id, status, priority, created_at) VALUES (?, ?, ?, ?, 'queued', ?, ?)")
-      .run(randomUUID(), kind, targetId, courseId, priority, this.now());
+      .run(randomUUID(), kind, targetId, courseId, PRIORITY[kind], this.now());
   }
 
   private job(id: string): JobRow {
@@ -423,8 +567,8 @@ export class Uploads {
   }
 
   /**
-   * A deck is processed only after every deck placed before it in the course order (earlier lectures, then earlier
-   * decks of the same lecture), so it sees their KUs (U3). Everything else can run at once.
+   * A deck is processed only after every deck placed before it in the course order, so it sees their KUs (U3). Everything
+   * else can run at once.
    */
   private claimable(j: JobRow): boolean {
     if (j.kind !== "deck") return true;
@@ -436,22 +580,31 @@ export class Uploads {
     return !ahead.some((d) => d.status === "queued" || d.status === "processing");
   }
 
-  /** The next job for the worker, with what it needs; null when there is nothing to do. */
-  claim(): ClaimedJob | null {
+  /** The next job for the worker (only of `kinds` when given), with what it needs; null when there is nothing to do. */
+  claim(kinds?: string[]): ClaimedJob | null {
     this.db
       .prepare("UPDATE jobs SET status = 'queued', claimed_at = NULL WHERE status = 'claimed' AND claimed_at < ?")
       .run(this.now() - STALE_CLAIM_MS);
     const queued = this.db.prepare("SELECT * FROM jobs WHERE status = 'queued' ORDER BY priority, created_at").all() as unknown as JobRow[];
     for (const j of queued) {
+      if (kinds?.length && !kinds.includes(j.kind)) continue;
       if (!this.claimable(j)) continue;
+      let payload: Record<string, unknown>;
+      try {
+        payload = this.payload(j);
+      } catch (e) {
+        // its KU or deck is gone (the researcher moved things): nothing to do
+        this.db.prepare("UPDATE jobs SET status = 'failed', finished_at = ?, error = ? WHERE id = ?").run(this.now(), (e as Error).message, j.id);
+        continue;
+      }
       this.db.prepare("UPDATE jobs SET status = 'claimed', attempts = attempts + 1, claimed_at = ? WHERE id = ?").run(this.now(), j.id);
       if (j.kind === "deck") this.db.prepare("UPDATE decks SET status = 'processing' WHERE id = ?").run(j.target_id);
-      return { id: j.id, kind: j.kind, payload: this.payload(j), file_name: this.fileOf(j)?.name ?? null };
+      return { id: j.id, kind: j.kind, payload, file_name: this.fileOf(j)?.name ?? null };
     }
     return null;
   }
 
-  /** The file a job reads: the syllabus, the slide file, or the deck's file. */
+  /** The file a job reads: the syllabus, the slide file, or the deck's file (for a question, its KU's deck). */
   fileOf(jobOrId: JobRow | string): { path: string; name: string } | null {
     const j = typeof jobOrId === "string" ? this.job(jobOrId) : jobOrId;
     if (j.kind === "syllabus") {
@@ -466,6 +619,10 @@ export class Uploads {
       const d = this.courses.deck(j.target_id)!;
       return { path: d.file_path, name: d.file_name };
     }
+    if (j.kind === "question") {
+      const found = this.kuOf(j.course_id!, j.target_id.split("|")[0]);
+      return found ? { path: found.deck.file_path, name: found.deck.file_name } : null;
+    }
     return null;
   }
 
@@ -476,33 +633,38 @@ export class Uploads {
 
   private payload(j: JobRow): Record<string, unknown> {
     if (j.kind === "syllabus") return { upload_id: j.target_id };
-    if (j.kind === "deck_read") return { deck_name: j.target_id };
+    if (j.kind === "placement") return this.placementPayload(j.target_id);
+    if (j.kind === "question") return this.questionPayload(j);
     const course = this.courses.get(j.course_id!)!;
+    if (j.kind === "deck_read") {
+      const up = this.db.prepare("SELECT file_name FROM deck_uploads WHERE id = ?").get(j.target_id) as { file_name: string };
+      const known = this.courses.decks(course.id).map((d) => d.content_key);
+      return { deck_name: j.target_id, file_name: up.file_name, course_name: course.name, known_keys: known };
+    }
     const lectures = this.courses.lectures(course.id);
-    const nOf = new Map(lectures.map((l) => [l.id, l.n]));
+    const rank = new Map(lectures.map((l, i) => [l.id, i]));
     const ready = this.courses.decks(course.id).filter((d) => d.status === "ready" && d.result_json && d.lecture_id);
     if (j.kind === "deck") {
       const deck = this.courses.deck(j.target_id)!;
       const lecture = lectures.find((l) => l.id === deck.lecture_id)!;
-      // decks placed before this one: earlier lectures, and earlier parts of this lecture (U10)
-      const before = ready.filter((d) => nOf.get(d.lecture_id!)! <= lecture.n);
+      const before = ready.filter((d) => rank.get(d.lecture_id!)! < rank.get(lecture.id)!);
       return {
         deck_id: deck.id,
         course_name: course.name,
         syllabus_text: course.syllabus_text,
-        lecture_n: lecture.n,
+        lecture_n: rank.get(lecture.id)! + 1,
         lecture_title: lecture.title,
-        earlier: before.flatMap((d) => this.kusOf(d, nOf.get(d.lecture_id!)!)),
+        earlier: before.flatMap((d) => this.kusOf(d, rank.get(d.lecture_id!)! + 1)),
         taken_ids: ready.flatMap((d) => (JSON.parse(d.result_json!) as DeckResult).kus.map((k) => k.id)),
       };
     }
     // link_pass: the target is the deck that arrived after later lectures were processed (U7)
     const deck = this.courses.deck(j.target_id)!;
-    const n = nOf.get(deck.lecture_id!)!;
+    const at = rank.get(deck.lecture_id!)!;
     return {
       course_name: course.name,
-      new_kus: this.kusOf(deck, n),
-      later_kus: ready.filter((d) => nOf.get(d.lecture_id!)! > n).flatMap((d) => this.kusOf(d, nOf.get(d.lecture_id!)!)),
+      new_kus: this.kusOf(deck, at + 1),
+      later_kus: ready.filter((d) => rank.get(d.lecture_id!)! > at).flatMap((d) => this.kusOf(d, rank.get(d.lecture_id!)! + 1)),
     };
   }
 
@@ -514,21 +676,27 @@ export class Uploads {
     if (j.status !== "claimed") throw new UploadError("That job is not claimed.", 409);
     if (j.kind === "syllabus") this.syllabusResult(jobId, result as { key: string; text: string; schedule?: Schedule });
     else if (j.kind === "deck_read") this.deckReadResult(jobId, result as unknown as { content_key: string } & DeckParse);
+    else if (j.kind === "placement") this.placementResult(j, result as { order: string[]; unsure: string[] });
     else if (j.kind === "deck") this.deckResult(j, result as unknown as DeckResult);
+    else if (j.kind === "question") this.questionResult(j, result as { item?: Item; flags?: unknown[] });
     else this.courses.addLinks(j.course_id!, ((result.links ?? []) as { ku_id: string; prereq_id: string }[]).filter((l) => l.ku_id && l.prereq_id));
     this.finish(jobId);
+    if (j.kind === "deck_read") {
+      const up = this.db.prepare("SELECT user_id, course_id FROM deck_uploads WHERE id = ?").get(j.target_id) as { user_id: string; course_id: string };
+      this.maybePlace(up.user_id, up.course_id);
+    }
   }
 
   private deckResult(j: JobRow, r: DeckResult): void {
-    if (!Array.isArray(r.kus) || !Array.isArray(r.items) || r.kus.length === 0) throw new UploadError("a deck result needs kus and items");
-    const result: DeckResult = { kus: r.kus, items: r.items };
+    if (!Array.isArray(r.kus) || r.kus.length === 0) throw new UploadError("a deck result needs kus");
+    const result: DeckResult = { kus: r.kus, items: Array.isArray(r.items) ? r.items : [] };
     this.courses.setDeckResult(j.target_id, result);
     const deck = this.courses.deck(j.target_id)!;
     const lectures = this.courses.lectures(deck.course_id);
-    const nOf = new Map(lectures.map((l) => [l.id, l.n]));
-    const n = nOf.get(deck.lecture_id!)!;
-    const later = this.courses.decks(deck.course_id).some((d) => d.status === "ready" && d.lecture_id && nOf.get(d.lecture_id)! > n);
-    if (later) this.enqueue("link_pass", deck.id, deck.course_id, 50);
+    const rank = new Map(lectures.map((l, i) => [l.id, i]));
+    const at = rank.get(deck.lecture_id!)!;
+    const later = this.courses.decks(deck.course_id).some((d) => d.status === "ready" && d.lecture_id && rank.get(d.lecture_id)! > at);
+    if (later) this.enqueue("link_pass", deck.id, deck.course_id);
   }
 
   private finish(jobId: string): void {
@@ -550,12 +718,21 @@ export class Uploads {
     this.db.prepare("UPDATE jobs SET status = 'failed', finished_at = ?, error = ? WHERE id = ?").run(this.now(), error, jobId);
     const shown = userMessage ?? "Something went wrong reading this file. The researcher has been told.";
     if (j.kind === "syllabus") this.db.prepare("UPDATE syllabus_uploads SET status = 'failed', error = ? WHERE id = ?").run(shown, j.target_id);
-    else if (j.kind === "deck_read")
+    else if (j.kind === "deck_read") {
       this.db.prepare("UPDATE deck_uploads SET status = 'failed', outcome = 'unreadable', error = ? WHERE id = ?").run(shown, j.target_id);
-    else if (j.kind === "deck") {
+      const up = this.db.prepare("SELECT user_id, course_id FROM deck_uploads WHERE id = ?").get(j.target_id) as { user_id: string; course_id: string };
+      this.maybePlace(up.user_id, up.course_id);
+    } else if (j.kind === "placement") {
+      // no suggestion: the new decks go after the last lecture in the order they were sent, for the student to check
+      const [userId, courseId] = j.target_id.split("|");
+      const last = this.courses.lectures(courseId).reduce((m, l) => Math.max(m, l.position ?? l.n), 0);
+      this.unplacedOf(userId, courseId).forEach((d, k) => {
+        this.db.prepare("UPDATE decks SET suggestion_json = ? WHERE id = ?").run(JSON.stringify({ position: last + k + 1, sure: false } satisfies Suggestion), d.id);
+      });
+    } else if (j.kind === "deck") {
       this.db.prepare("UPDATE decks SET status = 'failed', error = ? WHERE id = ?").run(shown, j.target_id);
       this.courses.touched(j.course_id!);
-    }
+    } else if (j.kind === "question") this.courses.touched(j.course_id!);
   }
 
   /** Researcher: put a failed job back in the queue. */
@@ -566,5 +743,6 @@ export class Uploads {
     if (j.kind === "deck") this.db.prepare("UPDATE decks SET status = 'queued', error = NULL WHERE id = ?").run(j.target_id);
     if (j.kind === "syllabus") this.db.prepare("UPDATE syllabus_uploads SET status = 'reading', error = NULL WHERE id = ?").run(j.target_id);
     if (j.kind === "deck_read") this.db.prepare("UPDATE deck_uploads SET status = 'reading', outcome = NULL, error = NULL WHERE id = ?").run(j.target_id);
+    if (j.kind === "question") this.courses.touched(j.course_id!);
   }
 }

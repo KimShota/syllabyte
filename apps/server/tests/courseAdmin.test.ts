@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { courseDetail, mergeCourses, moveDeck, moveStudent, renameLecture } from "../src/courseAdmin";
+import { courseDetail, mergeCourses, moveLecture, moveStudent, renameLecture } from "../src/courseAdmin";
 import { work } from "./fakeWorker";
 import { makeServer } from "./helpers";
 
@@ -11,6 +11,20 @@ async function upload(s: Server, token: string, path: string, field: string, fil
   return s.app.request(path, { method: "POST", body: form, headers: { Authorization: `Bearer ${token}` } });
 }
 
+/** Uploads slide files and confirms them where the placement call put them. */
+async function addSlides(s: Server, st: { token: string; get: (p: string) => Response | Promise<Response>; post: (p: string, b: unknown) => Response | Promise<Response> }, courseId: string, files: { name: string; text: string }[]) {
+  await upload(s, st.token, `/api/courses/${courseId}/slides`, "files", files);
+  await work(s, { kinds: ["deck_read", "placement"] });
+  const mine = (await (await st.get("/api/courses/mine")).json()) as any;
+  const { uploads } = (await (await st.get(`/api/courses/${courseId}/uploads`)).json()) as any;
+  const order = [
+    ...mine.course.lectures.map((l: any) => ({ at: l.position, e: { lecture_n: l.n } })),
+    ...uploads.filter((u: any) => u.can_place).map((u: any) => ({ at: u.suggested_position, e: { upload_id: u.id } })),
+  ].sort((a, b) => a.at - b.at).map((r) => r.e);
+  await st.post(`/api/courses/${courseId}/uploads/confirm`, { order });
+  await work(s);
+}
+
 async function withCourse(s: Server, email: string, syllabus: string) {
   const st = await s.signIn(email);
   await upload(s, st.token, "/api/courses", "syllabus", [{ name: "s.pdf", text: syllabus }]);
@@ -20,25 +34,25 @@ async function withCourse(s: Server, email: string, syllabus: string) {
 }
 
 describe("the researcher's fixes", () => {
-  it("renames a lecture and moves a deck to another lecture", async () => {
+  it("renames a lecture and moves it in the teaching order, keeping its number", async () => {
     const s = makeServer();
     const { st, courseId } = await withCourse(s, "ann@nyu.edu", "Syllabus A");
-    await st.post(`/api/courses/${courseId}/lectures`, {});
-    await upload(s, st.token, `/api/courses/${courseId}/slides`, "files", [{ name: "lecture1.pdf", text: "Potential outcomes intro" }]);
-    await work(s);
-    const [u] = ((await (await st.get(`/api/courses/${courseId}/uploads`)).json()) as any).uploads;
-    await st.post(`/api/courses/${courseId}/uploads/confirm`, { choices: [{ upload_id: u.id, lecture_n: 1 }] });
-    await work(s);
-
-    renameLecture(s.courses, courseId, 2, "Bias");
-    moveDeck(s.db, s.courses, u.deck.id, 2);
-    const d = courseDetail(s.db, s.courses, courseId);
-    expect(d.lectures.map((l) => [l.n, l.title, l.decks.length])).toEqual([
-      [1, "Potential outcomes", 0],
-      [2, "Bias", 1],
-      [3, "Randomization", 0],
+    await addSlides(s, st, courseId, [
+      { name: "a.pdf", text: "Potential outcomes intro\norder 1" },
+      { name: "b.pdf", text: "Selection bias\norder 2" },
+      { name: "c.pdf", text: "Randomized trials\norder 3" },
     ]);
-    expect(s.courses.fixtures(courseId).course.kus.every((k) => k.lecture_n === 2)).toBe(true);
+    renameLecture(s.courses, courseId, 2, "Bias");
+    moveLecture(s.courses, s.db, courseId, 3, 0);
+    const d = courseDetail(s.db, s.courses, courseId);
+    expect(d.lectures.map((l) => [l.position, l.n, l.title])).toEqual([
+      [1, 3, "Randomized trials"],
+      [2, 1, "Potential outcomes intro"],
+      [3, 2, "Bias"],
+    ]);
+    moveLecture(s.courses, s.db, courseId, 3, 2);
+    expect(courseDetail(s.db, s.courses, courseId).lectures.map((l) => l.n)).toEqual([1, 2, 3]);
+    expect(() => moveLecture(s.courses, s.db, courseId, 9, 0)).toThrow(/no lecture 9/);
   });
 
   it("merges a course split off by a slightly different syllabus, and later copies of it join too", async () => {
@@ -61,14 +75,11 @@ describe("the researcher's fixes", () => {
     expect(s.courses.courseOf((s.db.prepare("SELECT id FROM users WHERE email = 'bob@nyu.edu'").get() as { id: string }).id)).toBe(a.courseId);
 
     // Ann answers a question in her course, then can't be moved
-    await a.st.post(`/api/courses/${a.courseId}/lectures`, {});
-    await upload(s, a.st.token, `/api/courses/${a.courseId}/slides`, "files", [{ name: "lecture1.pdf", text: "Potential outcomes intro" }]);
+    await addSlides(s, a.st, a.courseId, [{ name: "lecture1.pdf", text: "Potential outcomes intro" }]);
+    await a.st.rpc("getSitting", "lecture-1");
     await work(s);
-    const [u] = ((await (await a.st.get(`/api/courses/${a.courseId}/uploads`)).json()) as any).uploads;
-    await a.st.post(`/api/courses/${a.courseId}/uploads/confirm`, { choices: [{ upload_id: u.id, lecture_n: 1 }] });
-    await work(s);
-    const sitting = await a.st.rpc<{ current: { item: { id: string } } }>("getSitting", "week0");
-    await a.st.rpc("answerSitting", "week0", sitting.current.item.id, 0, 1000);
+    const sitting = await a.st.rpc<{ current: { item: { id: string } } }>("getSitting", "lecture-1");
+    await a.st.rpc("answerSitting", "lecture-1", sitting.current.item.id, 0, 1000);
     expect(() => moveStudent(s.db, s.courses, "ann@nyu.edu", b.courseId)).toThrow(/already answered/);
   });
 
@@ -76,11 +87,7 @@ describe("the researcher's fixes", () => {
     const s = makeServer();
     const a = await withCourse(s, "ann@nyu.edu", "Syllabus A");
     const b = await withCourse(s, "bob@nyu.edu", "Syllabus B");
-    await b.st.post(`/api/courses/${b.courseId}/lectures`, {});
-    await upload(s, b.st.token, `/api/courses/${b.courseId}/slides`, "files", [{ name: "lecture1.pdf", text: "x" }]);
-    await work(s);
-    const [u] = ((await (await b.st.get(`/api/courses/${b.courseId}/uploads`)).json()) as any).uploads;
-    await b.st.post(`/api/courses/${b.courseId}/uploads/confirm`, { choices: [{ upload_id: u.id, lecture_n: 1 }] });
+    await addSlides(s, b.st, b.courseId, [{ name: "lecture1.pdf", text: "x" }]);
     expect(() => mergeCourses(s.db, s.courses, b.courseId, a.courseId)).toThrow(/slides placed/);
   });
 });

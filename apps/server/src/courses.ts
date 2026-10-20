@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { assembleCourse, type DeckResult } from "@syllabyte/core/logic/assemble";
 import { videoRequests, type VideoRequest } from "@syllabyte/core/logic/videoRequests";
-import type { DemoState, Fixtures } from "@syllabyte/core/types";
+import type { DemoState, Fixtures, Item, ItemTier, QuestionNeed } from "@syllabyte/core/types";
 import type { Db } from "./db";
 
 /**
@@ -18,6 +18,7 @@ export interface CourseRow {
   syllabus_path: string;
   status: "reading" | "ready" | "failed";
   schedule_found: number | null;
+  topics_json: string;
   created_by: string;
   created_at: number;
   lectures_confirmed_at: number | null;
@@ -30,6 +31,8 @@ export interface LectureRow {
   title: string;
   week: number | null;
   source: "syllabus" | "upload";
+  /** teaching order (V1); null on rows from before it, which sort by n */
+  position: number | null;
 }
 
 export interface DeckRow {
@@ -40,6 +43,7 @@ export interface DeckRow {
   file_name: string;
   file_path: string;
   parse_json: string;
+  suggestion_json: string | null;
   status: "unplaced" | "queued" | "processing" | "ready" | "failed";
   result_json: string | null;
   first_user_id: string;
@@ -96,31 +100,22 @@ export class Courses {
     this.db.prepare("INSERT OR IGNORE INTO course_members (course_id, user_id, joined_at) VALUES (?, ?, ?)").run(courseId, userId, this.now());
   }
 
+  /** The course's lectures in teaching order (V1). */
   lectures(courseId: string): LectureRow[] {
-    return this.db.prepare("SELECT * FROM lectures WHERE course_id = ? ORDER BY n").all(courseId) as unknown as LectureRow[];
+    return this.db.prepare("SELECT * FROM lectures WHERE course_id = ? ORDER BY COALESCE(position, n), n").all(courseId) as unknown as LectureRow[];
   }
 
-  /** Replaces the lecture list; refused once a deck is placed in it (the researcher moves decks first). */
-  setLectures(courseId: string, list: { n: number; title: string; week: number | null }[], source: LectureRow["source"]): void {
-    const placed = this.db.prepare("SELECT COUNT(*) AS n FROM decks WHERE course_id = ? AND lecture_id IS NOT NULL").get(courseId) as { n: number };
-    if (placed.n > 0) throw new Error("decks are already placed in this course's lectures");
-    this.db.prepare("DELETE FROM lectures WHERE course_id = ?").run(courseId);
-    const insert = this.db.prepare("INSERT INTO lectures (id, course_id, n, title, week, source) VALUES (?, ?, ?, ?, ?, ?)");
-    for (const l of list) insert.run(randomUUID(), courseId, l.n, l.title, l.week, source);
-    this.touched(courseId);
-  }
-
-  addLecture(courseId: string, l: { n: number; title: string; week: number | null }, source: LectureRow["source"]): string {
+  /** A new lecture at `position` (default: last); its number is the next unused one, so no other lecture's changes. */
+  addLecture(courseId: string, l: { title: string; position?: number; n?: number }, source: LectureRow["source"] = "upload"): LectureRow {
     const id = randomUUID();
-    this.db.prepare("INSERT INTO lectures (id, course_id, n, title, week, source) VALUES (?, ?, ?, ?, ?, ?)").run(id, courseId, l.n, l.title, l.week, source);
+    const max = this.db.prepare("SELECT MAX(n) AS n, MAX(COALESCE(position, n)) AS p FROM lectures WHERE course_id = ?").get(courseId) as { n: number | null; p: number | null };
+    const n = l.n ?? (max.n ?? 0) + 1;
+    const position = l.position ?? (max.p ?? 0) + 1;
+    this.db.prepare("INSERT INTO lectures (id, course_id, n, title, week, source, position) VALUES (?, ?, ?, ?, NULL, ?, ?)").run(id, courseId, n, l.title, source, position);
     this.touched(courseId);
-    return id;
+    return this.db.prepare("SELECT * FROM lectures WHERE id = ?").get(id) as unknown as LectureRow;
   }
 
-  /**
-   * The course's decks in course order: by lecture, then when they were placed (part 1 before part 2), then id, so the
-   * order never depends on timing ties. Unplaced decks come last.
-   */
   renameLecture(lectureId: string, title: string): void {
     const l = this.db.prepare("SELECT course_id FROM lectures WHERE id = ?").get(lectureId) as { course_id: string } | undefined;
     if (!l) throw new Error(`unknown lecture ${lectureId}`);
@@ -128,11 +123,15 @@ export class Courses {
     this.touched(l.course_id);
   }
 
+  /**
+   * The course's decks in course order: by their lecture's place, then when they were placed, then id, so the order
+   * never depends on timing ties. Unplaced decks come last.
+   */
   decks(courseId: string): DeckRow[] {
     return this.db
       .prepare(
         `SELECT d.* FROM decks d LEFT JOIN lectures l ON l.id = d.lecture_id
-         WHERE d.course_id = ? ORDER BY l.n IS NULL, l.n, d.placed_at, d.created_at, d.id`,
+         WHERE d.course_id = ? ORDER BY l.id IS NULL, COALESCE(l.position, l.n), l.n, d.placed_at, d.created_at, d.id`,
       )
       .all(courseId) as unknown as DeckRow[];
   }
@@ -147,6 +146,30 @@ export class Courses {
     if (!deck) throw new Error(`unknown deck ${deckId}`);
     this.db.prepare("UPDATE decks SET status = 'ready', result_json = ?, ready_at = ?, error = NULL WHERE id = ?").run(JSON.stringify(result), this.now(), deckId);
     this.touched(deck.course_id);
+  }
+
+  /** Questions written on demand (V4), oldest first. */
+  questions(courseId: string): { id: string; deck_id: string; ku_id: string; tier: ItemTier; item: Item }[] {
+    const rows = this.db.prepare("SELECT id, deck_id, ku_id, tier, item_json FROM questions WHERE course_id = ? ORDER BY created_at, id").all(courseId) as {
+      id: string; deck_id: string; ku_id: string; tier: ItemTier; item_json: string;
+    }[];
+    return rows.map((r) => ({ id: r.id, deck_id: r.deck_id, ku_id: r.ku_id, tier: r.tier, item: JSON.parse(r.item_json) as Item }));
+  }
+
+  addQuestion(courseId: string, deckId: string, item: Item, flags: unknown[]): void {
+    this.db
+      .prepare("INSERT INTO questions (id, course_id, deck_id, ku_id, tier, item_json, flags_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(item.id, courseId, deckId, item.ku_id, item.tier, JSON.stringify(item), JSON.stringify(flags), this.now());
+    this.touched(courseId);
+  }
+
+  /** Questions the worker gave up on: a check waiting for one says so (V4). */
+  questionFailures(courseId: string): QuestionNeed[] {
+    const rows = this.db.prepare("SELECT target_id FROM jobs WHERE course_id = ? AND kind = 'question' AND status = 'failed'").all(courseId) as { target_id: string }[];
+    return rows.map((r) => {
+      const [ku_id, tier] = r.target_id.split("|");
+      return { ku_id, tier: tier as ItemTier };
+    });
   }
 
   addLinks(courseId: string, links: { ku_id: string; prereq_id: string }[]): void {
@@ -190,7 +213,7 @@ export class Courses {
     return rows.map((r) => ({ ...r, prereq_ids: JSON.parse(r.prereq_ids) as string[] }));
   }
 
-  /** The course as the shared rules read it: every lecture, the processed decks placed in them, and the added links. */
+  /** The course as the shared rules read it: its lectures, the processed decks, the questions written, the added links. */
   fixtures(courseId: string): Fixtures {
     const cached = this.cache.get(courseId);
     if (cached) return cached;
@@ -206,8 +229,10 @@ export class Courses {
       id: course.id,
       code: course.code,
       name: course.name,
-      lectures: lectures.map((l) => ({ n: l.n, title: l.title, week: l.week })),
+      lectures: lectures.map((l) => ({ n: l.n, title: l.title, position: l.position ?? l.n })),
       decks,
+      questions: this.questions(courseId).map((q) => q.item),
+      question_failures: this.questionFailures(courseId),
       links,
     });
     this.cache.set(courseId, fx);

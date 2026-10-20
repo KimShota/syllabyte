@@ -1,9 +1,9 @@
-import { mockApi } from "@syllabyte/core/api/mock";
+import { mockApi, questionNeedsNow } from "@syllabyte/core/api/mock";
 import { FIX, setFixtures } from "@syllabyte/core/fixtures";
 import { setEventEnv, track } from "@syllabyte/core/events";
 import { freshState, getEventVersion, getState, getVersion, mutate, replaceState } from "@syllabyte/core/store";
 import { startOfWeek } from "@syllabyte/core/logic/time";
-import type { DemoState, Fixtures } from "@syllabyte/core/types";
+import type { DemoState, Fixtures, QuestionNeed } from "@syllabyte/core/types";
 import type { Db } from "./db";
 import type { User } from "./auth";
 
@@ -27,8 +27,10 @@ export class StateRunner {
     private opts: {
       semesterStart?: number;
       courseFor?: (userId: string) => Fixtures | null;
-      /** after each request of a student with a course: their state, e.g. to record the videos they need */
+      /** after each request of a student with a course that changed their state, e.g. to record the videos they need */
       after?: (userId: string, state: DemoState) => void;
+      /** after every request of a student with a course: the questions their checks need written (V4) */
+      needs?: (userId: string, needs: QuestionNeed[]) => void;
     } = {},
   ) {}
 
@@ -53,6 +55,7 @@ export class StateRunner {
     try {
       const out = await fn();
       if (course && this.opts.after && getVersion() !== v) this.opts.after(user.id, getState());
+      if (course && this.opts.needs) this.opts.needs(user.id, questionNeedsNow());
       return out;
     } finally {
       if (getVersion() !== v || getEventVersion() !== e) this.save(user.id);

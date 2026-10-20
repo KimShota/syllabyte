@@ -23,16 +23,22 @@ const bank = (kuId: string, n: number): Item[] =>
 
 const result = (kus: string[]): DeckResult => ({
   kus: kus.map((id) => ({ id, title: id, short_title: id, summary: "", bloom_level: "understand" as const, prerequisites: [], source_refs: [] })),
-  items: kus.flatMap((k) => bank(k, 4)),
+  items: [],
 });
+
+/** Questions as the worker saves them (V4): one per KU at each tier. */
+function saveQuestions(courses: Courses, courseId: string, deckId: string, kus: string[]) {
+  for (const k of kus) for (const q of bank(k, 3)) courses.addQuestion(courseId, deckId, { ...q, tier: (["basic", "applied", "advanced"] as const)[Number(q.id.at(-1))], difficulty_prior: Number(q.id.at(-1)) - 1 }, []);
+}
 
 const userId = (db: Db, email: string) => (db.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string }).id;
 
-/** A course with lectures 1 and 2 and one processed deck in lecture 1, joined by `members`. */
+/** A course with lectures 1 and 2 and one deck in lecture 1, joined by `members`. */
 function seedCourse(db: Db, courses: Courses, members: string[]) {
   const creator = userId(db, members[0]);
   const id = courses.create({ syllabusKey: "k1", code: "CS-1", name: "Uploaded course", syllabusText: "", syllabusPath: "x", createdBy: creator, status: "ready" });
-  courses.setLectures(id, [{ n: 1, title: "First", week: 1 }, { n: 2, title: "Second", week: 2 }], "syllabus");
+  courses.addLecture(id, { title: "First" });
+  courses.addLecture(id, { title: "Second" });
   const lecture1 = courses.lectures(id)[0].id;
   db.prepare(
     "INSERT INTO decks (id, course_id, lecture_id, content_key, file_name, file_path, parse_json, status, first_user_id, created_at) VALUES ('d1', ?, ?, 'c1', 'one.pdf', 'p', '{}', 'processing', ?, 0)",
@@ -46,14 +52,14 @@ describe("a student's own course", () => {
     const s = makeServer();
     const ann = await s.signIn("ann@nyu.edu");
     const bob = await s.signIn("bob@nyu.edu");
-    seedCourse(s.db, s.courses, ["ann@nyu.edu"]);
+    const id = seedCourse(s.db, s.courses, ["ann@nyu.edu"]);
     s.courses.setDeckResult("d1", result(["ku-x", "ku-y"]));
+    saveQuestions(s.courses, id, "d1", ["ku-x", "ku-y"]);
 
     const annMap = await ann.rpc<CourseMap>("getCourseMap");
-    // every lecture, the one still waiting for slides too
     expect(annMap.lectures.map((l) => l.lecture.title)).toEqual(["First", "Second"]);
     expect(kuIds(annMap)).toEqual(["ku-x", "ku-y"]);
-    const annSitting = await ann.rpc<Sitting>("getSitting", "week0");
+    const annSitting = await ann.rpc<Sitting>("getSitting", "lecture-1");
     expect(annSitting.current!.item.id).toMatch(/^as-ku-[xy]-/);
 
     const bobSitting = await bob.rpc<Sitting>("getSitting", "week0");
@@ -64,12 +70,13 @@ describe("a student's own course", () => {
     const s = makeServer();
     const ann = await s.signIn("ann@nyu.edu");
     const cat = await s.signIn("cat@nyu.edu");
-    seedCourse(s.db, s.courses, ["ann@nyu.edu", "cat@nyu.edu"]);
+    const id = seedCourse(s.db, s.courses, ["ann@nyu.edu", "cat@nyu.edu"]);
     s.courses.setDeckResult("d1", result(["ku-x"]));
+    saveQuestions(s.courses, id, "d1", ["ku-x"]);
     expect(kuIds(await ann.rpc<CourseMap>("getCourseMap"))).toEqual(["ku-x"]);
     expect(kuIds(await cat.rpc<CourseMap>("getCourseMap"))).toEqual(["ku-x"]);
-    const a = await ann.rpc<Sitting>("getSitting", "week0");
-    const c = await cat.rpc<Sitting>("getSitting", "week0");
+    const a = await ann.rpc<Sitting>("getSitting", "lecture-1");
+    const c = await cat.rpc<Sitting>("getSitting", "lecture-1");
     expect(c.current!.item.id).toBe(a.current!.item.id);
   });
 
@@ -97,10 +104,13 @@ describe("a student's own course", () => {
     expect(s.courses.fixtures(id).course.kus.find((k) => k.id === "ku-y")!.prerequisites).toEqual(["ku-x"]);
   });
 
-  it("refuses to replace the lecture list once a deck is placed", async () => {
+  it("orders lectures by position and gives a new lecture the next number", async () => {
     const s = makeServer();
     await s.signIn("ann@nyu.edu");
     const id = seedCourse(s.db, s.courses, ["ann@nyu.edu"]);
-    expect(() => s.courses.setLectures(id, [{ n: 1, title: "Other", week: null }], "syllabus")).toThrow(/already placed/);
+    const between = s.courses.addLecture(id, { title: "Between", position: 1.5 });
+    expect(between.n).toBe(3);
+    expect(s.courses.lectures(id).map((l) => [l.n, l.title])).toEqual([[1, "First"], [3, "Between"], [2, "Second"]]);
+    expect(s.courses.fixtures(id).course.lectures.map((l) => [l.n, l.position])).toEqual([[1, 1], [3, 2], [2, 3]]);
   });
 });

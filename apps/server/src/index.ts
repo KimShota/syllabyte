@@ -6,7 +6,7 @@ import { Courses } from "./courses";
 import { openDb } from "./db";
 import { consoleMailer, resendMailer } from "./mail";
 import { StateRunner } from "./runner";
-import { Uploads } from "./uploads";
+import { DEFAULT_CAPS, Uploads } from "./uploads";
 
 const production = process.env.NODE_ENV === "production";
 const secret = process.env.SYLLABYTE_SECRET ?? (production ? "" : randomBytes(16).toString("hex"));
@@ -25,10 +25,18 @@ const mailer = resendKey ? resendMailer(resendKey, process.env.MAIL_FROM ?? "Syl
 const semesterStart = process.env.SYLLABYTE_SEMESTER_START ? new Date(process.env.SYLLABYTE_SEMESTER_START).getTime() : undefined;
 const auth = new Auth(db, mailer, secret);
 const courses = new Courses(db);
+// U16's caps; the researcher can raise them
+const cap = (name: string, fallback: number) => (process.env[name] ? Number(process.env[name]) : fallback);
+const caps = {
+  decksPerCourse: cap("SYLLABYTE_DECKS_PER_COURSE", DEFAULT_CAPS.decksPerCourse),
+  maxFileBytes: cap("SYLLABYTE_MAX_FILE_MB", DEFAULT_CAPS.maxFileBytes / 1024 / 1024) * 1024 * 1024,
+  newDecksPerDay: cap("SYLLABYTE_NEW_DECKS_PER_DAY", DEFAULT_CAPS.newDecksPerDay),
+};
+const uploads = new Uploads(db, courses, process.env.SYLLABYTE_FILES ?? "data/files", caps);
 const runner = new StateRunner(db, { semesterStart, courseFor: (id) => courses.fixturesFor(id),
     after: (id, state) => courses.recordVideoNeeds(id, state),
+    needs: (id, needs) => uploads.requestQuestions(id, needs),
   });
-const uploads = new Uploads(db, courses, process.env.SYLLABYTE_FILES ?? "data/files");
 const app = createApp({ db, auth, runner, courses, uploads, workerToken: process.env.SYLLABYTE_WORKER_TOKEN, corsOrigin: process.env.SYLLABYTE_CORS_ORIGIN });
 
 const port = Number(process.env.PORT ?? 8788);

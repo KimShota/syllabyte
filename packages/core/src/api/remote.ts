@@ -1,5 +1,6 @@
 import type { ClientEvent } from "../events";
-import type { Api, MyCourseView, UploadChoice, UploadFile, UploadView } from "./types";
+import type { QuestionNeed } from "../types";
+import type { Api, MyCourseView, UploadOrderEntry, UploadFile, UploadView } from "./types";
 
 /**
  * The `Api` over HTTP to apps/server (plan/backend-plan.md): every method is `POST /api/rpc/<method>` with
@@ -167,19 +168,18 @@ export function createBackend(o: BackendOptions) {
       mine: async (): Promise<MyCourseView> => (await get("/api/courses/mine")) as unknown as MyCourseView,
       /** the syllabus: the course is created or joined once the server has read it (poll `mine`) */
       create: async (syllabus: UploadFile): Promise<{ upload_id: string }> => (await upload("/api/courses", "syllabus", [syllabus])) as unknown as { upload_id: string },
-      /** the creator confirms the lecture list, as read or edited */
-      confirmLectures: async (courseId: string, lectures?: { n: number; title: string; week: number | null }[]): Promise<MyCourseView> => {
-        const out = (await request(`/api/courses/${courseId}/lectures`, lectures ? { lectures } : {}, true)) as unknown as MyCourseView;
-        o.onChanged();
-        return out;
-      },
       addSlides: async (courseId: string, files: UploadFile[]): Promise<UploadView[]> =>
         ((await upload(`/api/courses/${courseId}/slides`, "files", files)) as unknown as { uploads: UploadView[] }).uploads,
       uploads: async (courseId: string): Promise<UploadView[]> => ((await get(`/api/courses/${courseId}/uploads`)) as unknown as { uploads: UploadView[] }).uploads,
-      confirmUploads: async (courseId: string, choices: UploadChoice[]): Promise<UploadView[]> => {
-        const out = ((await request(`/api/courses/${courseId}/uploads/confirm`, { choices }, true)) as unknown as { uploads: UploadView[] }).uploads;
+      confirmUploads: async (courseId: string, order: UploadOrderEntry[]): Promise<UploadView[]> => {
+        const out = ((await request(`/api/courses/${courseId}/uploads/confirm`, { order }, true)) as unknown as { uploads: UploadView[] }).uploads;
         o.onChanged();
         return out;
+      },
+      /** a check is stuck on a question the worker could not write: try writing it again (V4) */
+      retryQuestion: async (need: QuestionNeed): Promise<void> => {
+        await request("/api/questions/retry", need, true);
+        o.onChanged();
       },
     },
   };

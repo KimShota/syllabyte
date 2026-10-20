@@ -1,7 +1,9 @@
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
+import type { UploadOrderEntry } from "@syllabyte/core/api/types";
 import { studyCsv } from "@syllabyte/core/logic/instruments";
+import type { ItemTier } from "@syllabyte/core/types";
 import { Auth, type User } from "./auth";
 import { advanceClock, advanceToModuleEnd, getClock, resetClock } from "./clock";
 import { readFileSync } from "node:fs";
@@ -86,6 +88,7 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
   app.use("/api/research/*", needUser);
   app.use("/api/courses", needUser);
   app.use("/api/courses/*", needUser);
+  app.use("/api/questions/*", needUser);
 
   app.get("/api/session", (c) => {
     const { email, role, participant_code } = c.get("user");
@@ -185,17 +188,6 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
     }),
   );
 
-  /** The creator confirms the lecture list, edited or as read ({ lectures } omitted). */
-  app.post(
-    "/api/courses/:id/lectures",
-    uploadErrors(async (c) => {
-      const { lectures } = await json(c);
-      if (lectures !== undefined && !Array.isArray(lectures)) return c.json({ error: "lectures must be a list" }, 400);
-      uploads.confirmLectures(c.get("user").id, idOf(c), lectures as { n: number; title: string; week: number | null }[] | undefined);
-      return c.json(uploads.myCourse(c.get("user").id));
-    }),
-  );
-
   /** Slide files (multipart field "files", one or more). */
   app.post(
     "/api/courses/:id/slides",
@@ -207,13 +199,26 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
     uploadErrors((c) => c.json({ uploads: uploads.uploadViews(c.get("user").id, idOf(c)) })),
   );
 
-  /** The review screen's "Confirm all": { choices: [{ upload_id, lecture_n, kind? }] }. */
+  /** The review screen's "Confirm all": { order: [{ lecture_n } | { upload_id, title? }] } in teaching order (V1). */
   app.post(
     "/api/courses/:id/uploads/confirm",
     uploadErrors(async (c) => {
-      const { choices } = await json(c);
-      if (!Array.isArray(choices) || choices.length > 60) return c.json({ error: "choices must be a list" }, 400);
-      return c.json({ uploads: uploads.confirmUploads(c.get("user").id, idOf(c), choices as never) });
+      const { order } = await json(c);
+      const ok = (e: unknown) =>
+        isObject(e) && (Number.isInteger(e.lecture_n) || (typeof e.upload_id === "string" && (e.title === undefined || typeof e.title === "string")));
+      if (!Array.isArray(order) || order.length > 120 || !order.every(ok)) return c.json({ error: "order must be a list of lectures and uploads" }, 400);
+      return c.json({ uploads: uploads.confirmUploads(c.get("user").id, idOf(c), order as UploadOrderEntry[]) });
+    }),
+  );
+
+  /** A check is stuck on a question the worker could not write: { ku_id, tier } is queued again (V4). */
+  app.post(
+    "/api/questions/retry",
+    uploadErrors(async (c) => {
+      const { ku_id, tier } = await json(c);
+      if (typeof ku_id !== "string" || !["basic", "applied", "advanced"].includes(tier as string)) return c.json({ error: "ku_id and tier are required" }, 400);
+      uploads.retryQuestion(c.get("user").id, { ku_id, tier: tier as ItemTier });
+      return c.json({ ok: true });
     }),
   );
 
@@ -225,7 +230,11 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
   };
   app.use("/api/worker/*", needWorker);
 
-  app.post("/api/worker/claim", (c) => c.json({ job: uploads.claim() }));
+  /** { kinds?: string[] }: a worker that only writes questions keeps checks moving during a long deck job. */
+  app.post("/api/worker/claim", async (c) => {
+    const { kinds } = await json(c);
+    return c.json({ job: uploads.claim(Array.isArray(kinds) ? kinds.filter((k): k is string => typeof k === "string") : undefined) });
+  });
 
   app.get(
     "/api/worker/jobs/:id/file",

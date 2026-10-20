@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { suggestLecture } from "../src/uploads";
 import { SCHEDULE, work, type Job } from "./fakeWorker";
 import { makeServer } from "./helpers";
 
@@ -21,7 +20,7 @@ async function student(s: Server, email: string) {
   });
 }
 
-/** Ann creates the course from the syllabus and confirms the lecture list as read. */
+/** Ann creates the course from the syllabus. */
 async function courseWithAnn(s: Server, syllabus = "Syllabus of CS-UH 2219E") {
   const ann = await student(s, "ann@nyu.edu");
   expect((await multipart(ann, "/api/courses", "syllabus", [{ name: "syllabus.pdf", text: syllabus }])).status).toBe(200);
@@ -29,77 +28,69 @@ async function courseWithAnn(s: Server, syllabus = "Syllabus of CS-UH 2219E") {
   await work(s);
   const mine = await ann.json("/api/courses/mine");
   expect(mine.status).toBe("ready");
-  await ann.post(`/api/courses/${mine.course.id}/lectures`, {});
   return { ann, courseId: mine.course.id as string };
 }
 
-async function uploadAndConfirm(s: Server, who: Student, courseId: string, files: { name: string; text: string }[], kinds: Record<string, string> = {}) {
+/** The review screen's order as suggested: the course's lectures and the new decks, by position. */
+async function suggestedOrder(who: Student, courseId: string, titles: Record<string, string> = {}) {
+  const mine = await who.json("/api/courses/mine");
+  const { uploads } = await who.json(`/api/courses/${courseId}/uploads`);
+  const rows = [
+    ...mine.course.lectures.map((l: any) => ({ at: l.position, entry: { lecture_n: l.n } })),
+    ...uploads
+      .filter((u: any) => u.can_place)
+      .map((u: any) => ({ at: u.suggested_position, entry: { upload_id: u.id, ...(titles[u.file_name] ? { title: titles[u.file_name] } : {}) } })),
+  ];
+  return { order: rows.sort((a, b) => a.at - b.at).map((r) => r.entry), uploads };
+}
+
+async function uploadAndConfirm(s: Server, who: Student, courseId: string, files: { name: string; text: string }[]) {
   const up = await multipart(who, `/api/courses/${courseId}/slides`, "files", files);
   expect(up.status).toBe(200);
-  await work(s, { until: files.length });
-  const { uploads } = await who.json(`/api/courses/${courseId}/uploads`);
-  const choices = uploads
-    .filter((u: any) => u.status === "read")
-    .map((u: any) => ({ upload_id: u.id, lecture_n: u.placed_lecture_n ?? u.suggested_lecture_n, ...(kinds[u.file_name] ? { kind: kinds[u.file_name] } : {}) }));
-  const res = await who.post(`/api/courses/${courseId}/uploads/confirm`, { choices });
+  await work(s, { kinds: ["deck_read", "placement"] });
+  const { order, uploads } = await suggestedOrder(who, courseId);
+  const res = await who.post(`/api/courses/${courseId}/uploads/confirm`, { order });
   return { res, uploads };
 }
 
+// file names that say nothing: placement comes from what the slides teach ("order N" stands in for that)
 const DECKS = [
-  { name: "lecture1.pdf", text: "Potential outcomes intro\nmore" },
-  { name: "lecture2.pdf", text: "Selection bias explained\nmore" },
-  { name: "lecture3.pdf", text: "Randomized trials\nmore" },
+  { name: "slides.pdf", text: "Potential outcomes intro\norder 1\nmore" },
+  { name: "download (1).pdf", text: "Selection bias explained\norder 2\nmore" },
+  { name: "week-notes.pdf", text: "Randomized trials\norder 3\nmore" },
 ];
 
+/** A student's saved app state. */
+const store = (s: Server, email: string) =>
+  JSON.parse((s.db.prepare("SELECT json FROM user_state WHERE user_id = (SELECT id FROM users WHERE email = ?)").get(email) as { json: string }).json);
+
+const titles = async (who: Student) => (await who.json("/api/courses/mine")).course.lectures.map((l: any) => l.title);
+
 describe("a syllabus makes or joins a shared course", () => {
-  it("creates the course with the lecture list read from the syllabus", async () => {
+  it("creates the course with no lectures, keeping the syllabus's schedule as topics for placing slides (V3)", async () => {
     const s = makeServer();
     const { ann, courseId } = await courseWithAnn(s);
-    const mine = await ann.json("/api/courses/mine");
-    expect(mine.course).toMatchObject({ id: courseId, code: "CS-UH 2219E", name: "Computational Social Science", is_creator: true, lectures_confirmed: true, schedule_found: true });
-    expect(mine.course.lectures.map((l: any) => [l.n, l.title, l.state])).toEqual([
-      [1, "Potential outcomes", "waiting"],
-      [2, "Selection bias", "waiting"],
-      [3, "Randomization", "waiting"],
-    ]);
+    expect((await ann.json("/api/courses/mine")).course).toEqual({ id: courseId, code: "CS-UH 2219E", name: "Computational Social Science", lectures: [] });
+    expect(JSON.parse(s.courses.get(courseId)!.topics_json)).toEqual(SCHEDULE.lectures.map((l) => l.title));
   });
 
-  it("puts a student with the same syllabus in the same course, without reading the lecture list again", async () => {
+  it("puts a student with the same syllabus in the same course, without reading it again", async () => {
     const s = makeServer();
     const { courseId } = await courseWithAnn(s);
     const bob = await student(s, "bob@nyu.edu");
     await multipart(bob, "/api/courses", "syllabus", [{ name: "my-copy.docx", text: "Syllabus of CS-UH 2219E" }]);
     const jobs = await work(s);
     expect(jobs.map((j) => j.kind)).toEqual(["syllabus"]);
-    const mine = await bob.json("/api/courses/mine");
-    expect(mine.course).toMatchObject({ id: courseId, is_creator: false });
+    expect((await bob.json("/api/courses/mine")).course.id).toBe(courseId);
   });
 
   it("gives a different syllabus its own course", async () => {
     const s = makeServer();
     const { courseId } = await courseWithAnn(s);
     const cat = await student(s, "cat@nyu.edu");
-    await multipart(cat, "/api/courses", "syllabus", [{ name: "s.pdf", text: "Another course's syllabus" }]);
+    await multipart(cat, "/api/courses", "syllabus", [{ name: "s.pdf", text: "Another syllabus" }]);
     await work(s);
     expect((await cat.json("/api/courses/mine")).course.id).not.toBe(courseId);
-  });
-
-  it("lets only the creator change the lecture list, and only before confirming it", async () => {
-    const s = makeServer();
-    const ann = await student(s, "ann@nyu.edu");
-    await multipart(ann, "/api/courses", "syllabus", [{ name: "s.pdf", text: "Syllabus X" }]);
-    await work(s);
-    const courseId = (await ann.json("/api/courses/mine")).course.id;
-    const bob = await student(s, "bob@nyu.edu");
-    await multipart(bob, "/api/courses", "syllabus", [{ name: "s.pdf", text: "Syllabus X" }]);
-    await work(s);
-    expect((await bob.post(`/api/courses/${courseId}/lectures`, {})).status).toBe(403);
-
-    const edited = [{ n: 1, title: "Potential outcomes and causal questions", week: 1 }, { n: 2, title: "Bias", week: null }];
-    const res = await ann.post(`/api/courses/${courseId}/lectures`, { lectures: edited });
-    expect(res.status).toBe(200);
-    expect((await res.json() as any).course.lectures.map((l: any) => l.title)).toEqual(["Potential outcomes and causal questions", "Bias"]);
-    expect((await ann.post(`/api/courses/${courseId}/lectures`, {})).status).toBe(409);
   });
 
   it("refuses a second course for now, and files that are not a syllabus", async () => {
@@ -121,21 +112,33 @@ describe("a syllabus makes or joins a shared course", () => {
   });
 });
 
-describe("slides, all at once or one at a time", () => {
-  it("suggests each deck's lecture and processes the decks in lecture order", async () => {
+describe("slides, all at once or one at a time (V1, V2)", () => {
+  it("reads each deck, orders them by what they teach, and processes them in that order", async () => {
     const s = makeServer();
     const { ann, courseId } = await courseWithAnn(s);
     const up = await multipart(ann, `/api/courses/${courseId}/slides`, "files", [...DECKS].reverse());
-    expect(up.body.uploads.map((u: any) => u.status)).toEqual(["reading", "reading", "reading"]);
-    await work(s, { until: 3 });
-    const { uploads } = await ann.json(`/api/courses/${courseId}/uploads`);
-    expect(uploads.map((u: any) => [u.file_name, u.suggested_lecture_n, u.suggestion_sure, u.can_place])).toEqual([
-      ["lecture3.pdf", 3, true, true],
-      ["lecture2.pdf", 2, true, true],
-      ["lecture1.pdf", 1, true, true],
+    expect(up.body.uploads.map((u: any) => [u.status, u.placing])).toEqual([["reading", true], ["reading", true], ["reading", true]]);
+
+    const reading = await work(s, { kinds: ["deck_read", "placement"] });
+    // one placement call for the whole batch, once every file is read, with what each deck teaches
+    expect(reading.map((j) => j.kind)).toEqual(["deck_read", "deck_read", "deck_read", "placement"]);
+    expect(reading[0].payload).toMatchObject({ course_name: "Computational Social Science", file_name: "week-notes.pdf" });
+    expect(reading[3].payload.topics).toEqual(SCHEDULE.lectures.map((l) => l.title));
+    expect(reading[3].payload.new.map((d: any) => d.title)).toEqual(["Randomized trials", "Selection bias explained", "Potential outcomes intro"]);
+
+    const { order, uploads } = await suggestedOrder(ann, courseId);
+    expect(uploads.map((u: any) => [u.file_name, u.title, u.placing, u.suggestion_sure, u.can_place])).toEqual([
+      ["week-notes.pdf", "Randomized trials", false, true, true],
+      ["download (1).pdf", "Selection bias explained", false, true, true],
+      ["slides.pdf", "Potential outcomes intro", false, true, true],
     ]);
-    await ann.post(`/api/courses/${courseId}/uploads/confirm`, { choices: uploads.map((u: any) => ({ upload_id: u.id, lecture_n: u.suggested_lecture_n })) });
-    expect((await ann.json("/api/courses/mine")).course.lectures.map((l: any) => l.state)).toEqual(["analyzing", "analyzing", "analyzing"]);
+    expect((await ann.post(`/api/courses/${courseId}/uploads/confirm`, { order })).status).toBe(200);
+    const mine = await ann.json("/api/courses/mine");
+    expect(mine.course.lectures.map((l: any) => [l.title, l.state])).toEqual([
+      ["Potential outcomes intro", "analyzing"],
+      ["Selection bias explained", "analyzing"],
+      ["Randomized trials", "analyzing"],
+    ]);
 
     const jobs = await work(s);
     // uploaded last-first, processed first-last, each seeing the lectures before it
@@ -163,7 +166,7 @@ describe("slides, all at once or one at a time", () => {
 
     const shape = (s: Server, id: string) => {
       const fx = s.courses.fixtures(id);
-      return { kus: fx.course.kus.map((k) => [k.id, k.lecture_n, k.prerequisites]), items: fx.items.map((i) => [i.id, i.topic_id]) };
+      return { lectures: fx.course.lectures.map((l) => [l.title, l.position]), kus: fx.course.kus.map((k) => [k.id, k.lecture_n, k.prerequisites]) };
     };
     expect(shape(oneByOne, b.courseId)).toEqual(shape(atOnce, a.courseId));
     expect(shape(atOnce, a.courseId).kus).toEqual([
@@ -176,7 +179,7 @@ describe("slides, all at once or one at a time", () => {
     ]);
   });
 
-  it("adds links back when an earlier lecture arrives after a later one, and changes nothing else", async () => {
+  it("places a deck that comes earlier before the lectures it precedes, keeps their numbers, and adds links back (U7)", async () => {
     const s = makeServer();
     const { ann, courseId } = await courseWithAnn(s);
     await uploadAndConfirm(s, ann, courseId, [DECKS[2]]);
@@ -185,16 +188,36 @@ describe("slides, all at once or one at a time", () => {
 
     await uploadAndConfirm(s, ann, courseId, [DECKS[0]]);
     const jobs = await work(s, { links: (p) => [{ ku_id: p.later_kus[0].id, prereq_id: p.new_kus[1].id }] });
+    const lectures = (await ann.json("/api/courses/mine")).course.lectures;
+    // the randomized-trials lecture stays number 1; the one placed before it is number 2
+    expect(lectures.map((l: any) => [l.n, l.title])).toEqual([[2, "Potential outcomes intro"], [1, "Randomized trials"]]);
     const pass = jobs.find((j) => j.kind === "link_pass")!;
     expect(pass.payload.new_kus.map((k: any) => k.lecture_n)).toEqual([1, 1]);
-    expect(pass.payload.later_kus.map((k: any) => k.lecture_n)).toEqual([3, 3]);
+    expect(pass.payload.later_kus.map((k: any) => k.lecture_n)).toEqual([2, 2]);
 
     const kus = s.courses.fixtures(courseId).course.kus;
     expect(kus.find((k) => k.id === "ku-randomized-trials-a")!.prerequisites).toEqual(["ku-potential-outcomes-intro-b"]);
-    expect(kus.filter((k) => k.lecture_n === 3).map((k) => k.id)).toEqual(before);
+    expect(kus.filter((k) => k.lecture_n === 1).map((k) => k.id)).toEqual(before);
   });
 
-  it("reuses a deck already in the course: no processing, no cap, placed where it already is", async () => {
+  it("lets the first uploader rename a lecture and change the order, but not the lectures already there", async () => {
+    const s = makeServer();
+    const { ann, courseId } = await courseWithAnn(s);
+    await uploadAndConfirm(s, ann, courseId, [DECKS[0]]);
+    await work(s);
+    await multipart(ann, `/api/courses/${courseId}/slides`, "files", [DECKS[1], DECKS[2]]);
+    await work(s, { kinds: ["deck_read", "placement"] });
+    const { order } = await suggestedOrder(ann, courseId, { "week-notes.pdf": "Experiments" });
+
+    const swapped = [order[0], order[2], order[1]];
+    // the lectures already there can't be left out or moved
+    expect((await ann.post(`/api/courses/${courseId}/uploads/confirm`, { order: order.slice(1) })).status).toBe(409);
+    expect((await ann.post(`/api/courses/${courseId}/uploads/confirm`, { order: order.slice(0, 2) })).status).toBe(400);
+    expect((await ann.post(`/api/courses/${courseId}/uploads/confirm`, { order: swapped })).status).toBe(200);
+    expect(await titles(ann)).toEqual(["Potential outcomes intro", "Experiments", "Selection bias explained"]);
+  });
+
+  it("reuses a deck already in the course: no reading by the model, no processing, no cap", async () => {
     const s = makeServer({ caps: { newDecksPerDay: 1 } });
     const { ann, courseId } = await courseWithAnn(s);
     await uploadAndConfirm(s, ann, courseId, [DECKS[0]]);
@@ -204,11 +227,26 @@ describe("slides, all at once or one at a time", () => {
     await work(s);
 
     await multipart(bob, `/api/courses/${courseId}/slides`, "files", [{ name: "my download.pdf", text: DECKS[0].text }]);
-    await work(s);
+    const reads = await work(s);
+    expect(reads.map((j) => j.kind)).toEqual(["deck_read"]);
+    expect(reads[0].payload.known_keys).toContain(`key:${DECKS[0].text}`);
     const { uploads } = await bob.json(`/api/courses/${courseId}/uploads`);
-    expect(uploads[0]).toMatchObject({ outcome: "existing", placed_lecture_n: 1, can_place: false, deck: { status: "ready" } });
-    await bob.post(`/api/courses/${courseId}/uploads/confirm`, { choices: [{ upload_id: uploads[0].id }] });
+    expect(uploads[0]).toMatchObject({ outcome: "existing", placed_lecture_n: 1, title: "Potential outcomes intro", can_place: false, deck: { status: "ready" } });
+    const mine = await bob.json("/api/courses/mine");
+    await bob.post(`/api/courses/${courseId}/uploads/confirm`, { order: mine.course.lectures.map((l: any) => ({ lecture_n: l.n })) });
     expect((await work(s)).length).toBe(0);
+  });
+
+  it("logs an updated version of slides already in the course and does not process it (V2)", async () => {
+    const s = makeServer();
+    const { ann, courseId } = await courseWithAnn(s);
+    await uploadAndConfirm(s, ann, courseId, [DECKS[0]]);
+    await work(s);
+    const fixed = { name: "slides (fixed).pdf", text: "Potential outcomes intro\norder 1\nmore\na typo fixed" };
+    await multipart(ann, `/api/courses/${courseId}/slides`, "files", [fixed]);
+    expect((await work(s)).map((j) => j.kind)).toEqual(["deck_read"]);
+    const { uploads } = await ann.json(`/api/courses/${courseId}/uploads`);
+    expect(uploads[0]).toMatchObject({ outcome: "updated_version", placed_lecture_n: 1, can_place: false, placing: false });
   });
 
   it("stops new decks at the daily cap with a message", async () => {
@@ -221,44 +259,20 @@ describe("slides, all at once or one at a time", () => {
     expect(uploads[2].error).toMatch(/up to 2 new slide files a day/);
   });
 
-  it("asks whether a second deck for a lecture is an extra part or an updated version", async () => {
+  it("puts the decks last, unsure, when the placement call fails", async () => {
     const s = makeServer();
     const { ann, courseId } = await courseWithAnn(s);
-    await uploadAndConfirm(s, ann, courseId, [DECKS[0]]);
+    await uploadAndConfirm(s, ann, courseId, [DECKS[2]]);
     await work(s);
-
-    const part2 = { name: "lecture1-part2.pdf", text: "Potential outcomes part two\nmore" };
-    const asked = await uploadAndConfirm(s, ann, courseId, [part2]);
-    expect(asked.res.status).toBe(409);
-    expect(((await asked.res.json()) as any).error).toMatch(/extra part, or an updated version/);
-
-    const extra = await ann.post(`/api/courses/${courseId}/uploads/confirm`, { choices: [{ upload_id: asked.uploads[0].id, lecture_n: 1, kind: "extra_part" }] });
-    expect(extra.status).toBe(200);
-    const jobs = await work(s);
-    // part two sees part one's KUs (U10)
-    expect(jobs.find((j) => j.kind === "deck")!.payload.earlier.map((k: any) => k.id)).toEqual(["ku-potential-outcomes-intro-a", "ku-potential-outcomes-intro-b"]);
-
-    const fixed = { name: "lecture1-fixed.pdf", text: "Potential outcomes intro, typo fixed\nmore" };
-    const again = await uploadAndConfirm(s, ann, courseId, [fixed], { "lecture1-fixed.pdf": "updated_version" });
-    expect(again.res.status).toBe(200);
-    expect((await work(s)).length).toBe(0);
-    const row = s.db.prepare("SELECT outcome FROM deck_uploads WHERE file_name = 'lecture1-fixed.pdf'").get() as { outcome: string };
-    expect(row.outcome).toBe("updated_version");
-  });
-
-  it("adds a lecture per deck when the syllabus has no schedule", async () => {
-    const s = makeServer();
-    const { ann, courseId } = await courseWithAnn(s, "Syllabus with no schedule");
-    expect((await ann.json("/api/courses/mine")).course.lectures).toEqual([]);
-    const { uploads } = await (async () => {
-      await multipart(ann, `/api/courses/${courseId}/slides`, "files", [DECKS[0]]);
-      await work(s);
-      return ann.json(`/api/courses/${courseId}/uploads`);
-    })();
-    expect(uploads[0]).toMatchObject({ suggested_lecture_n: null, suggestion_sure: false });
-    expect((await ann.post(`/api/courses/${courseId}/uploads/confirm`, { choices: [{ upload_id: uploads[0].id, lecture_n: 2 }] })).status).toBe(400);
-    expect((await ann.post(`/api/courses/${courseId}/uploads/confirm`, { choices: [{ upload_id: uploads[0].id, lecture_n: 1 }] })).status).toBe(200);
-    expect((await ann.json("/api/courses/mine")).course.lectures.map((l: any) => [l.n, l.title])).toEqual([[1, "Potential outcomes intro"]]);
+    await multipart(ann, `/api/courses/${courseId}/slides`, "files", [DECKS[0], DECKS[1]]);
+    await work(s, { kinds: ["deck_read"] });
+    for (let i = 0; i < 2; i++) {
+      const { job } = (await (await s.worker.post("/api/worker/claim", { kinds: ["placement"] })).json()) as { job: Job };
+      await s.worker.post(`/api/worker/jobs/${job.id}/fail`, { error: "overloaded" });
+    }
+    const { order, uploads } = await suggestedOrder(ann, courseId);
+    expect(uploads.map((u: any) => [u.placing, u.suggestion_sure])).toEqual([[false, false], [false, false]]);
+    expect(order.map((e: any) => ("lecture_n" in e ? "lecture" : "new"))).toEqual(["lecture", "new", "new"]);
   });
 
   it("refuses Keynote and other files with a message", async () => {
@@ -280,7 +294,7 @@ describe("slides, all at once or one at a time", () => {
       await s.worker.post(`/api/worker/jobs/${job.id}/fail`, { error: "API overloaded" });
     }
     expect((await ann.json("/api/courses/mine")).course.lectures[0].state).toBe("failed");
-    expect((await (await s.worker.post("/api/worker/claim", {})).json() as any).job).toBeNull();
+    expect(((await (await s.worker.post("/api/worker/claim", {})).json()) as any).job).toBeNull();
 
     const failed = s.db.prepare("SELECT id FROM jobs WHERE status = 'failed'").get() as { id: string };
     const res = await (await s.signIn("res@nyu.edu", "researcher")).post(`/api/research/jobs/${failed.id}/retry`, {});
@@ -295,72 +309,130 @@ describe("slides, all at once or one at a time", () => {
     const eve = await student(s, "eve@nyu.edu");
     expect((await multipart(eve, `/api/courses/${courseId}/slides`, "files", [DECKS[0]])).status).toBe(404);
     expect((await s.post("/api/worker/claim", {})).status).toBe(401);
+    expect((await s.post("/api/questions/retry", { ku_id: "x", tier: "basic" })).status).toBe(401);
     expect((await s.post("/api/worker/claim", {}, { Authorization: "Bearer wrong" })).status).toBe(401);
-  });
-
-  it("runs a member's study requests on the course once a deck is ready", async () => {
-    const s = makeServer();
-    const { ann, courseId } = await courseWithAnn(s);
-    await uploadAndConfirm(s, ann, courseId, [DECKS[0]]);
-    await work(s);
-    const sitting = await ann.rpc<{ current: { item: { id: string } } }>("getSitting", "week0");
-    expect(sitting.current.item.id).toMatch(/^as-ku-potential-outcomes-intro-/);
   });
 });
 
-describe("suggestLecture", () => {
-  const lectures = SCHEDULE.lectures;
-  it("reads lecture and week numbers in file names", () => {
-    expect(suggestLecture("Lecture 02 - slides.pdf", "", lectures)).toEqual({ n: 2, sure: true });
-    expect(suggestLecture("wk_3.pdf", "", lectures)).toEqual({ n: 3, sure: true });
-    expect(suggestLecture("03_randomization.pptx", "", lectures)).toEqual({ n: 3, sure: true });
-    expect(suggestLecture("L1.pdf", "", lectures)).toEqual({ n: 1, sure: true });
+/** Answers a whole check, letting the worker write each question as the check waits for it. */
+async function sitCheck(s: Server, who: Student, sitting: string, finish = true) {
+  for (let guard = 0; guard < 40; guard++) {
+    const v = await who.rpc<{ current: { item: { id: string; correct_index: number } } | null; preparing: string | null }>("getSitting", sitting);
+    if (v.preparing === "writing") {
+      await work(s, { kinds: ["question"] });
+      continue;
+    }
+    if (!v.current) break;
+    await who.rpc("answerSitting", sitting, v.current.item.id, v.current.item.correct_index, 1000);
+  }
+  if (finish) await who.rpc("finishSitting", sitting);
+}
+
+describe("questions written as checks need them (V4-V6)", () => {
+  type Sitting = { current: { item: { id: string; correct_index: number; tier: string } } | null; preparing: string | null; total: number };
+
+  async function readyCourse(decks = [DECKS[0]]) {
+    const s = makeServer();
+    const { ann, courseId } = await courseWithAnn(s);
+    await uploadAndConfirm(s, ann, courseId, decks);
+    await work(s);
+    const n = (await ann.json("/api/courses/mine")).course.lectures[0].n as number;
+    return { s, ann, courseId, sitting: `lecture-${n}` };
+  }
+
+  it("has no baseline: the first check is lecture 1's, and it waits for its first question", async () => {
+    const { ann, sitting } = await readyCourse();
+    const me = await ann.rpc<{ onboarding_done: boolean; baseline_available: boolean }>("getMe");
+    expect(me).toMatchObject({ onboarding_done: true, baseline_available: false });
+    expect((await ann.rpc<{ precheck: { sitting_id: string } | null }>("getPlaylist")).precheck?.sitting_id).toBe(sitting);
+    const first = await ann.rpc<Sitting>("getSitting", sitting);
+    // two KUs in the lecture and nothing earlier: two questions
+    expect(first).toMatchObject({ current: null, preparing: "writing", total: 2 });
   });
-  it("otherwise matches titles, sure only on a good match", () => {
-    expect(suggestLecture("deck.pdf", "Selection Bias in observational data", lectures)).toEqual({ n: 2, sure: true });
-    expect(suggestLecture("potential.pdf", "", [{ n: 1, title: "Potential outcomes and causal effects", week: 1 }])).toEqual({ n: 1, sure: false });
-    expect(suggestLecture("deck.pdf", "Welcome!", lectures)).toEqual({ n: null, sure: false });
+
+  it("writes the question a check waits for before anything else, then the likely next one", async () => {
+    const { s, ann, sitting } = await readyCourse();
+    await ann.rpc("getSitting", sitting);
+    // a deck upload waiting in the queue does not hold the question back
+    await multipart(ann, `/api/courses/${(await ann.json("/api/courses/mine")).course.id}/slides`, "files", [DECKS[1]]);
+    const { job } = (await (await s.worker.post("/api/worker/claim", {})).json()) as { job: Job };
+    expect(job.kind).toBe("question");
+    expect(job.payload).toMatchObject({ item_id: "as-ku-potential-outcomes-intro-a-applied-1", tier: "applied", beta: 0, avoid: [] });
+    expect(job.file_name).toBe("slides.pdf");
+    const text = await (await s.worker.get(`/api/worker/jobs/${job.id}/file`)).text();
+    expect(text).toBe(DECKS[0].text);
+    await s.worker.post(`/api/worker/jobs/${job.id}/fail`, { error: "retry later" });
+    await work(s, { kinds: ["question"] });
+
+    const ready = await ann.rpc<Sitting>("getSitting", sitting);
+    expect(ready.current?.item.id).toBe("as-ku-potential-outcomes-intro-a-applied-1");
+    // asking for the sitting queued the next question too, for the likelier answer
+    const next = await work(s, { kinds: ["question"] });
+    expect(next.map((j) => j.payload.ku.id)).toEqual(["ku-potential-outcomes-intro-b"]);
   });
-  it("ignores a number that is not a lecture in the list", () => {
-    expect(suggestLecture("lecture12.pdf", "Randomization", lectures)).toEqual({ n: 3, sure: true });
+
+  it("asks a classmate the saved questions, so nothing is written twice", async () => {
+    const { s, ann, sitting } = await readyCourse();
+    await sitCheck(s, ann, sitting, false);
+    await work(s, { kinds: ["question"] });
+    expect(store(s, "ann@nyu.edu").sittings[sitting].answered_ids).toHaveLength(2);
+    const written = (s.db.prepare("SELECT COUNT(*) AS n FROM questions").get() as { n: number }).n;
+
+    const bob = await student(s, "bob@nyu.edu");
+    await multipart(bob, "/api/courses", "syllabus", [{ name: "s.pdf", text: "Syllabus of CS-UH 2219E" }]);
+    await work(s);
+    const v = await bob.rpc<Sitting>("getSitting", sitting);
+    expect(v.current?.item.id).toBe("as-ku-potential-outcomes-intro-a-applied-1");
+    expect((s.db.prepare("SELECT COUNT(*) AS n FROM questions").get() as { n: number }).n).toBe(written);
+  });
+
+  it("says when a question could not be written, and writes it again on Try again", async () => {
+    const { s, ann, sitting } = await readyCourse();
+    await ann.rpc("getSitting", sitting);
+    for (let i = 0; i < 2; i++) {
+      const { job } = (await (await s.worker.post("/api/worker/claim", {})).json()) as { job: Job };
+      await s.worker.post(`/api/worker/jobs/${job.id}/fail`, { error: "overloaded" });
+    }
+    expect((await ann.rpc<Sitting>("getSitting", sitting)).preparing).toBe("failed");
+    expect((await ann.post("/api/questions/retry", { ku_id: "ku-potential-outcomes-intro-a", tier: "applied" })).status).toBe(200);
+    expect((await ann.rpc<Sitting>("getSitting", sitting)).preparing).toBe("writing");
+    await work(s, { kinds: ["question"] });
+    expect((await ann.rpc<Sitting>("getSitting", sitting)).current).not.toBeNull();
+  });
+
+  it("refuses a question result that is not for the job's KU and tier", async () => {
+    const { s, ann, sitting } = await readyCourse();
+    await ann.rpc("getSitting", sitting);
+    const { job } = (await (await s.worker.post("/api/worker/claim", {})).json()) as { job: Job };
+    const bad = { item: { id: "x", ku_id: "ku-other", tier: "basic", context: "assessment", options: ["a", "b", "c"], correct_index: 0 } };
+    expect((await s.worker.post(`/api/worker/jobs/${job.id}/result`, { result: bad })).status).toBe(400);
   });
 });
 
 describe("videos students need (U18)", () => {
-  it("records each lecture's videos once its levels are set, shared by course, KU and level", async () => {
+  it("records a lecture's videos once its check set its levels, shared by course, KU and level", async () => {
     const s = makeServer();
     const { ann, courseId } = await courseWithAnn(s);
     await uploadAndConfirm(s, ann, courseId, [DECKS[0], DECKS[1]]);
     await work(s);
     expect(s.courses.videoRequests(courseId)).toEqual([]);
+    const first = `lecture-${(await ann.json("/api/courses/mine")).course.lectures[0].n}`;
 
-    for (let guard = 0; guard < 50; guard++) {
-      const v = await ann.rpc<{ current: { item: { id: string; correct_index: number } } | null }>("getSitting", "week0");
-      if (!v.current) break;
-      await ann.rpc("answerSitting", "week0", v.current.item.id, v.current.item.correct_index, 1000);
-    }
-    await ann.rpc("finishSitting", "week0");
+    const sit = (who: Student) => sitCheck(s, who, first);
+    await sit(ann);
     const after = s.courses.videoRequests(courseId);
-    // the baseline covered both lectures (cat_week0_lectures = 4), so both lectures' KUs are wanted, earliest first
+    // only the checked lecture's KUs: the second lecture's levels are provisional until its own check
     expect(after.map((r) => [r.ku_id, r.lecture_n])).toEqual([
       ["ku-potential-outcomes-intro-a", 1],
       ["ku-potential-outcomes-intro-b", 1],
-      ["ku-selection-bias-explained-a", 2],
-      ["ku-selection-bias-explained-b", 2],
     ]);
-    expect(after[2].prereq_ids).toEqual(["ku-potential-outcomes-intro-b"]);
 
     // a classmate at the same levels adds nothing new
     const bob = await student(s, "bob@nyu.edu");
     await multipart(bob, "/api/courses", "syllabus", [{ name: "s.pdf", text: "Syllabus of CS-UH 2219E" }]);
     await work(s);
-    for (let guard = 0; guard < 50; guard++) {
-      const v = await bob.rpc<{ current: { item: { id: string; correct_index: number } } | null }>("getSitting", "week0");
-      if (!v.current) break;
-      await bob.rpc("answerSitting", "week0", v.current.item.id, v.current.item.correct_index, 1000);
-    }
-    await bob.rpc("finishSitting", "week0");
-    expect(s.courses.videoRequests(courseId)).toHaveLength(4);
+    await sit(bob);
+    expect(s.courses.videoRequests(courseId)).toHaveLength(2);
   });
 
   it("keeps a KU's first prerequisites for its later levels (U8)", async () => {

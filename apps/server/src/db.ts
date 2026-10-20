@@ -68,9 +68,10 @@ CREATE TABLE IF NOT EXISTS courses (
   name                  TEXT NOT NULL,
   syllabus_text         TEXT NOT NULL,
   syllabus_path         TEXT NOT NULL,
-  -- 'reading' until the lecture list is read from the syllabus
   status                TEXT NOT NULL CHECK (status IN ('reading', 'ready', 'failed')),
   schedule_found        INTEGER,
+  -- the syllabus's schedule, as topic hints for placing decks (V1): a JSON list of titles
+  topics_json           TEXT NOT NULL DEFAULT '[]',
   created_by            TEXT NOT NULL REFERENCES users (id),
   created_at            INTEGER NOT NULL,
   lectures_confirmed_at INTEGER
@@ -87,6 +88,8 @@ CREATE TABLE IF NOT EXISTS course_members (
   joined_at INTEGER NOT NULL,
   PRIMARY KEY (course_id, user_id)
 );
+-- One per confirmed deck (V1-V3). n: the lecture's id within the course, never reused or changed; position: the
+-- teaching order (a deck placed between two lectures takes a position between theirs).
 CREATE TABLE IF NOT EXISTS lectures (
   id        TEXT PRIMARY KEY,
   course_id TEXT NOT NULL REFERENCES courses (id) ON DELETE CASCADE,
@@ -94,6 +97,7 @@ CREATE TABLE IF NOT EXISTS lectures (
   title     TEXT NOT NULL,
   week      INTEGER,
   source    TEXT NOT NULL CHECK (source IN ('syllabus', 'upload')),
+  position  REAL,
   UNIQUE (course_id, n)
 );
 CREATE TABLE IF NOT EXISTS decks (
@@ -105,8 +109,10 @@ CREATE TABLE IF NOT EXISTS decks (
   file_name     TEXT NOT NULL,
   -- the uploaded file as it came (a PowerPoint is converted on the worker each time it is read)
   file_path     TEXT NOT NULL,
-  -- the parse: page count, each page's text, the first page's title
+  -- the parse: page count, each page's text and key, the first page's title, the reader's summary (V1)
   parse_json    TEXT NOT NULL,
+  -- the placement call's suggestion until the deck is placed: {position, sure}
+  suggestion_json TEXT,
   status        TEXT NOT NULL CHECK (status IN ('unplaced', 'queued', 'processing', 'ready', 'failed')),
   -- the DeckResult (packages/core/src/logic/assemble.ts) once processed
   result_json   TEXT,
@@ -139,12 +145,13 @@ CREATE TABLE IF NOT EXISTS ku_links (
   added_at  INTEGER NOT NULL,
   PRIMARY KEY (course_id, ku_id, prereq_id)
 );
--- Work for the Python worker: kind 'syllabus' (read it, then the lecture list), 'deck_read' (convert and parse),
--- 'deck' (KUs and items), 'link_pass' (U7). The worker claims them over HTTP (src/uploads.ts).
+-- Work for the Python worker: kind 'syllabus' (read it, then its topics), 'deck_read' (convert, parse, say what it
+-- teaches), 'placement' (order a student's new decks), 'deck' (KUs), 'question' (one question, V4), 'link_pass' (U7).
+-- The worker claims them over HTTP (src/uploads.ts).
 CREATE TABLE IF NOT EXISTS jobs (
   id          TEXT PRIMARY KEY,
-  kind        TEXT NOT NULL CHECK (kind IN ('syllabus', 'deck_read', 'deck', 'link_pass')),
-  -- the syllabus upload, deck upload or deck it works on
+  kind        TEXT NOT NULL CHECK (kind IN ('syllabus', 'deck_read', 'placement', 'deck', 'question', 'link_pass')),
+  -- the syllabus upload, deck upload or deck it works on; a placement's student; a question's "ku_id|tier"
   target_id   TEXT NOT NULL,
   course_id   TEXT,
   status      TEXT NOT NULL CHECK (status IN ('queued', 'claimed', 'done', 'failed')),
@@ -156,6 +163,18 @@ CREATE TABLE IF NOT EXISTS jobs (
   error       TEXT
 );
 CREATE INDEX IF NOT EXISTS jobs_queue ON jobs (status, priority, created_at);
+-- Questions written on demand (V4), saved for everyone in the course with the same slides. item_json: a core Item.
+CREATE TABLE IF NOT EXISTS questions (
+  id         TEXT PRIMARY KEY,
+  course_id  TEXT NOT NULL REFERENCES courses (id) ON DELETE CASCADE,
+  deck_id    TEXT NOT NULL REFERENCES decks (id),
+  ku_id      TEXT NOT NULL,
+  tier       TEXT NOT NULL CHECK (tier IN ('basic', 'applied', 'advanced')),
+  item_json  TEXT NOT NULL,
+  flags_json TEXT NOT NULL DEFAULT '[]',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS questions_by_ku ON questions (course_id, ku_id, tier);
 -- Videos students need (U18), one per course, KU and level so classmates at the same level share it. prereq_ids: the
 -- KU's prerequisites when its first video was requested, which the video keeps (U8). Made by the video pipeline
 -- (plan/per-student-video-plan.md step 5), not yet wired.
@@ -176,6 +195,26 @@ export function openDb(path: string): Db {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
   db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
+  migrate(db);
   db.exec(SCHEMA);
   return db;
+}
+
+const columns = (db: Db, table: string) => (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
+
+/** Databases made before the 2026-10-21 revision (plan/slide-uploads-plan.md V1-V4) get its columns and job kinds. */
+function migrate(db: Db): void {
+  const tables = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((t) => t.name));
+  if (tables.has("lectures") && !columns(db, "lectures").includes("position")) {
+    db.exec("ALTER TABLE lectures ADD COLUMN position REAL; UPDATE lectures SET position = n;");
+  }
+  if (tables.has("courses") && !columns(db, "courses").includes("topics_json")) db.exec("ALTER TABLE courses ADD COLUMN topics_json TEXT NOT NULL DEFAULT '[]'");
+  if (tables.has("decks") && !columns(db, "decks").includes("suggestion_json")) db.exec("ALTER TABLE decks ADD COLUMN suggestion_json TEXT");
+  const jobs = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'jobs'").get() as { sql: string } | undefined;
+  if (jobs && !jobs.sql.includes("'question'")) {
+    // a CHECK constraint can't be altered: rebuild the table with the new kinds
+    db.exec(`ALTER TABLE jobs RENAME TO jobs_before_v4; DROP INDEX IF EXISTS jobs_queue;`);
+    db.exec(SCHEMA.slice(SCHEMA.indexOf("CREATE TABLE IF NOT EXISTS jobs"), SCHEMA.indexOf("CREATE INDEX IF NOT EXISTS jobs_queue")));
+    db.exec("INSERT INTO jobs SELECT * FROM jobs_before_v4; DROP TABLE jobs_before_v4;");
+  }
 }

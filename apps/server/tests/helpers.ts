@@ -15,10 +15,11 @@ export function makeServer(opts: { db?: Db; clock?: () => number; semesterStart?
   const mailer = memoryMailer();
   const auth = new Auth(db, mailer, "test-secret", opts.clock);
   const courses = new Courses(db);
+  const uploads = new Uploads(db, courses, mkdtempSync(tmpdir() + "/syllabyte-files-"), { ...DEFAULT_CAPS, ...opts.caps }, opts.clock);
   const runner = new StateRunner(db, { semesterStart: opts.semesterStart, courseFor: (id) => courses.fixturesFor(id),
     after: (id, state) => courses.recordVideoNeeds(id, state),
+    needs: (id, needs) => uploads.requestQuestions(id, needs),
   });
-  const uploads = new Uploads(db, courses, mkdtempSync(tmpdir() + "/syllabyte-files-"), { ...DEFAULT_CAPS, ...opts.caps }, opts.clock);
   const app = createApp({ db, auth, runner, courses, uploads, workerToken: WORKER_TOKEN });
   const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
     app.request(path, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
