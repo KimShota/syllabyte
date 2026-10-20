@@ -184,7 +184,7 @@ tables and `assembleCourse`; item writing moved into `assessment_agent`; the Pyt
 (`apps/server/src/uploads.ts`); the worker (`ingestion_agent/worker.py`); the assessment changes (U9, U10, U18); the
 phone client and screens; the researcher's `npm run courses`.
 
-Checked: core 243 tests, server 76, Python 182 (+1 skipped without LibreOffice), phone 21 + typecheck + lint, web e2e
+Checked: core 243 tests, server 76, Python 178 (+1 skipped without LibreOffice), phone 21 + typecheck + lint, web e2e
 108. The server tests include the key property (all decks at once and one at a time give the same course). End to end
 with the real server and the real Python worker (LLM stubbed): over HTTP with curl, and in the phone app's web build
 with Playwright (sign in, syllabus, lecture list, three decks at once, review, processing, then the baseline; a
