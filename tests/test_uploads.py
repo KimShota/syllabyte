@@ -181,7 +181,6 @@ def stub_llm(monkeypatch):
 
     def kus(**kw):
         text = next(b["text"] for b in kw["content"] if b.get("type") == "text")
-        deck = kw["content"]
         name = text.split("=== DECK '")[1].split("'")[0]
         pages = STUB_PAGES[name]
         out, prev = [], None
