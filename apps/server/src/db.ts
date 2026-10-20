@@ -150,6 +150,20 @@ CREATE TABLE IF NOT EXISTS jobs (
   error       TEXT
 );
 CREATE INDEX IF NOT EXISTS jobs_queue ON jobs (status, priority, created_at);
+-- Videos students need (U18), one per course, KU and level so classmates at the same level share it. prereq_ids: the
+-- KU's prerequisites when its first video was requested, which the video keeps (U8). Made by the video pipeline
+-- (plan/per-student-video-plan.md step 5), not yet wired.
+CREATE TABLE IF NOT EXISTS video_requests (
+  course_id     TEXT NOT NULL REFERENCES courses (id) ON DELETE CASCADE,
+  ku_id         TEXT NOT NULL,
+  level         INTEGER NOT NULL CHECK (level IN (1, 2, 3)),
+  lecture_n     INTEGER NOT NULL,
+  prereq_ids    TEXT NOT NULL,
+  first_user_id TEXT NOT NULL REFERENCES users (id),
+  requested_at  INTEGER NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting', 'making', 'ready', 'failed')),
+  PRIMARY KEY (course_id, ku_id, level)
+);
 `;
 
 export function openDb(path: string): Db {

@@ -1,7 +1,7 @@
 import { INSTRUMENTS_VERSION } from "../content/instruments";
 import { track } from "../events";
 import { fixtures, itemById, lectureByN, slideText, slideUrl, topicById, videoById } from "../fixtures";
-import { nextAssessmentItem, prelecturePlan, week0Plan, type AssessmentPlan } from "../logic/assessment";
+import { nextAssessmentItem, prelecturePlan, week0Lectures, week0Plan, type AssessmentPlan } from "../logic/assessment";
 import { calibrationBlock1, calibrationBlock2 } from "../logic/calibration";
 import { droppedEarly } from "../logic/engagement";
 import { kuLevels, levelUpdates } from "../logic/kuProfile";
@@ -222,6 +222,27 @@ function publishLevels(cause: "baseline" | "lecture_check"): ReturnType<typeof l
   return levelUpdates(before, est, fixtures().course.kus, new Map(fixtures().course.lectures.map((l) => [l.n, l.title])));
 }
 
+/**
+ * KUs from slides processed after the student's levels were published (U10) get a level at once: their lecture's
+ * estimate when the student has answered on that lecture, else the provisional one. Nothing else moves, and no
+ * "What changed" card is shown: nothing changed for the student.
+ */
+function levelNewKus(): void {
+  if (!baselineDone()) return;
+  const fresh = fixtures().course.kus.filter((k) => !S().levels[k.id]);
+  if (!fresh.length) return;
+  const est = kuLevels(profileInput());
+  mutate((s) => {
+    for (const ku of fresh) {
+      const e = est[ku.id];
+      s.levels[ku.id] = {
+        ku_id: ku.id, level: e.level, source: "model", suggested_level: e.level, reason: e.reason, not_checked: e.not_checked,
+        provisional: e.provisional, history: [{ level: e.level, source: "model", at: now(), cause: "slides_added" }],
+      };
+    }
+  });
+}
+
 function describeLevelChange(ku: string, from: Level, to: Level, cause: string, at: number): string {
   const wk = weekOf(at, S().semester_start);
   const lecture = lectureTitle(fixtures().course.kus.find((k) => k.short_title === ku)?.lecture_n ?? 1);
@@ -234,13 +255,19 @@ function describeLevelChange(ku: string, from: Level, to: Level, cause: string, 
 
 const sittingKind = (id: string): SittingState["kind"] => (id === "week0" ? "week0" : "lecture");
 const sittingLecture = (id: string): number | null => (id === "week0" ? null : Number(id.split("-")[1]));
-const planOf = (id: string): AssessmentPlan => (id === "week0" ? week0Plan(fixtures().course) : prelecturePlan(fixtures().course, sittingLecture(id)!));
+/** The baseline covers the lectures fixed at its first answer, or those that have bank items now (U9). */
+const baselineLectures = (): number[] => S().sittings.week0?.lectures ?? week0Lectures(fixtures().course, fixtures().items);
+const planOf = (id: string): AssessmentPlan =>
+  id === "week0" ? week0Plan(fixtures().course, fixtures().items, baselineLectures()) : prelecturePlan(fixtures().course, sittingLecture(id)!);
 const sittingLabel = (id: string) => (id === "week0" ? "Start check" : `${lectureTitle(sittingLecture(id)!)} check`);
 
 function ensureSitting(id: string): void {
   mutate((s) => {
     if (!s.sittings[id]) {
-      s.sittings[id] = { id, kind: sittingKind(id), lecture_n: sittingLecture(id), answered_ids: [], started_at: now(), finished_at: null, skipped: false, week: null };
+      s.sittings[id] = {
+        id, kind: sittingKind(id), lecture_n: sittingLecture(id), answered_ids: [], started_at: now(), finished_at: null, skipped: false, week: null,
+        lectures: id === "week0" ? week0Lectures(fixtures().course, fixtures().items) : null,
+      };
     }
   });
 }
@@ -261,7 +288,7 @@ function precheck(): PrecheckView | null {
   if (st?.finished_at || st?.skipped) return null;
   // the baseline just covered this lecture, in this lecture week: no second check yet
   const w0 = s.sittings.week0;
-  if (w0?.finished_at && w0.week === week() && week0Plan(fixtures().course).slots.some((x) => x.lecture_n === n)) return null;
+  if (w0?.finished_at && w0.week === week() && baselineLectures().includes(n)) return null;
   if (!currentOf(id)) return null;
   return { sitting_id: id, lecture_n: n, title: lectureTitle(n), total: planOf(id).slots.length, answered: st?.answered_ids.length ?? 0 };
 }
@@ -270,10 +297,11 @@ function precheck(): PrecheckView | null {
 
 export const mockApi: Api = {
   async getMe() {
+    levelNewKus();
     const s = S();
     return {
       course: fixtures().course, participant_code: s.participant_code, consent: s.consent, condition: s.condition, week: week(),
-      now: now(), settings: s.settings, onboarding_done: baselineDone(),
+      now: now(), settings: s.settings, onboarding_done: baselineDone(), baseline_available: baselineDone() || planOf("week0").slots.length > 0,
     };
   },
 
@@ -399,6 +427,7 @@ export const mockApi: Api = {
 
   // ---- levels
   async getLevels() {
+    levelNewKus();
     const s = S();
     const lines: string[] = [];
     for (const l of Object.values(s.levels)) {
@@ -469,6 +498,7 @@ export const mockApi: Api = {
 
   // ---- playlist
   async getPlaylist() {
+    levelNewKus();
     const s = S();
     const upcomingN = upcoming();
     if (!baselineDone()) {
@@ -601,6 +631,7 @@ export const mockApi: Api = {
 
   // ---- course
   async getCourseMap() {
+    levelNewKus();
     const s = S();
     return {
       lectures: fixtures().course.lectures.map((lecture) => ({

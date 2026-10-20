@@ -31,12 +31,29 @@ export interface AssessmentPlan {
   slots: Slot[];
 }
 
-export function week0Plan(course: Course): AssessmentPlan {
+/**
+ * The lectures the baseline covers: the first `cat_week0_lectures` lectures that have bank items. With uploaded
+ * slides (plan/slide-uploads-plan.md U9) that is whichever of the first lectures have been processed; without
+ * `items`, the first lectures of the list.
+ */
+export function week0Lectures(course: Course, items?: Item[]): number[] {
+  const ordered = [...course.lectures].sort((a, b) => a.n - b.n);
+  const withItems = items ? ordered.filter((l) => bankItems(course, items, l.n).length > 0) : ordered;
+  return withItems.slice(0, course.config.cat_week0_lectures).map((l) => l.n);
+}
+
+/**
+ * The baseline. `lectures`: the ones it covers, fixed when the student starts it, so slides added mid-sitting do
+ * not move its questions; by default `week0Lectures`. It is shorter when those lectures have fewer bank items than
+ * it would ask, and empty when there are none yet.
+ */
+export function week0Plan(course: Course, items?: Item[], lectures?: number[]): AssessmentPlan {
   const cfg = course.config;
-  const lectures = [...course.lectures].sort((a, b) => a.n - b.n).slice(0, cfg.cat_week0_lectures);
-  const total = Math.min(cfg.cat_week0_length, lectures.length * cfg.cat_items_per_topic);
+  const covered = lectures ?? week0Lectures(course, items);
+  const available = items ? covered.reduce((sum, n) => sum + bankItems(course, items, n).length, 0) : Infinity;
+  const total = Math.min(cfg.cat_week0_length, covered.length * cfg.cat_items_per_topic, available);
   const slots: Slot[] = [];
-  for (let k = 0; k < total; k++) slots.push({ role: "new", lecture_n: lectures[k % lectures.length].n });
+  for (let k = 0; k < total; k++) slots.push({ role: "new", lecture_n: covered[k % covered.length] });
   return { kind: "week0", lecture_n: null, slots };
 }
 

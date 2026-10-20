@@ -230,7 +230,8 @@ export interface ResponseRecord {
   at: number;
 }
 
-export type LevelCause = "baseline" | "lecture_check" | "student" | "reset" | "use_suggested" | "pick_all";
+/** "slides_added": a KU from slides added after its lecture's levels were set (plan/slide-uploads-plan.md U10) */
+export type LevelCause = "baseline" | "lecture_check" | "student" | "reset" | "use_suggested" | "pick_all" | "slides_added";
 
 export interface LevelChange {
   level: Level;
@@ -345,6 +346,8 @@ export interface SittingState {
   skipped: boolean;
   /** the lecture week it was finished in */
   week: number | null;
+  /** the baseline only: the lectures it covers, fixed at its first answer (plan/slide-uploads-plan.md U9) */
+  lectures?: number[] | null;
 }
 
 /** A KU level that moved at a lecture boundary: one row of the "What changed and why" card. */

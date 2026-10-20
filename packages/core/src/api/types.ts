@@ -19,6 +19,8 @@ export interface Me {
   settings: AppSettings;
   /** the Week 0 baseline is done, or the student set their own levels */
   onboarding_done: boolean;
+  /** the baseline has questions to ask: false while an uploaded course has no processed slides yet (U9) */
+  baseline_available: boolean;
 }
 
 /** A questionnaire battery that is due (plan/study-instruments-plan.md I9). */

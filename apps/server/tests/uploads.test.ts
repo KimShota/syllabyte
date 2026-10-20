@@ -395,3 +395,62 @@ describe("suggestLecture", () => {
     expect(suggestLecture("lecture12.pdf", "Randomization", lectures)).toEqual({ n: 3, sure: true });
   });
 });
+
+describe("videos students need (U18)", () => {
+  it("records each lecture's videos once its levels are set, shared by course, KU and level", async () => {
+    const s = makeServer();
+    const { ann, courseId } = await courseWithAnn(s);
+    await uploadAndConfirm(s, ann, courseId, [DECKS[0], DECKS[1]]);
+    await work(s);
+    expect(s.courses.videoRequests(courseId)).toEqual([]);
+
+    for (let guard = 0; guard < 50; guard++) {
+      const v = await ann.rpc<{ current: { item: { id: string; correct_index: number } } | null }>("getSitting", "week0");
+      if (!v.current) break;
+      await ann.rpc("answerSitting", "week0", v.current.item.id, v.current.item.correct_index, 1000);
+    }
+    await ann.rpc("finishSitting", "week0");
+    const after = s.courses.videoRequests(courseId);
+    // the baseline covered both lectures (cat_week0_lectures = 4), so both lectures' KUs are wanted, earliest first
+    expect(after.map((r) => [r.ku_id, r.lecture_n])).toEqual([
+      ["ku-potential-outcomes-intro-a", 1],
+      ["ku-potential-outcomes-intro-b", 1],
+      ["ku-selection-bias-explained-a", 2],
+      ["ku-selection-bias-explained-b", 2],
+    ]);
+    expect(after[2].prereq_ids).toEqual(["ku-potential-outcomes-intro-b"]);
+
+    // a classmate at the same levels adds nothing new
+    const bob = await student(s, "bob@nyu.edu");
+    await multipart(bob, "/api/courses", "syllabus", [{ name: "s.pdf", text: "Syllabus of CS-UH 2219E" }]);
+    await work(s);
+    for (let guard = 0; guard < 50; guard++) {
+      const v = await bob.rpc<{ current: { item: { id: string; correct_index: number } } | null }>("getSitting", "week0");
+      if (!v.current) break;
+      await bob.rpc("answerSitting", "week0", v.current.item.id, v.current.item.correct_index, 1000);
+    }
+    await bob.rpc("finishSitting", "week0");
+    expect(s.courses.videoRequests(courseId)).toHaveLength(4);
+  });
+
+  it("keeps a KU's first prerequisites for its later levels (U8)", async () => {
+    const s = makeServer();
+    const { ann, courseId } = await courseWithAnn(s);
+    await uploadAndConfirm(s, ann, courseId, [DECKS[0], DECKS[1]]);
+    await work(s);
+    const annId = (s.db.prepare("SELECT id FROM users WHERE email = 'ann@nyu.edu'").get() as { id: string }).id;
+    const ku = "ku-selection-bias-explained-b";
+    s.courses.requestVideos(courseId, annId, [{ ku_id: ku, lecture_n: 2, level: 1 }]);
+    // a later link pass adds a prerequisite from lecture 1
+    s.courses.addLinks(courseId, [{ ku_id: ku, prereq_id: "ku-potential-outcomes-intro-a" }]);
+    expect(s.courses.fixtures(courseId).course.kus.find((k) => k.id === ku)!.prerequisites).toEqual([
+      "ku-selection-bias-explained-a",
+      "ku-potential-outcomes-intro-a",
+    ]);
+    s.courses.requestVideos(courseId, annId, [{ ku_id: ku, lecture_n: 2, level: 3 }]);
+    expect(s.courses.videoRequests(courseId).map((r) => [r.level, r.prereq_ids])).toEqual([
+      [1, ["ku-selection-bias-explained-a"]],
+      [3, ["ku-selection-bias-explained-a"]],
+    ]);
+  });
+});

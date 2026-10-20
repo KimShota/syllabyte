@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { assembleCourse, type DeckResult } from "@syllabyte/core/logic/assemble";
-import type { Fixtures } from "@syllabyte/core/types";
+import { videoRequests, type VideoRequest } from "@syllabyte/core/logic/videoRequests";
+import type { DemoState, Fixtures } from "@syllabyte/core/types";
 import type { Db } from "./db";
 
 /**
@@ -141,6 +142,41 @@ export class Courses {
     const insert = this.db.prepare("INSERT OR IGNORE INTO ku_links (course_id, ku_id, prereq_id, added_at) VALUES (?, ?, ?, ?)");
     for (const l of links) insert.run(courseId, l.ku_id, l.prereq_id, this.now());
     this.touched(courseId);
+  }
+
+  /**
+   * Records the videos a student needs (U18). A KU's prerequisites are fixed at its first request, for every level
+   * (U8): a link added later does not split the cache.
+   */
+  requestVideos(courseId: string, userId: string, requests: VideoRequest[]): number {
+    if (!requests.length) return 0;
+    const kus = new Map(this.fixtures(courseId).course.kus.map((k) => [k.id, k]));
+    const firstPrereqs = this.db.prepare("SELECT prereq_ids FROM video_requests WHERE course_id = ? AND ku_id = ? ORDER BY requested_at LIMIT 1");
+    const insert = this.db.prepare(
+      "INSERT OR IGNORE INTO video_requests (course_id, ku_id, level, lecture_n, prereq_ids, first_user_id, requested_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    );
+    let added = 0;
+    for (const r of requests) {
+      const ku = kus.get(r.ku_id);
+      if (!ku) continue;
+      const fixed = firstPrereqs.get(courseId, r.ku_id) as { prereq_ids: string } | undefined;
+      added += Number(insert.run(courseId, r.ku_id, r.level, r.lecture_n, fixed?.prereq_ids ?? JSON.stringify(ku.prerequisites), userId, this.now()).changes);
+    }
+    return added;
+  }
+
+  /** After a student's request: the videos their state now needs (U18). */
+  recordVideoNeeds(userId: string, state: DemoState): void {
+    const courseId = this.courseOf(userId);
+    if (!courseId) return;
+    this.requestVideos(courseId, userId, videoRequests(this.fixtures(courseId).course, state.sittings, state.levels, state.made));
+  }
+
+  videoRequests(courseId: string): { ku_id: string; level: number; lecture_n: number; prereq_ids: string[]; status: string }[] {
+    const rows = this.db
+      .prepare("SELECT ku_id, level, lecture_n, prereq_ids, status FROM video_requests WHERE course_id = ? ORDER BY lecture_n, requested_at, ku_id, level")
+      .all(courseId) as { ku_id: string; level: number; lecture_n: number; prereq_ids: string; status: string }[];
+    return rows.map((r) => ({ ...r, prereq_ids: JSON.parse(r.prereq_ids) as string[] }));
   }
 
   /** The course as the shared rules read it: every lecture, the processed decks placed in them, and the added links. */

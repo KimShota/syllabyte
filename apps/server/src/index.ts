@@ -25,7 +25,9 @@ const mailer = resendKey ? resendMailer(resendKey, process.env.MAIL_FROM ?? "Syl
 const semesterStart = process.env.SYLLABYTE_SEMESTER_START ? new Date(process.env.SYLLABYTE_SEMESTER_START).getTime() : undefined;
 const auth = new Auth(db, mailer, secret);
 const courses = new Courses(db);
-const runner = new StateRunner(db, { semesterStart, courseFor: (id) => courses.fixturesFor(id) });
+const runner = new StateRunner(db, { semesterStart, courseFor: (id) => courses.fixturesFor(id),
+    after: (id, state) => courses.recordVideoNeeds(id, state),
+  });
 const uploads = new Uploads(db, courses, process.env.SYLLABYTE_FILES ?? "data/files");
 const app = createApp({ db, auth, runner, courses, uploads, workerToken: process.env.SYLLABYTE_WORKER_TOKEN, corsOrigin: process.env.SYLLABYTE_CORS_ORIGIN });
 

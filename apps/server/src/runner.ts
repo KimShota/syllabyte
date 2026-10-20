@@ -24,7 +24,12 @@ export class StateRunner {
    */
   constructor(
     private db: Db,
-    private opts: { semesterStart?: number; courseFor?: (userId: string) => Fixtures | null } = {},
+    private opts: {
+      semesterStart?: number;
+      courseFor?: (userId: string) => Fixtures | null;
+      /** after each request of a student with a course: their state, e.g. to record the videos they need */
+      after?: (userId: string, state: DemoState) => void;
+    } = {},
   ) {}
 
   run<T>(user: User, visit: string | null, fn: () => Promise<T> | T): Promise<T> {
@@ -34,7 +39,8 @@ export class StateRunner {
   }
 
   private async exec<T>(user: User, visit: string | null, fn: () => Promise<T> | T): Promise<T> {
-    setFixtures(this.opts.courseFor?.(user.id) ?? FIX);
+    const course = this.opts.courseFor?.(user.id) ?? null;
+    setFixtures(course ?? FIX);
     replaceState(this.load(user));
     const v = getVersion();
     const e = getEventVersion();
@@ -45,7 +51,9 @@ export class StateRunner {
       });
     }
     try {
-      return await fn();
+      const out = await fn();
+      if (course && this.opts.after && getVersion() !== v) this.opts.after(user.id, getState());
+      return out;
     } finally {
       if (getVersion() !== v || getEventVersion() !== e) this.save(user.id);
     }
