@@ -65,7 +65,7 @@ port 80, the server under systemd, a firewall (SSH/80/443), swap, automatic secu
 auto-renew off) and the server answers at **https://api.syllabyte.app** with a valid certificate.
 **Still test mode:** sign-in codes are printed to the log, not emailed. Still needed for real students: Resend (its
 DNS records go on `syllabyte.app`) and the key in `/etc/syllabyte/env` with `NODE_ENV=production`, the nightly
-database copy to R2, and the professor's OK to host the course content (the server holds the slides' text and the
+database copy to R2 (skipped for testing: only the weekly droplet backups exist, which can lose a week of answers), and the professor's OK to host the course content (the server holds the slides' text and the
 question bank, the same files the phone app bundles).
 
 ## Next slices
@@ -81,6 +81,13 @@ question bank, the same files the phone app bundles).
    state document once it is large, instructor endpoints (§6.1).
 
 ## Needs advisor / IRB sign-off
+
+- **Where the students are (2026-10-20):** they may be at NYU Abu Dhabi, not in the US. The droplet is in San Francisco
+  (about 200-250 ms from the UAE, so every tap would lag). **Once the location is confirmed, move the server to
+  Bangalore (BLR1) or Frankfurt (FRA1):** a new droplet, `setup.sh`, `deploy.sh`, then repoint the `api` DNS record
+  (an hour's work while there is no real data). Also ask NYUAD's IT/IRB whether student emails and responses may be
+  stored in India or Europe (DigitalOcean has no UAE region; the UAE has its own data-protection law). R2's automatic
+  location pick (Eastern Europe) already suits the UAE.
 
 - The server stores identifiable accounts (email) next to pseudonymous research data. Who may see the `users` table,
   and how long it is kept, is an IRB question.
