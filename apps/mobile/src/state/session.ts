@@ -73,6 +73,9 @@ const backend = BACKEND_BASE
     })
   : null;
 
+/** The course and upload calls (plan/slide-uploads-plan.md); null without a backend. */
+export const courseCalls = backend?.courses ?? null;
+
 const events = backend ? createEventQueue(backend.sendEvents) : null;
 if (backend && events) {
   setApi(backend.api);

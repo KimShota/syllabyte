@@ -10,6 +10,7 @@ import { JetBrainsMono_400Regular, JetBrainsMono_500Medium, JetBrainsMono_600Sem
 import { api } from "@syllabyte/core/api/client";
 import { REMOTE } from "@/data/backend";
 import { setScreen, startApp, useAppReady, usePrefs, useQuery } from "@/state/app";
+import { CourseSync } from "@/state/course";
 import { retryConnection, useReachable, useSession } from "@/state/session";
 import { T } from "@/components/T";
 import { colors, fonts } from "@/theme/tokens";
@@ -19,17 +20,21 @@ SplashScreen.preventAutoHideAsync();
 void startApp();
 
 /** The quick check is the first thing every student does, and there is no way around it (plan D8, mobile-app-plan). */
-const OPEN_BEFORE_BASELINE = (pathname: string) => pathname === "/signin" || pathname === "/welcome" || pathname === "/analyzing" || pathname.startsWith("/quiz");
+const OPEN_BEFORE_BASELINE = (pathname: string) =>
+  pathname === "/signin" || pathname === "/welcome" || pathname === "/analyzing" || pathname === "/setup/lectures" || pathname.startsWith("/quiz") ||
+  // adding slides is how an uploaded course gets its first questions
+  /^\/course\/[^/]+\/review$/.test(pathname);
 
 /**
  * Until the baseline is finished, every screen but the first-run screens and the check itself sends the student
  * back to the check (it resumes where they left off). Leaving the check, swiping back or opening a link to a video
- * all end up there.
+ * all end up there. An uploaded course has no baseline until its first slides are processed (plan/slide-uploads-plan.md
+ * U9): until then the student can look around and add slides.
  */
 function BaselineGate({ pathname }: { pathname: string }) {
   const me = useQuery(() => api.getMe());
   const { setupDone } = usePrefs();
-  const locked = !!me && setupDone && !me.onboarding_done && !OPEN_BEFORE_BASELINE(pathname);
+  const locked = !!me && setupDone && !me.onboarding_done && me.baseline_available && !OPEN_BEFORE_BASELINE(pathname);
   useEffect(() => {
     if (locked) router.replace("/quiz");
   }, [locked]);
@@ -94,12 +99,15 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <StatusBar style="dark" />
       <SessionGate pathname={pathname} />
+      <CourseSync />
       <BaselineGate pathname={pathname} />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.surface } }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="signin" options={{ animation: "fade", gestureEnabled: false }} />
         <Stack.Screen name="welcome" options={{ animation: "fade" }} />
         <Stack.Screen name="analyzing" options={{ animation: "fade", gestureEnabled: false }} />
+        <Stack.Screen name="setup/lectures" options={{ animation: "fade", gestureEnabled: false }} />
+        <Stack.Screen name="course/[courseId]/review" options={{ animation: "slide_from_bottom" }} />
         <Stack.Screen name="quiz/index" options={{ animation: "slide_from_bottom" }} />
         <Stack.Screen name="quiz/question" options={{ gestureEnabled: false }} />
         <Stack.Screen name="quiz/done" options={{ animation: "fade", gestureEnabled: false }} />

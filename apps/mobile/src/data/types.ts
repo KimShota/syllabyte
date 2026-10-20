@@ -54,6 +54,8 @@ export interface LectureDef {
   date?: string;
   /** false: the slides for it haven't been uploaded or processed yet */
   hasSlides: boolean;
+  /** an uploaded course's lecture: where its slides are (plan/slide-uploads-plan.md U14); absent in the demo */
+  state?: "waiting" | "analyzing" | "ready" | "failed";
   /** bottom-to-top on the lecture roadmap */
   sections: LectureSectionDef[];
 }
@@ -66,7 +68,8 @@ export interface CourseDef {
   term: string;
   /** e.g. "ECON 204B · ROADMAP" eyebrow on the lecture roadmap */
   roadmapEyebrow: string;
-  finalExam: { title: string; subtitle: string };
+  /** null for an uploaded course: its syllabus doesn't give one we read */
+  finalExam: { title: string; subtitle: string } | null;
   lectures: LectureDef[];
   /** total planned lectures on the syllabus (more than the ones listed) */
   lecturesPlanned: number;

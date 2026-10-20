@@ -6,7 +6,8 @@ import { Icon } from "./Icon";
 import { ProgressBar } from "./ProgressBar";
 import { Sheet } from "./Sheet";
 import { T } from "./T";
-import { COURSE, OTHER_COURSES } from "@/data/course";
+import { REMOTE } from "@/data/backend";
+import { COURSE, OTHER_COURSES, useCourseVersion } from "@/data/course";
 import { courseProgress } from "@/data/selectors";
 import { useProgress } from "@/state/progress";
 import { colors, fonts, radius, shadow } from "@/theme/tokens";
@@ -22,9 +23,10 @@ function initials(name: string) {
 
 /** "My Courses" dropping from the top of the course roadmap: switch course or add one. */
 export function CoursesDrawer({ visible, onClose, currentId }: { visible: boolean; onClose: () => void; currentId: string }) {
+  useCourseVersion();
   const main = courseProgress(COURSE, useProgress());
   const all = [
-    { id: COURSE.id, name: COURSE.name, meta: `${COURSE.code} · ${COURSE.term}`, progress: main.fraction, done: false, activeLecture: main.activeLecture?.n ?? null, planned: COURSE.lecturesPlanned },
+    { id: COURSE.id, name: COURSE.name, meta: [COURSE.code, COURSE.term].filter(Boolean).join(" · "), progress: main.fraction, done: false, activeLecture: main.activeLecture?.n ?? null, planned: COURSE.lecturesPlanned },
     ...OTHER_COURSES.filter((c) => !c.analyzing).map((c) => ({
       id: c.id,
       name: c.name,
@@ -132,6 +134,8 @@ export function CoursesDrawer({ visible, onClose, currentId }: { visible: boolea
           );
         })}
 
+        {/* one course per student while uploads are real (plan/slide-uploads-plan.md U4) */}
+        {REMOTE ? null : (
         <View style={styles.add}>
           <Button
             label="Add New Course"
@@ -147,6 +151,7 @@ export function CoursesDrawer({ visible, onClose, currentId }: { visible: boolea
             Upload syllabus or slides to generate learning roadmaps
           </T>
         </View>
+        )}
       </View>
     </Sheet>
   );

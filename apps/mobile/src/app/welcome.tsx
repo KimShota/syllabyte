@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { UploadFile } from "@syllabyte/core/api/types";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { router } from "expo-router";
 import * as DocumentPicker from "expo-document-picker";
@@ -6,6 +7,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/Button";
 import { Icon, type IconName } from "@/components/Icon";
 import { T } from "@/components/T";
+import { REMOTE } from "@/data/backend";
+import { refreshCourse, useMyCourse } from "@/state/course";
+import { courseCalls } from "@/state/session";
+import { setPendingSlides, SLIDE_TYPES, SYLLABUS_TYPES, toUploadFile } from "@/state/uploads";
 import { colors, fonts, radius, shadow } from "@/theme/tokens";
 
 const MIME = {
@@ -15,11 +20,40 @@ const MIME = {
   key: "application/x-iwork-keynote-sffkey",
 };
 
-/** First run: upload the syllabus and the lecture slides. */
+/**
+ * First run: upload the syllabus and the lecture slides. With a backend (plan/slide-uploads-plan.md) the syllabus is
+ * required and sent now; slides are optional (they can be added any time) and are sent once the course exists.
+ * Without one, the demo course stands in for whatever is picked.
+ */
 export default function Welcome() {
   const insets = useSafeAreaInsets();
-  const [syllabus, setSyllabus] = useState<string | null>(null);
-  const [slides, setSlides] = useState<string | null>(null);
+  const [syllabus, setSyllabus] = useState<UploadFile | null>(null);
+  const [slides, setSlides] = useState<UploadFile[]>([]);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const myCourse = useMyCourse();
+  // the last syllabus couldn't be read: say why
+  const lastError = myCourse?.status === "failed" ? myCourse.error : null;
+
+  async function start() {
+    if (!REMOTE || !courseCalls) {
+      router.push({ pathname: "/analyzing", params: { from: "welcome" } });
+      return;
+    }
+    if (!syllabus) return;
+    setError(null);
+    setSending(true);
+    try {
+      setPendingSlides(slides);
+      await courseCalls.create(syllabus);
+      await refreshCourse();
+      router.replace("/analyzing");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "The syllabus could not be uploaded.");
+    } finally {
+      setSending(false);
+    }
+  }
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom + 8 }]}>
@@ -32,7 +66,9 @@ export default function Welcome() {
             Welcome to SyllaByte
           </T>
           <T variant="body" color="#606474" style={{ textAlign: "center", marginTop: 8, maxWidth: 300, fontFamily: fonts.medium }}>
-            Upload your course materials to auto-generate interactive study roadmaps.
+            {REMOTE
+              ? "Start with your syllabus: it lists your lectures. Add slides now, or as the semester goes."
+              : "Upload your course materials to auto-generate interactive study roadmaps."}
           </T>
         </View>
 
@@ -43,34 +79,46 @@ export default function Welcome() {
             tint={colors.primaryTint}
             iconColor={colors.primary}
             formats={["PDF", "DOCX"]}
-            file={syllabus}
+            file={syllabus?.name ?? null}
             onPick={async () => {
-              const res = await DocumentPicker.getDocumentAsync({ type: [MIME.pdf, MIME.docx] });
-              if (!res.canceled) setSyllabus(res.assets[0].name);
+              const res = await DocumentPicker.getDocumentAsync({ type: REMOTE ? SYLLABUS_TYPES : [MIME.pdf, MIME.docx], copyToCacheDirectory: true });
+              if (!res.canceled) setSyllabus(toUploadFile(res.assets[0]));
             }}
           />
           <Dropzone
-            title="Lecture Slides"
+            title={REMOTE ? "Lecture Slides (optional)" : "Lecture Slides"}
             icon="slideshow"
             tint="#e6f7f4"
             iconColor="#0d9488"
-            formats={["PDF", "PPTX", "KEY"]}
-            file={slides}
+            formats={REMOTE ? ["PDF", "PPTX"] : ["PDF", "PPTX", "KEY"]}
+            file={slides.length ? slides.map((f) => f.name).join(", ") : null}
             onPick={async () => {
-              const res = await DocumentPicker.getDocumentAsync({ type: [MIME.pdf, MIME.pptx, MIME.key], multiple: true });
-              if (!res.canceled) setSlides(res.assets.map((a) => a.name).join(", "));
+              const res = await DocumentPicker.getDocumentAsync({ type: REMOTE ? SLIDE_TYPES : [MIME.pdf, MIME.pptx, MIME.key], multiple: true, copyToCacheDirectory: true });
+              if (!res.canceled) setSlides(res.assets.map(toUploadFile));
             }}
           />
         </View>
       </ScrollView>
 
       <View style={styles.footer}>
+        {error ?? lastError ? (
+          <T variant="caption" color={colors.error} style={{ textAlign: "center" }} accessibilityLiveRegion="polite">
+            {error ?? lastError}
+          </T>
+        ) : null}
         <Button
-          label="Get Started"
+          label={sending ? "Uploading…" : "Get Started"}
           trailingIcon="arrow-forward"
-          onPress={() => router.push({ pathname: "/analyzing", params: { from: "welcome" } })}
+          disabled={REMOTE ? !syllabus || sending : false}
+          onPress={start}
         />
-        {!syllabus && !slides ? (
+        {REMOTE ? (
+          !syllabus ? (
+            <T variant="caption" color={colors.onSurfaceVariant} style={{ textAlign: "center" }}>
+              Choose your syllabus to continue.
+            </T>
+          ) : null
+        ) : !syllabus && !slides.length ? (
           <T variant="caption" color={colors.onSurfaceVariant} style={{ textAlign: "center" }}>
             No files yet? Continue with the demo course, CS-UH 2219E.
           </T>

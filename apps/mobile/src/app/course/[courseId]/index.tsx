@@ -10,10 +10,12 @@ import { PulseAura } from "@/components/Motion";
 import { ProgressBar } from "@/components/ProgressBar";
 import { Serpentine, type SerpentineRow, type SpineSegment } from "@/components/Serpentine";
 import { T } from "@/components/T";
-import { COURSE, OTHER_COURSES } from "@/data/course";
+import { REMOTE } from "@/data/backend";
+import { COURSE, OTHER_COURSES, useCourseVersion } from "@/data/course";
 import { courseLectures, type LectureNodeView } from "@/data/selectors";
 import type { LectureStatus } from "@/data/types";
 import { useProgress } from "@/state/progress";
+import { pickAndAddSlides } from "@/state/uploads";
 import { colors, fonts, radius, shadow, space } from "@/theme/tokens";
 
 const NODE = 56;
@@ -26,6 +28,9 @@ export default function CourseRoadmap() {
   const progress = useProgress();
   const insets = useSafeAreaInsets();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+  useCourseVersion();
 
   const stub = OTHER_COURSES.find((c) => c.id === courseId);
   const lectures = courseLectures(COURSE, progress);
@@ -59,7 +64,7 @@ export default function CourseRoadmap() {
           {stub ? stub.name : COURSE.name}
         </T>
         <View style={styles.meta}>
-          {stub ? null : (
+          {stub || !COURSE.professor ? null : (
             <>
               <T variant="caption" color={colors.onSurfaceVariant}>
                 {COURSE.professor}
@@ -68,9 +73,37 @@ export default function CourseRoadmap() {
             </>
           )}
           <T variant="codeSm" color={colors.onSurfaceVariant}>
-            {stub ? `${stub.code} · ${stub.term}` : `${COURSE.code} · ${COURSE.term}`}
+            {stub ? `${stub.code} · ${stub.term}` : [COURSE.code, COURSE.term].filter(Boolean).join(" · ")}
           </T>
         </View>
+
+        {/* an uploaded course: slides are added here, all at once or a lecture at a time (plan/slide-uploads-plan.md) */}
+        {REMOTE && !stub ? (
+          <View style={styles.addSlides}>
+            <Button
+              label={adding ? "Uploading…" : "Add slides"}
+              icon="upload-file"
+              kind="secondary"
+              height={44}
+              disabled={adding}
+              onPress={async () => {
+                setAddError(null);
+                setAdding(true);
+                try {
+                  const added = await pickAndAddSlides(COURSE.id);
+                  if (added) router.push({ pathname: "/course/[courseId]/review", params: { courseId: COURSE.id } });
+                } catch (e) {
+                  setAddError(e instanceof Error ? e.message : "The files could not be uploaded.");
+                } finally {
+                  setAdding(false);
+                }
+              }}
+            />
+            <T variant="caption" color={addError ? colors.error : colors.onSurfaceVariant} style={{ textAlign: "center" }} accessibilityLiveRegion="polite">
+              {addError ?? "PDF or PowerPoint, one file per lecture. Add them all now or as the semester goes."}
+            </T>
+          </View>
+        ) : null}
 
         {stub ? (
           <View style={styles.stub}>
@@ -103,8 +136,9 @@ function segmentFor(upper: LectureStatus, lower: LectureStatus): SpineSegment {
 
 function Path({ lectures }: { lectures: LectureNodeView[] }) {
   const top = [...lectures].reverse();
+  const exam = COURSE.finalExam;
   const rows: SerpentineRow[] = [
-    {
+    ...(exam ? [{
       key: "final",
       height: 170,
       nodeX: 0.5,
@@ -115,14 +149,14 @@ function Path({ lectures }: { lectures: LectureNodeView[] }) {
             <Icon name="school" size={28} color={colors.tertiary} />
           </View>
           <View style={styles.finalCard}>
-            <T variant="bodySemibold">{COURSE.finalExam.title}</T>
+            <T variant="bodySemibold">{exam.title}</T>
             <T variant="codeSm" color={colors.onSurfaceVariant} style={{ marginTop: 4 }}>
-              {COURSE.finalExam.subtitle}
+              {exam.subtitle}
             </T>
           </View>
         </View>
       ),
-    },
+    }] : []),
     ...top.map((view) => {
       const nodeRight = view.lecture.n % 2 === 1;
       return {
@@ -133,9 +167,11 @@ function Path({ lectures }: { lectures: LectureNodeView[] }) {
       };
     }),
   ];
+  // the segment below each row but the last; without the exam row, the first row is a lecture
+  const offset = exam ? 1 : 0;
   const segments: SpineSegment[] = rows.slice(0, -1).map((_, i) => {
-    const upper = i === 0 ? "awaiting" : top[i - 1].status;
-    return segmentFor(upper, top[i].status);
+    const upper = i - offset < 0 ? "awaiting" : top[i - offset].status;
+    return segmentFor(upper, top[i + 1 - offset].status);
   });
   return <Serpentine rows={rows} segments={segments} />;
 }
@@ -268,14 +304,25 @@ function CardBody({ view, alignRight }: { view: LectureNodeView; alignRight: boo
           </T>
         </View>
       ) : null}
-      {status === "awaiting" ? (
-        <View style={[styles.chip, { backgroundColor: colors.surfaceContainerHigh }]}>
-          <Icon name="schedule" size={12} color={colors.onSurfaceVariant} />
-          <T variant="codeSm" color={colors.onSurfaceVariant} style={{ fontSize: 10 }}>
-            Awaiting slides
-          </T>
-        </View>
-      ) : null}
+      {status === "awaiting" ? <AwaitingChip state={lecture.state} /> : null}
+    </View>
+  );
+}
+
+/** Where an uploaded lecture's slides are (U14); the demo's lectures are simply awaiting them. */
+function AwaitingChip({ state }: { state: LectureNodeView["lecture"]["state"] }) {
+  const look =
+    state === "analyzing"
+      ? { icon: "autorenew" as const, text: "Analyzing slides…", color: colors.primary, bg: colors.primaryTint }
+      : state === "failed"
+        ? { icon: "error-outline" as const, text: "Couldn't read these slides", color: colors.error, bg: colors.errorContainer }
+        : { icon: "schedule" as const, text: state === "waiting" ? "Waiting for slides" : "Awaiting slides", color: colors.onSurfaceVariant, bg: colors.surfaceContainerHigh };
+  return (
+    <View style={[styles.chip, { backgroundColor: look.bg }]}>
+      <Icon name={look.icon} size={12} color={look.color} />
+      <T variant="codeSm" color={look.color} style={{ fontSize: 10 }}>
+        {look.text}
+      </T>
     </View>
   );
 }
@@ -286,6 +333,7 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: space.gutter, paddingTop: 12 },
   meta: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 2 },
   dot: { width: 4, height: 4, borderRadius: 2, backgroundColor: colors.outline },
+  addSlides: { marginTop: 16, gap: 8 },
   stub: { marginTop: 32, padding: 24, gap: 12, alignItems: "center", backgroundColor: colors.surfaceContainerLowest, borderRadius: radius.card, ...shadow.card },
   finalRow: { alignItems: "center" },
   finalNode: { backgroundColor: colors.tertiaryFixed, marginTop: 10 },

@@ -45,6 +45,7 @@ export const colors = {
 
   error: "#ba1a1a",
   errorSoft: "#ff8a80",
+  errorContainer: "#ffdad6",
 
   /** the dark, immersive player */
   player: {

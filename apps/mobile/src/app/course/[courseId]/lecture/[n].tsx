@@ -11,7 +11,7 @@ import { T } from "@/components/T";
 import { NodePreviewSheet } from "@/components/NodePreviewSheet";
 import { PrecheckCard } from "@/components/TaskCards";
 import { api } from "@syllabyte/core/api/client";
-import { COURSE, KUS } from "@/data/course";
+import { COURSE, KUS, useCourseVersion } from "@/data/course";
 import { findLecture, kuMinutes, kuStatuses, lectureProgress, sectionSegments } from "@/data/selectors";
 import type { Ku, KuStatus } from "@/data/types";
 import { useQuery } from "@/state/app";
@@ -26,6 +26,7 @@ const X_PATTERN = [0.36, 0.66, 0.5, 0.3, 0.68, 0.48];
 /** Lecture roadmap: the lecture's KUs, section by section, climbing from the first. */
 export default function LectureRoadmap() {
   const { n } = useLocalSearchParams<{ courseId: string; n: string }>();
+  useCourseVersion();
   const p = useProgress();
   const check = useQuery(() => api.getPlaylist())?.precheck ?? null;
   const insets = useSafeAreaInsets();

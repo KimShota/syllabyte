@@ -7,13 +7,21 @@ import { IconButton } from "@/components/Header";
 import { Icon } from "@/components/Icon";
 import { useLoop } from "@/components/Motion";
 import { T } from "@/components/T";
+import { REMOTE } from "@/data/backend";
 import { ANALYZER_SLIDES, ANALYZER_TOTAL_SLIDES } from "@/data/course";
 import { setPrefs } from "@/state/app";
+import { useMyCourse } from "@/state/course";
+import { finishSetup } from "@/state/uploads";
 import { colors, fonts, radius, shadow } from "@/theme/tokens";
 
 const SLIDE_MS = 1800;
 
-/** "Analyzing your materials…": a scan over each slide, then on to the baseline check. */
+/**
+ * "Analyzing your materials…": a scan over each slide, then on to the baseline check. With a backend
+ * (plan/slide-uploads-plan.md) it runs while the server reads the syllabus, then goes to the lecture list (for the
+ * student who added the course) or on into the course; a syllabus that couldn't be read goes back to the welcome
+ * screen, which says why.
+ */
 export default function Analyzing() {
   const insets = useSafeAreaInsets();
   const [index, setIndex] = useState(0);
@@ -21,16 +29,34 @@ export default function Analyzing() {
   const [cardHeight, setCardHeight] = useState(0);
   const enter = useState(() => new Animated.Value(1))[0];
   const sweep = useLoop(1400);
+  const myCourse = useMyCourse();
+
+  useEffect(() => {
+    if (!REMOTE || !myCourse || myCourse.status === "reading") return;
+    if (myCourse.status !== "ready") {
+      router.replace("/welcome");
+      return;
+    }
+    const c = myCourse.course;
+    if (c.is_creator && !c.lectures_confirmed) {
+      router.replace("/setup/lectures");
+      return;
+    }
+    void finishSetup(c.id).then((next) => router.replace(next), () => router.replace("/"));
+  }, [myCourse]);
 
   useEffect(() => {
     if (exitOpen) return;
     const id = setTimeout(() => {
       if (index + 1 >= ANALYZER_SLIDES.length) {
-        router.replace("/quiz");
-        return;
+        // with a backend the scan keeps going until the syllabus has been read
+        if (!REMOTE) {
+          router.replace("/quiz");
+          return;
+        }
       }
       Animated.timing(enter, { toValue: 0, duration: 220, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start(() => {
-        setIndex((i) => i + 1);
+        setIndex((i) => (i + 1) % ANALYZER_SLIDES.length);
         Animated.timing(enter, { toValue: 1, duration: 380, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
       });
     }, SLIDE_MS);
@@ -56,7 +82,7 @@ export default function Analyzing() {
             ANALYZER
           </T>
         </View>
-        <IconButton icon="close" label="Close and return to the app" onPress={() => setExitOpen(true)} style={styles.close} />
+        {REMOTE ? <View style={styles.close} /> : <IconButton icon="close" label="Close and return to the app" onPress={() => setExitOpen(true)} style={styles.close} />}
       </View>
       <T variant="titleMobile" style={{ textAlign: "center", marginBottom: 16 }} accessibilityRole="header" accessibilityLiveRegion="polite">
         Analyzing your materials...

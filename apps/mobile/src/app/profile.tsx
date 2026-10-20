@@ -9,7 +9,7 @@ import { T } from "@/components/T";
 import { api } from "@syllabyte/core/api/client";
 import { endFirstModule, simulateNextDay, simulateNextWeek } from "@syllabyte/core/api/demo";
 import { REMOTE } from "@/data/backend";
-import { COURSE } from "@/data/course";
+import { COURSE, useCourseVersion } from "@/data/course";
 import { SPEEDS, setPrefs, signOut, speedLabel, usePrefs, useQuery } from "@/state/app";
 import { useSession } from "@/state/session";
 import { pickProfilePhoto, removeProfilePhoto, type PhotoSource } from "@/state/photo";
@@ -19,6 +19,7 @@ import { colors, fonts, radius, shadow, space } from "@/theme/tokens";
 const DEMO_STUDENT = { name: "Alex Rivera" };
 
 export default function Profile() {
+  useCourseVersion();
   const insets = useSafeAreaInsets();
   const { speed, photoUri } = usePrefs();
   const captions = useQuery(() => api.getMe())?.settings.captions ?? true;

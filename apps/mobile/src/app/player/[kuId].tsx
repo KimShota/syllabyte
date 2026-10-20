@@ -5,7 +5,7 @@ import { Redirect, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { PlayerPage } from "@/components/player/PlayerPage";
 import { precheckHref } from "@/components/TaskCards";
 import { api } from "@syllabyte/core/api/client";
-import { KUS } from "@/data/course";
+import { KUS, useCourseVersion } from "@/data/course";
 import { findLecture, lectureFeed } from "@/data/selectors";
 import { usePrefs, useQuery, type Speed } from "@/state/app";
 import { usePrecheck } from "@/state/progress";
@@ -16,6 +16,7 @@ import { usePrecheck } from "@/state/progress";
  */
 export default function Player() {
   const { kuId } = useLocalSearchParams<{ kuId: string }>();
+  useCourseVersion();
   const prefs = usePrefs();
   const me = useQuery(() => api.getMe());
   const check = usePrecheck();

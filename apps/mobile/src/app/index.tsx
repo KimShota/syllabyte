@@ -10,9 +10,11 @@ import { T } from "@/components/T";
 import { TaskCards } from "@/components/TaskCards";
 import { UploadSheet } from "@/components/UploadSheet";
 import { api } from "@syllabyte/core/api/client";
-import { COURSE, OTHER_COURSES } from "@/data/course";
+import { REMOTE } from "@/data/backend";
+import { COURSE, OTHER_COURSES, useCourseVersion } from "@/data/course";
 import { courseProgress } from "@/data/selectors";
 import { usePrefs, useQuery } from "@/state/app";
+import { setupRoute, useMyCourse } from "@/state/course";
 import { useProgress } from "@/state/progress";
 import { colors, fonts, radius, shadow, space } from "@/theme/tokens";
 
@@ -20,6 +22,8 @@ import { colors, fonts, radius, shadow, space } from "@/theme/tokens";
 export default function Home() {
   const prefs = usePrefs();
   const me = useQuery(() => api.getMe());
+  const myCourse = useMyCourse();
+  useCourseVersion();
   const progress = useProgress();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ upload?: string }>();
@@ -32,8 +36,11 @@ export default function Home() {
     if (!open) setDismissed(params.upload);
   };
 
-  if (!me) return <View style={styles.screen} />;
-  if (!prefs.setupDone && !me.onboarding_done) return <Redirect href="/welcome" />;
+  if (!me || (REMOTE && !myCourse)) return <View style={styles.screen} />;
+  // with a backend, the course comes first: the syllabus, then (for whoever added it) its lecture list
+  const setup = REMOTE ? setupRoute(myCourse) : null;
+  if (setup) return <Redirect href={setup} />;
+  if (!REMOTE && !prefs.setupDone && !me.onboarding_done) return <Redirect href="/welcome" />;
 
   const main = courseProgress(COURSE, progress);
   const courses = [
@@ -84,16 +91,19 @@ export default function Home() {
               onPress={() => router.push({ pathname: "/course/[courseId]", params: { courseId: c.id } })}
             />
           ))}
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setUploadOpen(true)}
-            style={({ pressed }) => [styles.another, pressed && { backgroundColor: colors.surfaceContainer }]}
-          >
-            <Icon name="upload-file" size={20} color={colors.primary} />
-            <T variant="bodySemibold" color={colors.primary} style={{ fontSize: 14 }}>
-              + Upload Another Course
-            </T>
-          </Pressable>
+          {/* one course per student while uploads are real (plan/slide-uploads-plan.md U4) */}
+          {REMOTE ? null : (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setUploadOpen(true)}
+              style={({ pressed }) => [styles.another, pressed && { backgroundColor: colors.surfaceContainer }]}
+            >
+              <Icon name="upload-file" size={20} color={colors.primary} />
+              <T variant="bodySemibold" color={colors.primary} style={{ fontSize: 14 }}>
+                + Upload Another Course
+              </T>
+            </Pressable>
+          )}
         </View>
       </ScrollView>
 

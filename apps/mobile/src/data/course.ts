@@ -1,12 +1,17 @@
 /**
- * The course as the mobile screens draw it, built from the shared fixtures (packages/core/fixtures: gitignored,
- * because they come from the course's own slides): the lectures, every KU and its title, which KUs have a video,
- * and the videos' narration. What the design shows but the pipeline doesn't make yet is placeholder data here:
- * the professor, term and exam, lecture dates, the sections of a lecture, the lectures still to come, the other
- * courses, and the slides the "Analyzing" screen cycles through.
+ * The course as the mobile screens draw it. By default the demo course, built from the shared fixtures
+ * (packages/core/fixtures: gitignored, because they come from the course's own slides): the lectures, every KU and
+ * its title, which KUs have a video, and the videos' narration. What the design shows but the pipeline doesn't make
+ * yet is placeholder data here: the professor, term and exam, lecture dates, the sections of a lecture, the lectures
+ * still to come, the other courses, and the slides the "Analyzing" screen cycles through.
+ *
+ * With a backend, the student's uploaded course (plan/slide-uploads-plan.md) replaces it once loaded
+ * (state/course.ts): `COURSE`, `KUS` and `OTHER_COURSES` are live, and screens re-render through `useCourseVersion`.
  */
+import { useSyncExternalStore } from "react";
+import type { LectureStateView } from "@syllabyte/core/api/types";
 import { FIX } from "@syllabyte/core/fixtures";
-import type { KuEntry, Video } from "@syllabyte/core/types";
+import type { Course, KuEntry, Video } from "@syllabyte/core/types";
 import { mediaUrl } from "./media";
 import type { CourseDef, CourseStub, Ku, LectureDef, LectureSectionDef, Scene, TranscriptLine } from "./types";
 
@@ -81,7 +86,7 @@ function slideSpan(ku: KuEntry, video: Video | undefined): [number, number] {
 
 const lectureTitle = (n: number) => FIX.course.lectures.find((l) => l.n === n)?.title ?? `Lecture ${n}`;
 
-export const KUS: Record<string, Ku> = Object.fromEntries(
+const DEMO_KUS: Record<string, Ku> = Object.fromEntries(
   FIX.course.kus.map((k): [string, Ku] => {
     const video = k.video_id ? videos.get(k.video_id) : undefined;
     return [
@@ -116,7 +121,7 @@ function sections(n: number): LectureSectionDef[] {
 const made: LectureDef[] = FIX.course.lectures.map((l) => ({ n: l.n, title: l.title, date: DATES[l.n - 1], hasSlides: true, sections: sections(l.n) }));
 const lastN = Math.max(0, ...made.map((l) => l.n));
 
-export const COURSE: CourseDef = {
+const DEMO_COURSE: CourseDef = {
   id: FIX.course.id,
   code: FIX.course.code,
   name: FIX.course.name,
@@ -132,11 +137,15 @@ export const COURSE: CourseDef = {
 };
 
 /** The other courses on Home and in the drawer; they have no lectures in this build. */
-export const OTHER_COURSES: CourseStub[] = [
+const DEMO_OTHER_COURSES: CourseStub[] = [
   { id: "econ-micro-2", code: "ECON-UA 11", name: "Microeconomic Theory II", term: "Fall 2026", progress: 0.4, lecturesDone: 5, lecturesPlanned: 12 },
   { id: "ml-causal", code: "DS-GA 3001", name: "Machine Learning & Causal Inference", term: "Fall 2026", progress: 0.15, lecturesDone: 2, lecturesPlanned: 13 },
   { id: "intro-neuro", code: "NEURO-UA 100", name: "Introduction to Neuroscience", term: "Fall 2026", progress: 0, lecturesDone: 0, lecturesPlanned: 14, analyzing: { progress: 0.48 } },
 ];
+
+export let COURSE: CourseDef = DEMO_COURSE;
+export const KUS: Record<string, Ku> = { ...DEMO_KUS };
+export let OTHER_COURSES: CourseStub[] = DEMO_OTHER_COURSES;
 
 /** Slides the "Analyzing your materials" screen cycles through. */
 export const ANALYZER_SLIDES: { n: number; title: string; boxes: [string, string, string]; captions: [string, string, string] }[] = [
@@ -146,3 +155,69 @@ export const ANALYZER_SLIDES: { n: number; title: string; boxes: [string, string
   { n: 25, title: "Randomization", boxes: ["Coin toss", "Groups", "Balance"], captions: ["Assignment", "Comparable", "Checked"] },
 ];
 export const ANALYZER_TOTAL_SLIDES = Math.max(1, ...FIX.course.lectures.map((l) => l.slide_end));
+
+// ------------------------------------------------------------------ an uploaded course
+
+let version = 0;
+const listeners = new Set<() => void>();
+const subscribe = (l: () => void) => {
+  listeners.add(l);
+  return () => {
+    listeners.delete(l);
+  };
+};
+
+/** Re-renders a screen when the course it draws changes (the uploaded course loads, or a lecture's slides land). */
+export function useCourseVersion(): number {
+  return useSyncExternalStore(subscribe, () => version, () => version);
+}
+
+/** The uploaded course as the screens draw it: its lectures in order, one section each, KUs without videos yet. */
+export function uploadedCourseDef(course: Course, lectures: LectureStateView[]): { course: CourseDef; kus: Record<string, Ku> } {
+  const title = (n: number) => lectures.find((l) => l.n === n)?.title ?? `Lecture ${n}`;
+  const kus: Record<string, Ku> = Object.fromEntries(
+    course.kus.map((k): [string, Ku] => [
+      k.id,
+      {
+        id: k.id, title: k.title, shortTitle: k.short_title, lectureN: k.lecture_n, videoId: k.video_id, slides: [1, 1], durationS: STAND_IN_S,
+        scene: statement(title(k.lecture_n), k.short_title, []), transcript: [],
+      },
+    ]),
+  );
+  const defs: LectureDef[] = lectures.map((l) => {
+    const ids = course.kus.filter((k) => k.lecture_n === l.n).map((k) => k.id);
+    return {
+      n: l.n,
+      title: l.title,
+      hasSlides: l.state === "ready" && ids.length > 0,
+      state: l.state,
+      sections: ids.length ? [{ id: `lecture-${l.n}`, title: l.title, kuIds: ids }] : [],
+    };
+  });
+  return {
+    course: {
+      id: course.id,
+      code: course.code,
+      name: course.name,
+      professor: "",
+      term: "",
+      roadmapEyebrow: `${course.code || course.name} · Roadmap`,
+      finalExam: null,
+      lecturesPlanned: defs.length,
+      lectures: defs,
+    },
+    kus,
+  };
+}
+
+/** Shows the student's uploaded course in place of the demo course; one course per student for now (U4). */
+export function showUploadedCourse(course: Course, lectures: LectureStateView[]): void {
+  const next = uploadedCourseDef(course, lectures);
+  COURSE = next.course;
+  for (const id of Object.keys(KUS)) delete KUS[id];
+  Object.assign(KUS, next.kus);
+  OTHER_COURSES = [];
+  version += 1;
+  listeners.forEach((l) => l());
+}
+
