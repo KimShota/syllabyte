@@ -1,6 +1,6 @@
 import { INSTRUMENTS_VERSION } from "../content/instruments";
 import { track } from "../events";
-import { FIX, itemById, lectureByN, slideText, slideUrl, topicById, videoById } from "../fixtures";
+import { fixtures, itemById, lectureByN, slideText, slideUrl, topicById, videoById } from "../fixtures";
 import { nextAssessmentItem, prelecturePlan, week0Plan, type AssessmentPlan } from "../logic/assessment";
 import { calibrationBlock1, calibrationBlock2 } from "../logic/calibration";
 import { droppedEarly } from "../logic/engagement";
@@ -32,13 +32,13 @@ import type { Api, BatteryView, StudyTaskView } from "./types";
 
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
 const S = () => getState();
-const cfg = () => FIX.course.config;
+const cfg = () => fixtures().course.config;
 const week = () => weekOf(now(), S().semester_start);
 const topicTitle = (id: string) => topicById(id).title;
 const lectureTitle = (n: number) => lectureByN(n).title;
-const profileInput = () => ({ course: FIX.course, items: FIX.items, responses: S().responses });
+const profileInput = () => ({ course: fixtures().course, items: fixtures().items, responses: S().responses });
 /** The lecture whose videos are next: the schedule's, unless the demo moved it. */
-const upcoming = () => S().upcoming_lecture ?? upcomingLecture(FIX.course, week());
+const upcoming = () => S().upcoming_lecture ?? upcomingLecture(fixtures().course, week());
 const baselineDone = () => isOnboarded(S());
 const research = () => S().consent === "research";
 
@@ -48,8 +48,8 @@ function openDueBatteries(): void {
   const s = S();
   const missing: { id: string; at: number }[] = [];
   if (!s.study.baseline) missing.push({ id: "baseline", at: now() });
-  for (const m of dueModules(FIX.course, week(), s.upcoming_lecture)) {
-    if (!s.study[m.id]) missing.push({ id: m.id, at: moduleEndTime(FIX.course, m, s.semester_start, now()) });
+  for (const m of dueModules(fixtures().course, week(), s.upcoming_lecture)) {
+    if (!s.study[m.id]) missing.push({ id: m.id, at: moduleEndTime(fixtures().course, m, s.semester_start, now()) });
   }
   if (!missing.length) return;
   mutate((st) => {
@@ -59,7 +59,7 @@ function openDueBatteries(): void {
 
 function batteryTitle(id: string): string {
   if (id === "baseline") return "About you";
-  const m = studyModules(FIX.course).find((x) => x.id === id);
+  const m = studyModules(fixtures().course).find((x) => x.id === id);
   return `${m?.title ?? id} questionnaire`;
 }
 
@@ -107,13 +107,13 @@ function effectiveReview(videoId: string): ReviewStatus {
 }
 
 function reviewMap(): Record<string, ReviewStatus> {
-  return Object.fromEntries(FIX.videos.map((v) => [v.id, effectiveReview(v.id)]));
+  return Object.fromEntries(fixtures().videos.map((v) => [v.id, effectiveReview(v.id)]));
 }
 
 function buildInput(prev: PlaylistEntry[]): BuildInput {
   const s = S();
   return {
-    course: FIX.course, videos: FIX.videos, items: FIX.items, levels: s.levels, responses: s.responses, watched: s.watched,
+    course: fixtures().course, videos: fixtures().videos, items: fixtures().items, levels: s.levels, responses: s.responses, watched: s.watched,
     progress: s.progress, review: reviewMap(), prev, known: s.known_videos, added: s.added_videos, week: week(), now: now(),
     upcoming: s.upcoming_lecture ?? undefined,
   };
@@ -180,13 +180,13 @@ function entryFor(entryId: string): PlaylistEntry {
 
 function kuRows(lectureN: number): KuLevelRow[] {
   const s = S();
-  return FIX.course.kus
+  return fixtures().course.kus
     .filter((k) => k.lecture_n === lectureN && s.levels[k.id])
     .map((ku) => ({ ku, level: s.levels[ku.id], made_level: s.made[ku.id] ?? null }));
 }
 
 function lectureLevels(): LectureLevels[] {
-  return FIX.course.lectures.map((lecture) => ({ lecture, rows: kuRows(lecture.n) })).filter((l) => l.rows.length > 0);
+  return fixtures().course.lectures.map((lecture) => ({ lecture, rows: kuRows(lecture.n) })).filter((l) => l.rows.length > 0);
 }
 
 /**
@@ -199,7 +199,7 @@ function publishLevels(cause: "baseline" | "lecture_check"): ReturnType<typeof l
   const est = kuLevels(profileInput());
   const before = Object.fromEntries(Object.values(S().levels).filter((l) => l.source === "model").map((l) => [l.ku_id, l.level]));
   mutate((s) => {
-    for (const ku of FIX.course.kus) {
+    for (const ku of fixtures().course.kus) {
       const e = est[ku.id];
       const cur = s.levels[ku.id];
       if (!cur) {
@@ -219,12 +219,12 @@ function publishLevels(cause: "baseline" | "lecture_check"): ReturnType<typeof l
       }
     }
   });
-  return levelUpdates(before, est, FIX.course.kus, new Map(FIX.course.lectures.map((l) => [l.n, l.title])));
+  return levelUpdates(before, est, fixtures().course.kus, new Map(fixtures().course.lectures.map((l) => [l.n, l.title])));
 }
 
 function describeLevelChange(ku: string, from: Level, to: Level, cause: string, at: number): string {
   const wk = weekOf(at, S().semester_start);
-  const lecture = lectureTitle(FIX.course.kus.find((k) => k.short_title === ku)?.lecture_n ?? 1);
+  const lecture = lectureTitle(fixtures().course.kus.find((k) => k.short_title === ku)?.lecture_n ?? 1);
   const when =
     cause === "lecture_check" ? `at your “${lecture}” check` : cause === "use_suggested" ? `in Week ${wk}, when you went back to our level` : `in Week ${wk}, when you changed it`;
   return `“${ku}” went from Level ${from} to Level ${to} ${when}.`;
@@ -234,7 +234,7 @@ function describeLevelChange(ku: string, from: Level, to: Level, cause: string, 
 
 const sittingKind = (id: string): SittingState["kind"] => (id === "week0" ? "week0" : "lecture");
 const sittingLecture = (id: string): number | null => (id === "week0" ? null : Number(id.split("-")[1]));
-const planOf = (id: string): AssessmentPlan => (id === "week0" ? week0Plan(FIX.course) : prelecturePlan(FIX.course, sittingLecture(id)!));
+const planOf = (id: string): AssessmentPlan => (id === "week0" ? week0Plan(fixtures().course) : prelecturePlan(fixtures().course, sittingLecture(id)!));
 const sittingLabel = (id: string) => (id === "week0" ? "Start check" : `${lectureTitle(sittingLecture(id)!)} check`);
 
 function ensureSitting(id: string): void {
@@ -261,7 +261,7 @@ function precheck(): PrecheckView | null {
   if (st?.finished_at || st?.skipped) return null;
   // the baseline just covered this lecture, in this lecture week: no second check yet
   const w0 = s.sittings.week0;
-  if (w0?.finished_at && w0.week === week() && week0Plan(FIX.course).slots.some((x) => x.lecture_n === n)) return null;
+  if (w0?.finished_at && w0.week === week() && week0Plan(fixtures().course).slots.some((x) => x.lecture_n === n)) return null;
   if (!currentOf(id)) return null;
   return { sitting_id: id, lecture_n: n, title: lectureTitle(n), total: planOf(id).slots.length, answered: st?.answered_ids.length ?? 0 };
 }
@@ -272,7 +272,7 @@ export const mockApi: Api = {
   async getMe() {
     const s = S();
     return {
-      course: FIX.course, participant_code: s.participant_code, consent: s.consent, condition: s.condition, week: week(),
+      course: fixtures().course, participant_code: s.participant_code, consent: s.consent, condition: s.condition, week: week(),
       now: now(), settings: s.settings, onboarding_done: baselineDone(),
     };
   },
@@ -340,7 +340,7 @@ export const mockApi: Api = {
     if (st.kind === "week0") {
       publishLevels("baseline");
       rebuildPlaylist();
-      for (const ku of FIX.course.kus) track("level_suggested", { type: "ku", id: ku.id }, { level: S().levels[ku.id].level });
+      for (const ku of fixtures().course.kus) track("level_suggested", { type: "ku", id: ku.id }, { level: S().levels[ku.id].level });
     } else {
       const updates = publishLevels("lecture_check");
       if (updates.length) {
@@ -365,7 +365,7 @@ export const mockApi: Api = {
     const est = kuLevels(profileInput());
     ensureSitting("week0");
     mutate((s) => {
-      for (const ku of FIX.course.kus) {
+      for (const ku of fixtures().course.kus) {
         s.levels[ku.id] = {
           ku_id: ku.id, level, source: "student", suggested_level: est[ku.id].level, reason: est[ku.id].reason, not_checked: false,
           provisional: false, history: [{ level, source: "student", at: now(), cause: "pick_all" }],
@@ -394,7 +394,7 @@ export const mockApi: Api = {
   },
 
   async keepLevels() {
-    track("level_kept", { type: "levels" }, { n: FIX.course.kus.length });
+    track("level_kept", { type: "levels" }, { n: fixtures().course.kus.length });
   },
 
   // ---- levels
@@ -402,7 +402,7 @@ export const mockApi: Api = {
     const s = S();
     const lines: string[] = [];
     for (const l of Object.values(s.levels)) {
-      const ku = FIX.course.kus.find((k) => k.id === l.ku_id)!;
+      const ku = fixtures().course.kus.find((k) => k.id === l.ku_id)!;
       for (let i = 1; i < l.history.length; i++) lines.push(describeLevelChange(ku.short_title, l.history[i - 1].level, l.history[i].level, l.history[i].cause, l.history[i].at));
     }
     const due = precheck();
@@ -451,7 +451,7 @@ export const mockApi: Api = {
     if (!c) return null;
     return {
       id: c.id, lecture_n: c.lecture_n, lecture_title: lectureTitle(c.lecture_n),
-      updates: c.updates.map((u) => ({ ...u, title: FIX.course.kus.find((k) => k.id === u.ku_id)?.short_title ?? u.ku_id })),
+      updates: c.updates.map((u) => ({ ...u, title: fixtures().course.kus.find((k) => k.id === u.ku_id)?.short_title ?? u.ku_id })),
     };
   },
 
@@ -464,7 +464,7 @@ export const mockApi: Api = {
 
   async getCalibration() {
     const s = S();
-    return { block1: calibrationBlock1(s.responses), block2: calibrationBlock2(s.next_session, FIX.videos) };
+    return { block1: calibrationBlock1(s.responses), block2: calibrationBlock2(s.next_session, fixtures().videos) };
   },
 
   // ---- playlist
@@ -487,7 +487,7 @@ export const mockApi: Api = {
       cards,
       skipped: skipped.map((e) => card(videoById(e.video_id), e)),
       why: whyOrder({
-        upcoming: upcomingN, manual: Boolean(s.playlist.manual_order), entries: active, videos: FIX.videos, kus: FIX.course.kus,
+        upcoming: upcomingN, manual: Boolean(s.playlist.manual_order), entries: active, videos: fixtures().videos, kus: fixtures().course.kus,
         resumeIds: s.playlist.manual_order ? [] : [...stopped],
       }),
       manual: Boolean(s.playlist.manual_order),
@@ -603,9 +603,9 @@ export const mockApi: Api = {
   async getCourseMap() {
     const s = S();
     return {
-      lectures: FIX.course.lectures.map((lecture) => ({
+      lectures: fixtures().course.lectures.map((lecture) => ({
         lecture,
-        rows: FIX.course.kus.filter((k) => k.lecture_n === lecture.n).map((ku) => {
+        rows: fixtures().course.kus.filter((k) => k.lecture_n === lecture.n).map((ku) => {
           const video = ku.video_id ? videoById(ku.video_id) : null;
           const entry = video ? s.playlist.entries.find((e) => e.video_id === video.id) ?? null : null;
           let status: "watched" | "in_playlist" | "skipped" | "not_made" | "available" = "not_made";
@@ -647,7 +647,7 @@ export const mockApi: Api = {
     const level = levelOf(video.ku_id);
     const made = s.made[video.ku_id] ?? null;
     const served = servedLevel(made ?? level, [video.file_level]);
-    const rows = tailoringRows(video, served.level, FIX.course.kus, FIX.items, s.responses);
+    const rows = tailoringRows(video, served.level, fixtures().course.kus, fixtures().items, s.responses);
     const { active } = displayOrder(s.playlist);
     const idx = active.findIndex((e) => e.video_id === videoId);
     const after = idx >= 0 ? active.slice(idx + 1).find((e) => e.state === "todo") : undefined;
@@ -794,7 +794,7 @@ export const mockApi: Api = {
     if (!research()) return [];
     openDueBatteries();
     const s = S();
-    const order = (id: string) => (id === "baseline" ? -1 : studyModules(FIX.course).findIndex((m) => m.id === id));
+    const order = (id: string) => (id === "baseline" ? -1 : studyModules(fixtures().course).findIndex((m) => m.id === id));
     return Object.values(s.study)
       .filter((r) => r.submitted_at === null && r.snoozed_visit !== s.visit.id)
       .sort((a, b) => order(a.id) - order(b.id))
@@ -807,7 +807,7 @@ export const mockApi: Api = {
   async getBattery(id) {
     const r = studyRecord(id);
     const view: BatteryView = {
-      id, kind: r.kind, title: batteryTitle(id), instruments: withCourse(batteryInstruments(id, S().condition), FIX.course.name),
+      id, kind: r.kind, title: batteryTitle(id), instruments: withCourse(batteryInstruments(id, S().condition), fixtures().course.name),
       answers: clone(r.answers), submitted: r.submitted_at !== null,
     };
     return view;

@@ -1,4 +1,4 @@
-import { FIX } from "../fixtures";
+import { fixtures } from "../fixtures";
 import { freshState, getState, replaceState } from "../store";
 import { startOfWeek } from "../logic/time";
 import type { DemoState } from "../types";
@@ -46,9 +46,9 @@ export async function makePersonaState(variant: "midcourse" | "precheck"): Promi
     ["ku-selection-bias-general-formula", "wrong"],
   ];
   for (const [id, how] of answers) {
-    const v = FIX.videos.find((x) => x.id === id);
+    const v = fixtures().videos.find((x) => x.id === id);
     if (!v) continue;
-    const item = FIX.items.find((i) => i.id === v.checkpoint.item_id)!;
+    const item = fixtures().items.find((i) => i.id === v.checkpoint.item_id)!;
     await api.postCheckpointAnswer({
       videoId: id, choice: how === "right" ? item.correct_index : (item.correct_index + 1) % 3, confidence: how === "right" ? "pretty" : "certain",
       hintUsed: false, latencyMs: 4000,

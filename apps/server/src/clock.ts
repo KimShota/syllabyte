@@ -1,4 +1,4 @@
-import { FIX } from "@syllabyte/core/fixtures";
+import { fixtures } from "@syllabyte/core/fixtures";
 import { studyModules } from "@syllabyte/core/logic/instruments";
 import { DAY } from "@syllabyte/core/util";
 import type { Db } from "./db";
@@ -46,9 +46,9 @@ export function advanceClock(db: Db, code: string, days: number): ClockChange | 
 export function advanceToModuleEnd(db: Db, code: string, n: number): ClockChange | null {
   const id = userId(db, code);
   if (!id) return null;
-  const mod = studyModules(FIX.course)[n - 1];
+  const mod = studyModules(fixtures().course)[n - 1];
   if (!mod) throw new Error(`there is no module ${n}`);
-  const lastWeek = Math.max(...FIX.course.lectures.filter((l) => mod.lectures.includes(l.n)).map((l) => l.week));
+  const lastWeek = Math.max(...fixtures().course.lectures.filter((l) => mod.lectures.includes(l.n)).map((l) => l.week));
   const row = db.prepare("SELECT json FROM user_state WHERE user_id = ?").get(id) as { json: string } | undefined;
   const start = row ? (JSON.parse(row.json) as { semester_start: number }).semester_start : undefined;
   if (start === undefined) throw new Error("that student has not opened the app yet");

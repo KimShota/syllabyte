@@ -1,4 +1,4 @@
-import { FIX } from "../fixtures";
+import { fixtures } from "../fixtures";
 import { studyModules } from "../logic/instruments";
 import { getState, isOnboarded, mutate, replaceState, resetState } from "../store";
 import type { Condition, Item } from "../types";
@@ -40,8 +40,8 @@ export function setParticipantCode(code: string): void {
 
 /** Moves the demo clock just past module 1's last lecture week, so its questionnaire is due (plan I2). */
 export function endFirstModule(): void {
-  const [m1] = studyModules(FIX.course);
-  const lastWeek = Math.max(...FIX.course.lectures.filter((l) => m1.lectures.includes(l.n)).map((l) => l.week));
+  const [m1] = studyModules(fixtures().course);
+  const lastWeek = Math.max(...fixtures().course.lectures.filter((l) => m1.lectures.includes(l.n)).map((l) => l.week));
   mutate((s) => {
     const due = s.semester_start + lastWeek * 7 * DAY;
     const t = Date.now() + s.clock_offset_ms;
@@ -98,7 +98,7 @@ export async function fastOnboard(): Promise<void> {
 export async function showEmptyPlaylist(): Promise<void> {
   if (!isOnboarded(getState())) await fastOnboard();
   mutate((s) => {
-    for (const v of FIX.videos) s.review[v.id] = "hidden";
+    for (const v of fixtures().videos) s.review[v.id] = "hidden";
     s.playlist = { entries: [], manual_order: null, built_at_week: s.playlist.built_at_week };
   });
 }
