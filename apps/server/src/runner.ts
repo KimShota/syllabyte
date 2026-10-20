@@ -1,8 +1,9 @@
 import { mockApi } from "@syllabyte/core/api/mock";
+import { FIX, setFixtures } from "@syllabyte/core/fixtures";
 import { setEventEnv, track } from "@syllabyte/core/events";
 import { freshState, getEventVersion, getState, getVersion, mutate, replaceState } from "@syllabyte/core/store";
 import { startOfWeek } from "@syllabyte/core/logic/time";
-import type { DemoState } from "@syllabyte/core/types";
+import type { DemoState, Fixtures } from "@syllabyte/core/types";
 import type { Db } from "./db";
 import type { User } from "./auth";
 
@@ -17,10 +18,13 @@ import type { User } from "./auth";
 export class StateRunner {
   private tail: Promise<unknown> = Promise.resolve();
 
-  /** `semesterStart`: the course's first Monday, for new students (default: the week they first sign in) */
+  /**
+   * `semesterStart`: the course's first Monday, for new students (default: the week they first sign in).
+   * `courseFor`: the student's uploaded course (src/courses.ts); without one they get the demo course.
+   */
   constructor(
     private db: Db,
-    private opts: { semesterStart?: number } = {},
+    private opts: { semesterStart?: number; courseFor?: (userId: string) => Fixtures | null } = {},
   ) {}
 
   run<T>(user: User, visit: string | null, fn: () => Promise<T> | T): Promise<T> {
@@ -30,6 +34,7 @@ export class StateRunner {
   }
 
   private async exec<T>(user: User, visit: string | null, fn: () => Promise<T> | T): Promise<T> {
+    setFixtures(this.opts.courseFor?.(user.id) ?? FIX);
     replaceState(this.load(user));
     const v = getVersion();
     const e = getEventVersion();

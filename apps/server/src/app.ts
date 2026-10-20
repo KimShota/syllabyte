@@ -4,6 +4,7 @@ import { cors } from "hono/cors";
 import { studyCsv } from "@syllabyte/core/logic/instruments";
 import { Auth, type User } from "./auth";
 import { advanceClock, advanceToModuleEnd, getClock, resetClock } from "./clock";
+import type { Courses } from "./courses";
 import type { Db } from "./db";
 import { RPC_METHODS, StateRunner, callMethod, trackClientEvents, type ClientEvent } from "./runner";
 
@@ -11,6 +12,8 @@ export interface Deps {
   db: Db;
   auth: Auth;
   runner: StateRunner;
+  /** Uploaded courses (plan/slide-uploads-plan.md); the runner was given the same store. */
+  courses: Courses;
   /** Browsers only (the phone app doesn't need it): the origin allowed to call, e.g. the web build in development. */
   corsOrigin?: string;
 }
@@ -30,7 +33,7 @@ async function json(c: Context): Promise<Record<string, unknown>> {
 }
 
 /** Everything the phone calls, under /api. Built without a socket so tests can use `app.request`. */
-export function createApp({ db, auth, runner, corsOrigin }: Deps): Hono<Env> {
+export function createApp({ db, auth, runner, courses, corsOrigin }: Deps): Hono<Env> {
   const app = new Hono<Env>();
   if (corsOrigin) app.use("/api/*", cors({ origin: corsOrigin, allowHeaders: ["Authorization", "Content-Type", "X-Visit"], allowMethods: ["GET", "POST", "OPTIONS"] }));
   app.use("*", bodyLimit({ maxSize: 512 * 1024, onError: (c) => c.json({ error: "too large" }, 413) }));
@@ -132,7 +135,7 @@ export function createApp({ db, auth, runner, corsOrigin }: Deps): Hono<Env> {
       const out = body?.reset
         ? resetClock(db, code)
         : typeof body?.module === "number"
-          ? advanceToModuleEnd(db, code, body.module)
+          ? advanceToModuleEnd(db, code, body.module, (id) => courses.fixturesFor(id))
           : typeof body?.days === "number"
             ? advanceClock(db, code, body.days)
             : getClock(db, code);

@@ -1,5 +1,6 @@
 import { createApp } from "../src/app";
 import { Auth } from "../src/auth";
+import { Courses } from "../src/courses";
 import { openDb, type Db, type Role } from "../src/db";
 import { memoryMailer } from "../src/mail";
 import { StateRunner } from "../src/runner";
@@ -8,7 +9,9 @@ export function makeServer(opts: { db?: Db; clock?: () => number; semesterStart?
   const db = opts.db ?? openDb(":memory:");
   const mailer = memoryMailer();
   const auth = new Auth(db, mailer, "test-secret", opts.clock);
-  const app = createApp({ db, auth, runner: new StateRunner(db, { semesterStart: opts.semesterStart }) });
+  const courses = new Courses(db);
+  const runner = new StateRunner(db, { semesterStart: opts.semesterStart, courseFor: (id) => courses.fixturesFor(id) });
+  const app = createApp({ db, auth, runner, courses });
   const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
     app.request(path, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
 
@@ -34,5 +37,5 @@ export function makeServer(opts: { db?: Db; clock?: () => number; semesterStart?
       get: (path: string) => app.request(path, { headers: authz }),
     };
   }
-  return { app, db, auth, mailer, post, signIn };
+  return { app, db, auth, courses, mailer, post, signIn };
 }
