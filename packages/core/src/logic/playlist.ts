@@ -14,14 +14,17 @@ import type {
 } from "../types";
 import { joinAnd } from "../util";
 import { droppedEarly, replayedMany } from "./engagement";
+import { lecturesInOrder } from "./lectures";
 import { orderByPrerequisites, prerequisiteNotes } from "./prereq";
 
 /** The lecture whose videos are "new". Phase 0 pins it (the fixture has 3 lectures). */
 export function upcomingLecture(course: Course, week: number): number {
   const override = course.config.upcoming_lecture_override;
   if (override) return override;
-  const next = course.lectures.find((l) => l.week >= week);
-  return next ? next.n : course.lectures[course.lectures.length - 1].n;
+  const ordered = lecturesInOrder(course);
+  const next = ordered.find((l) => l.week >= week);
+  // 0: an uploaded course with no slides yet has no lectures
+  return next ? next.n : (ordered[ordered.length - 1]?.n ?? 0);
 }
 
 export interface BuildInput {

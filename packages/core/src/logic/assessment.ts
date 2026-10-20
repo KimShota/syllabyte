@@ -1,6 +1,7 @@
-import type { Course, Item, ResponseRecord } from "../types";
-import { selectNext, standardError } from "./cat";
-import { answersFor, bankItems, evidenceItems, lectureEstimate, toBankItem } from "./kuProfile";
+import type { Course, Item, ItemTier, KuEntry, QuestionNeed, ResponseRecord } from "../types";
+import { icc, information, selectNext, standardError, TIE_TOLERANCE } from "./cat";
+import { answersFor, bankItems, EVIDENCE_CONTEXTS, evidenceItems, lectureEstimate, tierDifficulty, toBankItem } from "./kuProfile";
+import { lecturesInOrder, taughtBefore } from "./lectures";
 
 /**
  * The two adaptive sittings (plan/per-ku-profiling-plan.md D7-D9):
@@ -14,6 +15,12 @@ import { answersFor, bankItems, evidenceItems, lectureEstimate, toBankItem } fro
  * answers before it (one CAT per lecture, the most informative unseen item). Items already answered, in any
  * sitting, are never asked again. There is no going back (D9), so a sitting is just its length and the number of
  * answers given so far.
+ *
+ * With questions written on demand (uploaded courses, plan/slide-uploads-plan.md V4-V6) there is no baseline, a
+ * pre-lecture check asks up to `cat_prelecture_new` questions but no more than the lecture has KUs, and each question
+ * is chosen as a KU and a tier: the lecture's KU the student has answered least (ties: the one most later KUs build
+ * on, then course order) at the tier most informative at the lecture's theta. A saved question the student has not
+ * seen is asked; without one the sitting names the (KU, tier) it needs and waits for it to be written.
  */
 
 export type AssessmentKind = "week0" | "lecture";
@@ -37,7 +44,7 @@ export interface AssessmentPlan {
  * `items`, the first lectures of the list.
  */
 export function week0Lectures(course: Course, items?: Item[]): number[] {
-  const ordered = [...course.lectures].sort((a, b) => a.n - b.n);
+  const ordered = lecturesInOrder(course);
   const withItems = items ? ordered.filter((l) => bankItems(course, items, l.n).length > 0) : ordered;
   return withItems.slice(0, course.config.cat_week0_lectures).map((l) => l.n);
 }
@@ -59,9 +66,13 @@ export function week0Plan(course: Course, items?: Item[], lectures?: number[]): 
 
 export function prelecturePlan(course: Course, lectureN: number): AssessmentPlan {
   const cfg = course.config;
-  const hasEarlier = course.lectures.some((l) => l.n < lectureN);
+  const newCount = cfg.questions_on_demand
+    ? Math.min(cfg.cat_prelecture_new, course.kus.filter((k) => k.lecture_n === lectureN).length)
+    : cfg.cat_prelecture_new;
+  if (newCount === 0) return { kind: "lecture", lecture_n: lectureN, slots: [] };
+  const hasEarlier = course.lectures.some((l) => taughtBefore(course, l.n, lectureN));
   const review = hasEarlier ? cfg.cat_prelecture_review : 0;
-  const total = cfg.cat_prelecture_new + review;
+  const total = newCount + review;
   // a review item after every `every` slots, so the sitting reads new, new, review, new, new, review
   const every = review > 0 ? Math.floor(total / review) : Infinity;
   const slots: Slot[] = [];
@@ -75,8 +86,7 @@ export function prelecturePlan(course: Course, lectureN: number): AssessmentPlan
   return { kind: "lecture", lecture_n: lectureN, slots };
 }
 
-export interface NextItem {
-  item: Item;
+interface Position {
   lecture_n: number;
   role: Slot["role"];
   /** 0-based position in the sitting */
@@ -84,27 +94,91 @@ export interface NextItem {
   total: number;
 }
 
-interface Ctx {
+export interface NextItem extends Position {
+  item: Item;
+}
+
+/** The question at a position of a sitting: a saved `item`, or the `need` it waits for while it is written (V4). */
+export type NextStep = Position & Ask;
+
+export interface Ctx {
   course: Course;
   items: Item[];
   /** every response the student has given, in any sitting or video */
   responses: ResponseRecord[];
 }
 
+type Ask = { item: Item; need: null } | { item: null; need: QuestionNeed };
+
 /** The most informative unseen item of one lecture at its current theta, or null if it has none left. */
-function pickFrom(ctx: Ctx, lectureN: number, seen: Set<string>): Item | null {
+function pickFrom(ctx: Ctx, lectureN: number, seen: Set<string>): Ask | null {
+  if (ctx.course.config.questions_on_demand) return pickOnDemand(ctx, lectureN, seen);
   const bank = bankItems(ctx.course, ctx.items, lectureN);
   const theta = lectureEstimate(ctx, lectureN).theta;
   const pick = selectNext(bank.map(toBankItem), seen, theta);
-  return pick ? (bank.find((b) => b.id === pick.id) ?? null) : null;
+  const item = pick ? bank.find((b) => b.id === pick.id) : undefined;
+  return item ? { item, need: null } : null;
+}
+
+const TIERS: readonly ItemTier[] = ["basic", "applied", "advanced"];
+
+/** How many KUs build on each KU, directly or through others. */
+export function dependentCounts(kus: readonly KuEntry[]): Map<string, number> {
+  const children = new Map<string, string[]>();
+  for (const k of kus) for (const p of k.prerequisites) children.set(p, [...(children.get(p) ?? []), k.id]);
+  const out = new Map<string, number>();
+  for (const k of kus) {
+    const seen = new Set<string>();
+    const stack = [...(children.get(k.id) ?? [])];
+    while (stack.length) {
+      const c = stack.pop()!;
+      if (seen.has(c)) continue;
+      seen.add(c);
+      stack.push(...(children.get(c) ?? []));
+    }
+    out.set(k.id, seen.size);
+  }
+  return out;
+}
+
+/** The KU and tier to ask next on one lecture (V5), and a saved question for it the student has not seen, if any. */
+function pickOnDemand(ctx: Ctx, lectureN: number, seen: Set<string>): Ask | null {
+  const kus = ctx.course.kus.filter((k) => k.lecture_n === lectureN);
+  if (!kus.length) return null;
+  const answered = new Map<string, number>();
+  for (const it of ctx.items) {
+    if (it.ku_id === null || !EVIDENCE_CONTEXTS.includes(it.context) || !seen.has(it.id)) continue;
+    answered.set(it.ku_id, (answered.get(it.ku_id) ?? 0) + 1);
+  }
+  const deps = dependentCounts(ctx.course.kus);
+  let ku = kus[0];
+  for (const k of kus.slice(1)) {
+    const da = answered.get(k.id) ?? 0;
+    const db = answered.get(ku.id) ?? 0;
+    if (da < db || (da === db && (deps.get(k.id) ?? 0) > (deps.get(ku.id) ?? 0))) ku = k;
+  }
+  const theta = lectureEstimate(ctx, lectureN).theta;
+  const betas = tierDifficulty(ku, ctx.items);
+  let tier: ItemTier = TIERS[0];
+  for (const t of TIERS.slice(1)) {
+    if (information(theta, 1, betas[t]) > information(theta, 1, betas[tier]) + TIE_TOLERANCE) tier = t;
+  }
+  const item = ctx.items.find((i) => i.context === "assessment" && i.ku_id === ku.id && i.tier === tier && !seen.has(i.id));
+  return item ? { item, need: null } : { item: null, need: { ku_id: ku.id, tier } };
+}
+
+/** An earlier lecture can still be asked about: it has unseen bank items, or (on demand) any KU. */
+function askable(ctx: Ctx, lectureN: number, seen: Set<string>): boolean {
+  if (ctx.course.config.questions_on_demand) return ctx.course.kus.some((k) => k.lecture_n === lectureN);
+  return bankItems(ctx.course, ctx.items, lectureN).some((i) => !seen.has(i.id));
 }
 
 /** Of the earlier lectures that still have unseen items, the one whose theta is least certain (ties: the earlier). */
 function leastCertainEarlier(ctx: Ctx, before: number, seen: Set<string>): number | null {
   let best: { n: number; se: number } | null = null;
-  for (const l of [...ctx.course.lectures].sort((a, b) => a.n - b.n)) {
-    if (l.n >= before) continue;
-    if (!bankItems(ctx.course, ctx.items, l.n).some((i) => !seen.has(i.id))) continue;
+  for (const l of lecturesInOrder(ctx.course)) {
+    if (!taughtBefore(ctx.course, l.n, before)) continue;
+    if (!askable(ctx, l.n, seen)) continue;
     const pool = evidenceItems(ctx.course, ctx.items, l.n).map(toBankItem);
     const answers = answersFor(pool, ctx.responses);
     const est = lectureEstimate(ctx, l.n);
@@ -114,11 +188,17 @@ function leastCertainEarlier(ctx: Ctx, before: number, seen: Set<string>): numbe
   return best ? best.n : null;
 }
 
+/** The item to ask at position `answered` of a sitting on a complete bank; see `nextAssessmentStep`. */
+export function nextAssessmentItem(plan: AssessmentPlan, answered: number, ctx: Ctx): NextItem | null {
+  const step = nextAssessmentStep(plan, answered, ctx);
+  return step?.item ? { ...step, item: step.item } : null;
+}
+
 /**
- * The item to ask at position `answered` of `plan`, or null when the sitting is over (or nothing is left to ask).
+ * What to ask at position `answered` of `plan`, or null when the sitting is over (or nothing is left to ask).
  * A pure function of the answers so far, so asking twice without an answer in between gives the same item.
  */
-export function nextAssessmentItem(plan: AssessmentPlan, answered: number, ctx: Ctx): NextItem | null {
+export function nextAssessmentStep(plan: AssessmentPlan, answered: number, ctx: Ctx): NextStep | null {
   if (answered >= plan.slots.length) return null;
   const slot = plan.slots[answered];
   const seen = new Set(ctx.responses.map((r) => r.item_id));
@@ -132,13 +212,35 @@ export function nextAssessmentItem(plan: AssessmentPlan, answered: number, ctx: 
   const order = lectureN === null ? [] : [lectureN, ...ctx.course.lectures.map((l) => l.n).filter((n) => n !== lectureN)];
   for (const n of order) {
     if (slot.role === "new" && plan.kind === "lecture" && n !== plan.lecture_n) continue;
-    const item = pickFrom(ctx, n, seen);
-    if (item) return { item, lecture_n: n, role: slot.role, index: answered, total };
+    const pick = pickFrom(ctx, n, seen);
+    if (pick) return { ...pick, lecture_n: n, role: slot.role, index: answered, total };
   }
   // a review slot with no earlier lecture left becomes one more item on the lecture itself
   if (slot.role === "review" && plan.lecture_n !== null) {
-    const item = pickFrom(ctx, plan.lecture_n, seen);
-    if (item) return { item, lecture_n: plan.lecture_n, role: "new", index: answered, total };
+    const pick = pickFrom(ctx, plan.lecture_n, seen);
+    if (pick) return { ...pick, lecture_n: plan.lecture_n, role: "new", index: answered, total };
   }
   return null;
+}
+
+/**
+ * The questions to write now for a sitting at position `answered` (V4): the one it waits for, or, when that one is
+ * saved, the one after it if the student gives the likelier answer (right when P(correct) >= 0.5 at the lecture's
+ * theta). Writing the next question while the current one is answered hides the wait in the common case; when the
+ * answer goes the other way the student waits once.
+ */
+export function questionNeeds(plan: AssessmentPlan, answered: number, ctx: Ctx): QuestionNeed[] {
+  const cur = nextAssessmentStep(plan, answered, ctx);
+  if (!cur) return [];
+  if (cur.need) return [cur.need];
+  const item = cur.item!;
+  const right = icc(lectureEstimate(ctx, cur.lecture_n).theta, item.discrimination, item.difficulty_prior) >= 0.5;
+  const at = Math.max(0, ...ctx.responses.map((r) => r.at)) + 1;
+  const guess: ResponseRecord = {
+    id: "guess", item_id: item.id, topic_id: item.topic_id, video_id: null, context: item.context,
+    choice: right ? item.correct_index : (item.correct_index + 1) % item.options.length, correct: right,
+    confidence: null, hint_used: false, latency_ms: 0, at,
+  };
+  const next = nextAssessmentStep(plan, answered + 1, { ...ctx, responses: [...ctx.responses, guess] });
+  return next?.need ? [next.need] : [];
 }

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { assembleCourse, DEFAULT_COURSE_CONFIG, type CourseInput, type DeckKu } from "../src/logic/assemble";
+import { assembleCourse, DEFAULT_COURSE_CONFIG, UPLOADED_COURSE_CONFIG, type CourseInput, type DeckKu } from "../src/logic/assemble";
 import { week0Plan } from "../src/logic/assessment";
 import type { Item } from "../src/types";
 import { item } from "./helpers";
@@ -17,9 +17,9 @@ const input = (): CourseInput => ({
   code: "CS-101",
   name: "Intro",
   lectures: [
-    { n: 2, title: "Two", week: null },
-    { n: 1, title: "One", week: 1 },
-    { n: 3, title: "Three", week: 5 },
+    { n: 2, title: "Two", position: 2 },
+    { n: 1, title: "One", position: 1 },
+    { n: 3, title: "Three", position: 5 },
   ],
   decks: [
     { lecture_n: 3, result: { kus: [ku("c", ["a", "gone"])], items: [bankItem("i-c", "c")] } },
@@ -29,9 +29,9 @@ const input = (): CourseInput => ({
 });
 
 describe("assembleCourse", () => {
-  it("lists every lecture in order, including ones still waiting for slides", () => {
+  it("lists the lectures in teaching order, numbered and dated by their place", () => {
     const { course } = assembleCourse(input());
-    expect(course.lectures.map((l) => [l.n, l.week])).toEqual([[1, 1], [2, 2], [3, 5]]);
+    expect(course.lectures.map((l) => [l.n, l.position, l.week])).toEqual([[1, 1, 1], [2, 2, 2], [3, 3, 3]]);
     expect(course.topics.map((t) => [t.id, t.ku_ids])).toEqual([["lecture-1", ["a", "b"]], ["lecture-2", []], ["lecture-3", ["c"]]]);
   });
 
@@ -41,13 +41,26 @@ describe("assembleCourse", () => {
     expect(items.map((i) => [i.id, i.topic_id])).toEqual([["i-a", "lecture-1"], ["i-b", "lecture-1"], ["i-c", "lecture-3"]]);
   });
 
+  it("adds the questions written on demand to their KU's lecture, and drops ones on unknown KUs", () => {
+    const { items } = assembleCourse({ ...input(), questions: [bankItem("q-b", "b"), bankItem("q-x", "x")] });
+    expect(items.filter((i) => i.id.startsWith("q-")).map((i) => [i.id, i.topic_id])).toEqual([["q-b", "lecture-1"]]);
+  });
+
+  it("keeps a KU's tier difficulties and passes on questions that could not be written", () => {
+    const tiers = { basic: -0.5, applied: 0.5, advanced: 1.5 };
+    const fx = assembleCourse({ ...input(), decks: [{ lecture_n: 1, result: { kus: [{ ...ku("a"), tier_difficulty: tiers }], items: [] } }], question_failures: [{ ku_id: "a", tier: "basic" }] });
+    expect(fx.course.kus[0].tier_difficulty).toEqual(tiers);
+    expect(fx.question_failures).toEqual([{ ku_id: "a", tier: "basic" }]);
+  });
+
   it("adds later links and drops links to KUs that are not in the course", () => {
     const { course } = assembleCourse(input());
     expect(course.kus.find((k) => k.id === "c")!.prerequisites).toEqual(["a", "b"]);
   });
 
-  it("uses the default config, with overrides", () => {
-    expect(assembleCourse(input()).course.config).toEqual(DEFAULT_COURSE_CONFIG);
+  it("uses the default config with on-demand questions and no baseline (V4-V6), with overrides", () => {
+    expect(assembleCourse(input()).course.config).toEqual({ ...DEFAULT_COURSE_CONFIG, ...UPLOADED_COURSE_CONFIG });
+    expect(assembleCourse(input()).course.config).toMatchObject({ questions_on_demand: true, cat_prelecture_new: 10, cat_week0_lectures: 0 });
     expect(assembleCourse({ ...input(), config: { cat_week0_lectures: 2 } }).course.config.cat_week0_lectures).toBe(2);
   });
 
@@ -68,7 +81,7 @@ describe.skipIf(!haveFixtures)("the demo course, assembled from stored pieces", 
       code: FIX.course.code,
       name: FIX.course.name,
       config: FIX.course.config,
-      lectures: FIX.course.lectures.map((l) => ({ n: l.n, title: l.title, week: l.week })),
+      lectures: FIX.course.lectures.map((l) => ({ n: l.n, title: l.title })),
       decks: FIX.course.lectures.map((l) => ({
         lecture_n: l.n,
         result: {

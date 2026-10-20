@@ -1,9 +1,10 @@
-import type { BloomLevel, Course, CourseConfig, Fixtures, Item, KuEntry, SlideRef } from "../types";
+import type { BloomLevel, Course, CourseConfig, Fixtures, Item, ItemTier, KuEntry, QuestionNeed, SlideRef } from "../types";
 
 /**
- * A course uploaded by students, assembled from what the server stores (plan/slide-uploads-plan.md): the lecture list
- * read from the syllabus, the decks placed in it, each processed deck's KUs and item bank, and the prerequisite links
- * added later (U7). Videos are made per student and registered later, so a fresh course has none.
+ * A course uploaded by students, assembled from what the server stores (plan/slide-uploads-plan.md): the lectures
+ * (one per confirmed deck, in teaching order, V1-V3), each processed deck's KUs, the questions written for them so
+ * far (V4), and the prerequisite links added later (U7). Videos are made per student and registered later, so a fresh
+ * course has none.
  */
 
 /** The defaults in syllabyte_common/learner.py's CourseConfig. */
@@ -28,6 +29,13 @@ export const DEFAULT_COURSE_CONFIG: CourseConfig = {
   upcoming_lecture_override: null,
 };
 
+/** What uploaded courses change (V4-V6): questions on demand, up to 10 per lecture check, no baseline. */
+export const UPLOADED_COURSE_CONFIG: Partial<CourseConfig> = {
+  questions_on_demand: true,
+  cat_prelecture_new: 10,
+  cat_week0_lectures: 0,
+};
+
 /** A KU as the deck job returns it (the extraction's KnowledgeUnit plus a short title). */
 export interface DeckKu {
   id: string;
@@ -38,9 +46,11 @@ export interface DeckKu {
   /** KU ids of this deck or of earlier lectures */
   prerequisites: string[];
   source_refs: SlideRef[];
+  /** question difficulty per tier (V4); absent on KUs processed with a full bank */
+  tier_difficulty?: Record<ItemTier, number>;
 }
 
-/** What processing one deck produces: its KUs and their adaptive-assessment items. */
+/** What processing one deck produces: its KUs, and (before V4) their adaptive-assessment items. */
 export interface DeckResult {
   kus: DeckKu[];
   /** context "assessment"; topic_id is set here from the deck's lecture */
@@ -53,9 +63,14 @@ export interface CourseInput {
   name: string;
   syllabus_summary?: string;
   config?: Partial<CourseConfig>;
-  lectures: { n: number; title: string; week: number | null }[];
+  /** `position`: the teaching order (any increasing numbers); absent = `n` */
+  lectures: { n: number; title: string; position?: number }[];
   /** processed decks only, each with the lecture it is placed in */
   decks: { lecture_n: number; result: DeckResult }[];
+  /** questions written on demand (V4), each on a KU of the course */
+  questions?: Item[];
+  /** questions the worker could not write */
+  question_failures?: QuestionNeed[];
   /** prerequisite links added after a deck was processed: ku -> the KU it builds on */
   links?: { ku_id: string; prereq_id: string }[];
 }
@@ -63,9 +78,10 @@ export interface CourseInput {
 export const topicId = (n: number) => `lecture-${n}`;
 
 export function assembleCourse(input: CourseInput): Fixtures {
-  const lectures = [...input.lectures].sort((a, b) => a.n - b.n);
-  const known = new Set(lectures.map((l) => l.n));
-  const decks = input.decks.filter((d) => known.has(d.lecture_n)).sort((a, b) => a.lecture_n - b.lecture_n);
+  const pos = (l: { n: number; position?: number }) => l.position ?? l.n;
+  const lectures = [...input.lectures].sort((a, b) => pos(a) - pos(b) || a.n - b.n);
+  const rank = new Map(lectures.map((l, i) => [l.n, i + 1]));
+  const decks = input.decks.filter((d) => rank.has(d.lecture_n)).sort((a, b) => rank.get(a.lecture_n)! - rank.get(b.lecture_n)!);
 
   const added = new Map<string, string[]>();
   for (const l of input.links ?? []) added.set(l.ku_id, [...(added.get(l.ku_id) ?? []), l.prereq_id]);
@@ -83,9 +99,15 @@ export function assembleCourse(input: CourseInput): Fixtures {
         video_id: null,
         bloom_level: k.bloom_level,
         prerequisites: [...new Set([...k.prerequisites, ...(added.get(k.id) ?? [])])],
+        ...(k.tier_difficulty ? { tier_difficulty: k.tier_difficulty } : {}),
       });
     }
     for (const i of d.result.items) items.push({ ...i, topic_id: topicId(d.lecture_n) });
+  }
+  const lectureOf = new Map(kus.map((k) => [k.id, k.lecture_n]));
+  for (const q of input.questions ?? []) {
+    const n = q.ku_id === null ? undefined : lectureOf.get(q.ku_id);
+    if (n !== undefined) items.push({ ...q, topic_id: topicId(n) });
   }
   // a link to a KU that is not in the course (e.g. its deck was moved out by the researcher) is dropped
   const ids = new Set(kus.map((k) => k.id));
@@ -97,16 +119,17 @@ export function assembleCourse(input: CourseInput): Fixtures {
     name: input.name,
     eyebrow: (input.code || input.name).toUpperCase(),
     syllabus_summary: input.syllabus_summary ?? "",
-    config: { ...DEFAULT_COURSE_CONFIG, ...input.config },
+    config: { ...DEFAULT_COURSE_CONFIG, ...UPLOADED_COURSE_CONFIG, ...input.config },
     topics: lectures.map((l) => ({
       id: topicId(l.n),
       title: l.title,
       ku_ids: kus.filter((k) => k.lecture_n === l.n).map((k) => k.id),
       first_lecture: l.n,
     })),
-    // a lecture is decks now, not a slide range of one deck; the range is kept for the demo's screens
-    lectures: lectures.map((l) => ({ n: l.n, title: l.title, week: l.week ?? l.n, slide_start: 0, slide_end: 0 })),
+    // a lecture is a deck now, not a slide range of one deck; the range is kept for the demo's screens. Its week is
+    // its place in the order: a lecture placed before others moves them a week later
+    lectures: lectures.map((l) => ({ n: l.n, position: rank.get(l.n)!, title: l.title, week: rank.get(l.n)!, slide_start: 0, slide_end: 0 })),
     kus,
   };
-  return { course, items, videos: [], slides: {} };
+  return { course, items, videos: [], slides: {}, ...(input.question_failures?.length ? { question_failures: input.question_failures } : {}) };
 }

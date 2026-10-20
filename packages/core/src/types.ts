@@ -56,7 +56,10 @@ export interface Topic {
 }
 
 export interface Lecture {
+  /** the lecture's id; with uploaded slides it stays the same when a lecture is placed before it */
   n: number;
+  /** teaching order, 1 = first (plan/slide-uploads-plan.md V1); absent = `n` */
+  position?: number;
   title: string;
   week: number;
   slide_start: number;
@@ -73,6 +76,12 @@ export interface KuEntry {
   bloom_level: BloomLevel;
   /** ids of the KUs this one builds on (the Knowledge Unit Graph is a DAG) */
   prerequisites: string[];
+  /**
+   * The difficulty (beta) of a question at each tier, set when the KU is extracted (plan/slide-uploads-plan.md V4),
+   * so a level can be read and a question chosen before any question on the KU is written. Absent: read off the
+   * KU's own bank items.
+   */
+  tier_difficulty?: Record<ItemTier, number>;
 }
 
 export interface CourseConfig {
@@ -103,6 +112,12 @@ export interface CourseConfig {
   /** watched this many times: queue it as a refresher */
   refresher_replay_count: number;
   upcoming_lecture_override: number | null;
+  /**
+   * Questions are written when a sitting needs them (plan/slide-uploads-plan.md V4, V5): each question goes to the
+   * lecture's least-asked KU (ties: the most depended on) at the tier nearest the student's ability, and the sitting
+   * names the (KU, tier) it is waiting for when no saved question fits. Absent/false: the demo's complete bank.
+   */
+  questions_on_demand?: boolean;
   /** the study's modules (plan/study-instruments-plan.md I2); null or absent = the lectures split in two */
   study_modules?: StudyModule[] | null;
 }
@@ -211,6 +226,14 @@ export interface Fixtures {
   items: Item[];
   videos: Video[];
   slides: Record<string, string>;
+  /** questions that could not be written (the worker gave up): a sitting waiting for one says so */
+  question_failures?: QuestionNeed[];
+}
+
+/** A question a sitting is waiting for: a KU at a tier, with no saved question the student has not seen. */
+export interface QuestionNeed {
+  ku_id: string;
+  tier: ItemTier;
 }
 
 // ------------------------------------------------------------ app state
@@ -572,6 +595,11 @@ export interface SittingView {
     lecture_title: string;
     role: "new" | "review";
   } | null;
+  /**
+   * The next question is being written (plan/slide-uploads-plan.md V4): "writing" while it is, "failed" when it
+   * could not be; null when `current` is set or the sitting is done.
+   */
+  preparing?: "writing" | "failed" | null;
 }
 
 /** The check before the upcoming lecture's videos, shown at the top of the playlist when it is due. */

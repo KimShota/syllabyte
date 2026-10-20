@@ -3,6 +3,7 @@ import {
 } from "../content/instruments";
 import type { BatteryRecord, Condition, Course, StudyModule } from "../types";
 import { DAY } from "../util";
+import { lecturesInOrder } from "./lectures";
 
 /**
  * When the study's questionnaires are due, what each battery contains, and how they are scored
@@ -14,7 +15,7 @@ import { DAY } from "../util";
 export function studyModules(course: Course): StudyModule[] {
   const configured = course.config.study_modules;
   if (configured && configured.length) return configured;
-  const ns = course.lectures.map((l) => l.n).sort((a, b) => a - b);
+  const ns = lecturesInOrder(course).map((l) => l.n);
   if (ns.length <= 1) return [{ id: "module-1", title: "Module 1", lectures: ns }];
   const half = Math.ceil(ns.length / 2);
   return [
@@ -23,6 +24,9 @@ export function studyModules(course: Course): StudyModule[] {
   ];
 }
 
+/** The module's lecture taught last. */
+const lastLecture = (course: Course, module: StudyModule) => lecturesInOrder(course).filter((l) => module.lectures.includes(l.n)).pop();
+
 /**
  * A module has ended once the schedule has moved past the week of its last lecture: the same moment for every student,
  * whatever they watched. The demo's "treat lecture N as upcoming" (`upcomingOverride`) can end it sooner. The course
@@ -30,8 +34,8 @@ export function studyModules(course: Course): StudyModule[] {
  */
 export function moduleEnded(course: Course, module: StudyModule, week: number, upcomingOverride: number | null): boolean {
   if (!module.lectures.length) return false;
-  const last = Math.max(...module.lectures);
-  const lecture = course.lectures.find((l) => l.n === last);
+  const lecture = lastLecture(course, module);
+  const last = lecture?.n ?? Math.max(...module.lectures);
   return (lecture !== undefined && week > lecture.week) || (upcomingOverride !== null && upcomingOverride > last);
 }
 
@@ -40,8 +44,7 @@ export function moduleEnded(course: Course, module: StudyModule, week: number, u
  * override ended it before then (there is no schedule moment to point at).
  */
 export function moduleEndTime(course: Course, module: StudyModule, semesterStart: number, now: number): number {
-  const last = Math.max(...module.lectures);
-  const lecture = course.lectures.find((l) => l.n === last);
+  const lecture = lastLecture(course, module);
   if (!lecture) return now;
   const scheduled = semesterStart + lecture.week * 7 * DAY;
   return scheduled <= now ? scheduled : now;

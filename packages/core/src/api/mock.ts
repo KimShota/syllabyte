@@ -1,7 +1,7 @@
 import { INSTRUMENTS_VERSION } from "../content/instruments";
 import { track } from "../events";
 import { fixtures, itemById, lectureByN, slideText, slideUrl, topicById, videoById } from "../fixtures";
-import { nextAssessmentItem, prelecturePlan, week0Lectures, week0Plan, type AssessmentPlan } from "../logic/assessment";
+import { nextAssessmentStep, prelecturePlan, questionNeeds, week0Lectures, week0Plan, type AssessmentPlan } from "../logic/assessment";
 import { calibrationBlock1, calibrationBlock2 } from "../logic/calibration";
 import { droppedEarly } from "../logic/engagement";
 import { kuLevels, levelUpdates } from "../logic/kuProfile";
@@ -22,8 +22,8 @@ import { changesCount, tailoringRows } from "../logic/receipt";
 import { weekOf } from "../logic/time";
 import { getState, isOnboarded, mutate, now } from "../store";
 import type {
-  Choice, ClaimView, Item, KuLevel, KuLevelRow, Level, LectureLevels, PlaylistEntry, PrecheckView, ResponseRecord,
-  ReviewStatus, SittingState, Video, VideoCardView, VariantView,
+  Choice, ClaimView, Item, KuLevel, KuLevelRow, Level, LectureLevels, PlaylistEntry, PrecheckView, QuestionNeed,
+  ResponseRecord, ReviewStatus, SittingState, Video, VideoCardView, VariantView,
 } from "../types";
 import { uid } from "../util";
 import type { Api, BatteryView, StudyTaskView } from "./types";
@@ -39,7 +39,8 @@ const lectureTitle = (n: number) => lectureByN(n).title;
 const profileInput = () => ({ course: fixtures().course, items: fixtures().items, responses: S().responses });
 /** The lecture whose videos are next: the schedule's, unless the demo moved it. */
 const upcoming = () => S().upcoming_lecture ?? upcomingLecture(fixtures().course, week());
-const baselineDone = () => isOnboarded(S());
+/** Done, or there is none: uploaded courses start with lecture 1's check (plan/slide-uploads-plan.md V6). */
+const baselineDone = () => isOnboarded(S()) || cfg().cat_week0_lectures === 0;
 const research = () => S().consent === "research";
 
 /** Creates the record of every battery that is due (plan I2): the baseline from consent, each module from its end. */
@@ -228,7 +229,7 @@ function publishLevels(cause: "baseline" | "lecture_check"): ReturnType<typeof l
  * "What changed" card is shown: nothing changed for the student.
  */
 function levelNewKus(): void {
-  if (!baselineDone()) return;
+  if (!Object.keys(S().levels).length) return;
   const fresh = fixtures().course.kus.filter((k) => !S().levels[k.id]);
   if (!fresh.length) return;
   const est = kuLevels(profileInput());
@@ -275,7 +276,28 @@ function ensureSitting(id: string): void {
 function currentOf(id: string) {
   const st = S().sittings[id];
   if (st?.finished_at) return null;
-  return nextAssessmentItem(planOf(id), st?.answered_ids.length ?? 0, profileInput());
+  return nextAssessmentStep(planOf(id), st?.answered_ids.length ?? 0, profileInput());
+}
+
+const failed = (need: QuestionNeed) => (fixtures().question_failures ?? []).some((f) => f.ku_id === need.ku_id && f.tier === need.tier);
+
+/**
+ * The questions to write now for this student (V4): for the check that is due and any check they are in the middle
+ * of, the one it waits for and the likely next one. The server queues them after each of the student's requests.
+ */
+export function questionNeedsNow(): QuestionNeed[] {
+  if (!cfg().questions_on_demand) return [];
+  const ids = new Set(Object.values(S().sittings).filter((st) => !st.finished_at && !st.skipped).map((st) => st.id));
+  const due = precheck();
+  if (due) ids.add(due.sitting_id);
+  const out: QuestionNeed[] = [];
+  for (const id of ids) {
+    const st = S().sittings[id];
+    for (const need of questionNeeds(planOf(id), st?.answered_ids.length ?? 0, profileInput())) {
+      if (!out.some((o) => o.ku_id === need.ku_id && o.tier === need.tier)) out.push(need);
+    }
+  }
+  return out;
 }
 
 /** The check before the upcoming lecture's videos, when one is due. */
@@ -283,6 +305,7 @@ function precheck(): PrecheckView | null {
   const s = S();
   if (!baselineDone()) return null;
   const n = upcoming();
+  if (!fixtures().course.lectures.some((l) => l.n === n)) return null;
   const id = `lecture-${n}`;
   const st = s.sittings[id];
   if (st?.finished_at || st?.skipped) return null;
@@ -301,7 +324,8 @@ export const mockApi: Api = {
     const s = S();
     return {
       course: fixtures().course, participant_code: s.participant_code, consent: s.consent, condition: s.condition, week: week(),
-      now: now(), settings: s.settings, onboarding_done: baselineDone(), baseline_available: baselineDone() || planOf("week0").slots.length > 0,
+      now: now(), settings: s.settings, onboarding_done: baselineDone(),
+      baseline_available: cfg().cat_week0_lectures > 0 && (isOnboarded(s) || planOf("week0").slots.length > 0),
     };
   },
 
@@ -340,13 +364,14 @@ export const mockApi: Api = {
     return {
       id, kind: sittingKind(id), lecture_n: sittingLecture(id), label: sittingLabel(id), total: plan.slots.length,
       answered: st?.answered_ids.length ?? 0, done: Boolean(st?.finished_at) || next === null,
-      current: next ? { item: next.item, lecture_n: next.lecture_n, lecture_title: lectureTitle(next.lecture_n), role: next.role } : null,
+      current: next?.item ? { item: next.item, lecture_n: next.lecture_n, lecture_title: lectureTitle(next.lecture_n), role: next.role } : null,
+      preparing: next?.need ? (failed(next.need) ? "failed" : "writing") : null,
     };
   },
 
   async answerSitting(id, itemId, choice, latencyMs) {
     const next = currentOf(id);
-    if (!next || next.item.id !== itemId) throw new Error(`"${itemId}" is not the question sitting ${id} is on`);
+    if (!next?.item || next.item.id !== itemId) throw new Error(`"${itemId}" is not the question sitting ${id} is on`);
     ensureSitting(id);
     const item = itemById(itemId);
     addResponse(item, choice, { latencyMs });

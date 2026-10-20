@@ -1,5 +1,6 @@
 import type { Course, KuLevel, Level, SittingState } from "../types";
 import { week0Lectures } from "./assessment";
+import { lecturesInOrder } from "./lectures";
 
 /**
  * Which videos a student needs made (plan/slide-uploads-plan.md U18): every KU of a lecture whose levels a sitting has
@@ -29,8 +30,9 @@ export function videoRequests(
   made: Record<string, Level>,
 ): VideoRequest[] {
   const set = lecturesWithSetLevels(course, sittings);
+  const rank = new Map(lecturesInOrder(course).map((l, i) => [l.n, i]));
   return [...course.kus]
     .filter((k) => set.has(k.lecture_n) && levels[k.id] && made[k.id] === undefined)
-    .sort((a, b) => a.lecture_n - b.lecture_n)
+    .sort((a, b) => (rank.get(a.lecture_n) ?? 0) - (rank.get(b.lecture_n) ?? 0))
     .map((k) => ({ ku_id: k.id, lecture_n: k.lecture_n, level: levels[k.id].level }));
 }

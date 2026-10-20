@@ -1,4 +1,4 @@
-import type { Course, Item, ItemContext, KuEntry, Level, LevelUpdate, ResponseRecord } from "../types";
+import type { Course, Item, ItemContext, ItemTier, KuEntry, Level, LevelUpdate, ResponseRecord } from "../types";
 import { estimateTheta, readinessLevel, standardError, type Answer, type BankItem } from "./cat";
 
 /**
@@ -35,6 +35,23 @@ export function toBankItem(it: Item): BankItem {
 export function evidenceItems(course: Course, items: Item[], lectureN: number): Item[] {
   const lec = lectureOfKu(course);
   return items.filter((i) => i.ku_id !== null && EVIDENCE_CONTEXTS.includes(i.context) && lec.get(i.ku_id) === lectureN);
+}
+
+/** Tier offsets of `assessment_agent/bank.py` (TIER_BETA_OFFSET), for a KU with neither tier difficulties nor items. */
+const TIER_OFFSET: Record<ItemTier, number> = { basic: -1, applied: 0, advanced: 1 };
+
+/**
+ * A KU's question difficulty at each tier: set at extraction for uploaded courses (V4), else read off its bank
+ * items, else the plain tier offsets. A tier with no item takes the offset from the tiers that have one.
+ */
+export function tierDifficulty(ku: KuEntry, items: readonly Item[]): Record<ItemTier, number> {
+  if (ku.tier_difficulty) return ku.tier_difficulty;
+  const own = new Map<ItemTier, number>();
+  for (const i of items) if (i.ku_id === ku.id && i.context === "assessment" && i.tier && !own.has(i.tier)) own.set(i.tier, i.difficulty_prior);
+  if (!own.size) return { ...TIER_OFFSET };
+  const [t0, b0] = [...own.entries()][0];
+  const shift = b0 - TIER_OFFSET[t0];
+  return { basic: own.get("basic") ?? TIER_OFFSET.basic + shift, applied: own.get("applied") ?? TIER_OFFSET.applied + shift, advanced: own.get("advanced") ?? TIER_OFFSET.advanced + shift };
 }
 
 /** The adaptive-assessment bank of one lecture: what a CAT draws from. */
@@ -93,9 +110,14 @@ export interface Estimate {
   se: number;
 }
 
-function estimateFrom(pool: Item[], responses: ResponseRecord[], startTheta: number, shift: number): Estimate {
-  const bank = pool.map(toBankItem);
-  const answers = answersFor(bank, responses);
+/**
+ * `range`: questions not written yet (V4), one per KU and tier, as the IRT model would see them. Nobody has answered
+ * them, so they only set the span Dodd's heuristic moves theta within: the same span a full bank would give, so a
+ * student who gets everything right can reach the advanced tier before an advanced question exists.
+ */
+function estimateFrom(pool: Item[], responses: ResponseRecord[], startTheta: number, shift: number, range: BankItem[] = []): Estimate {
+  const answers = answersFor(pool, responses);
+  const bank = [...pool.map(toBankItem), ...range];
   const scored = answers.filter((a) => a.outcome !== "not_sure");
   const theta = bank.length === 0 ? startTheta : estimateTheta(bank, answers, startTheta, shift);
   return {
@@ -108,17 +130,25 @@ function estimateFrom(pool: Item[], responses: ResponseRecord[], startTheta: num
   };
 }
 
+/** The questions a lecture's KUs could still be asked at, for the estimate's range (on demand only). */
+function unwrittenRange(course: Course, items: readonly Item[], lectureN: number | null): BankItem[] {
+  if (!course.config.questions_on_demand) return [];
+  return course.kus
+    .filter((k) => lectureN === null || k.lecture_n === lectureN)
+    .flatMap((k) => Object.entries(tierDifficulty(k, items)).map(([t, b]) => ({ id: `unwritten:${k.id}:${t}`, a: 1, b })));
+}
+
 /** Ability and evidence counts for one lecture. */
 export function lectureEstimate({ course, items, responses }: ProfileInput, lectureN: number): Estimate {
   const cfg = course.config;
-  return estimateFrom(evidenceItems(course, items, lectureN), responses, cfg.cat_start_theta, cfg.irt_hint_beta_shift);
+  return estimateFrom(evidenceItems(course, items, lectureN), responses, cfg.cat_start_theta, cfg.irt_hint_beta_shift, unwrittenRange(course, items, lectureN));
 }
 
 /** Ability over everything answered, across lectures: the provisional theta for a lecture not asked about yet. */
 export function pooledEstimate({ course, items, responses }: ProfileInput): Estimate {
   const cfg = course.config;
   const all = course.lectures.flatMap((l) => evidenceItems(course, items, l.n));
-  return estimateFrom(all, responses, cfg.cat_start_theta, cfg.irt_hint_beta_shift);
+  return estimateFrom(all, responses, cfg.cat_start_theta, cfg.irt_hint_beta_shift, unwrittenRange(course, items, null));
 }
 
 export interface KuLevelEstimate {
@@ -166,8 +196,8 @@ export function kuLevels(input: ProfileInput): Record<string, KuLevelEstimate> {
     const own = estimates.get(ku.lecture_n)!;
     const title = titles.get(ku.lecture_n) ?? `Lecture ${ku.lecture_n}`;
     const tiers = new Map(items.filter((i) => i.ku_id === ku.id && i.context === "assessment" && i.tier).map((i) => [i.tier!, i]));
-    const applied = tiers.get("applied");
-    const advanced = tiers.get("advanced");
+    // on demand a KU's difficulties come with it, before any of its questions is written
+    const betas = ku.tier_difficulty ?? (tiers.get("applied") && tiers.get("advanced") ? tierDifficulty(ku, items) : null);
     const base = { ku_id: ku.id, lecture_n: ku.lecture_n };
 
     if (own.n_shown > 0 && own.n_scored === 0) {
@@ -186,14 +216,14 @@ export function kuLevels(input: ProfileInput): Record<string, KuLevelEstimate> {
       };
       continue;
     }
-    if (!applied || !advanced) {
+    if (!betas) {
       out[ku.id] = {
         ...base, level: 1, not_checked: false, provisional, theta: basis.theta, n_scored: basis.n_scored, n_right: basis.n_right,
         n_not_sure: basis.n_not_sure, reason: "There are no questions for this concept yet, so videos start from the basics.",
       };
       continue;
     }
-    const level = readinessLevel(basis.theta, applied.difficulty_prior, advanced.difficulty_prior, basis.n_scored);
+    const level = readinessLevel(basis.theta, betas.applied, betas.advanced, basis.n_scored);
     out[ku.id] = {
       ...base, level, not_checked: false, provisional, theta: basis.theta, n_scored: basis.n_scored, n_right: basis.n_right,
       n_not_sure: basis.n_not_sure, reason: levelReason(level, title, basis, provisional),
