@@ -1,18 +1,30 @@
 import { useEffect, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, View } from "react-native";
-import { router, useLocalSearchParams } from "expo-router";
+import { Alert, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { useLocalSearchParams } from "expo-router";
+import * as WebBrowser from "expo-web-browser";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { CourseFilesView } from "@syllabyte/core/api/types";
 import { BackButton, Header } from "@/components/Header";
 import { Icon, type IconName } from "@/components/Icon";
 import { T } from "@/components/T";
+import { BACKEND_BASE } from "@/data/backend";
 import { lectureNumber } from "@/data/course";
 import { courseCalls } from "@/state/session";
 import { colors, fonts, radius, shadow, space } from "@/theme/tokens";
 
 type SlideFile = CourseFilesView["slides"][number];
 
-/** Syllabus & Course Slides: the files this student uploaded, each with what became of it. */
+/** Opens one of the student's files in the in-app browser, which shows PDFs and PowerPoint, through a short-lived link. */
+async function openFile(courseId: string, fileId: string) {
+  if (!courseCalls || !BACKEND_BASE) return;
+  try {
+    await WebBrowser.openBrowserAsync(BACKEND_BASE + (await courseCalls.fileLink(courseId, fileId)));
+  } catch {
+    Alert.alert("Couldn't open this file", "Check your connection and try again.");
+  }
+}
+
+/** Syllabus & Course Slides: the files this student uploaded, each with what became of it. Tap one to open it. */
 export default function CourseFiles() {
   const { courseId } = useLocalSearchParams<{ courseId: string }>();
   const insets = useSafeAreaInsets();
@@ -47,7 +59,12 @@ export default function CourseFiles() {
           <>
             <Group label="Syllabus" />
             {files.syllabus ? (
-              <FileRow icon="description" name={files.syllabus.file_name} added={files.syllabus.uploaded_at} />
+              <FileRow
+                icon="description"
+                name={files.syllabus.file_name}
+                added={files.syllabus.uploaded_at}
+                onPress={() => void openFile(courseId, files.syllabus!.id)}
+              />
             ) : (
               <T variant="caption" color={colors.onSurfaceVariant} style={styles.note}>
                 Your course came from a classmate{"'"}s syllabus.
@@ -81,12 +98,6 @@ function SlideRow({ file, courseId }: { file: SlideFile; courseId: string }) {
     reading: "Reading…",
     failed: "Couldn't read this file",
   }[file.state];
-  const open =
-    file.state === "lecture" && file.lecture
-      ? () => router.push({ pathname: "/course/[courseId]/lecture/[n]", params: { courseId, n: String(file.lecture!.n) } })
-      : file.state === "to_review"
-        ? () => router.push({ pathname: "/course/[courseId]/review", params: { courseId } })
-        : undefined;
   return (
     <FileRow
       icon="slideshow"
@@ -94,7 +105,7 @@ function SlideRow({ file, courseId }: { file: SlideFile; courseId: string }) {
       detail={what}
       added={file.uploaded_at}
       tone={file.state === "failed" ? colors.error : file.state === "to_review" ? colors.primary : colors.onSurfaceVariant}
-      onPress={open}
+      onPress={() => void openFile(courseId, file.id)}
     />
   );
 }
@@ -140,12 +151,18 @@ function FileRow({
           Added {day(added)}
         </T>
       </View>
-      {onPress ? <Icon name="chevron-right" size={20} color={colors.outline} /> : null}
+      {onPress ? <Icon name="open-in-new" size={18} color={colors.outline} /> : null}
     </>
   );
   if (!onPress) return <View style={styles.file}>{body}</View>;
   return (
-    <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.file, pressed && { backgroundColor: colors.surfaceContainerLow }]}>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Open ${name}`}
+      accessibilityHint={detail}
+      onPress={onPress}
+      style={({ pressed }) => [styles.file, pressed && { backgroundColor: colors.surfaceContainerLow }]}
+    >
       {body}
     </Pressable>
   );

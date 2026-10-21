@@ -6,11 +6,20 @@ import { studyCsv } from "@syllabyte/core/logic/instruments";
 import type { ItemTier } from "@syllabyte/core/types";
 import { Auth, type User } from "./auth";
 import { advanceClock, advanceToModuleEnd, getClock, resetClock } from "./clock";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { extname } from "node:path";
 import type { Courses } from "./courses";
 import type { Db } from "./db";
 import { RPC_METHODS, StateRunner, callMethod, trackClientEvents, type ClientEvent } from "./runner";
 import { UploadError, type Uploads } from "./uploads";
+
+/** How long a link to an uploaded file works: long enough to open it, short enough that a shared link soon dies. */
+const FILE_LINK_MS = 5 * 60 * 1000;
+const FILE_TYPES: Record<string, string> = {
+  ".pdf": "application/pdf",
+  ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+};
 
 export interface Deps {
   db: Db;
@@ -198,6 +207,28 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
     "/api/courses/:id/files",
     uploadErrors((c) => c.json(uploads.myFiles(c.get("user").id, idOf(c)))),
   );
+
+  /** A link that opens one of the student's own files in a browser view for a few minutes ({ path }, on this server). */
+  app.post(
+    "/api/courses/:id/files/:fileId/link",
+    uploadErrors((c) => {
+      const f = uploads.myFile(c.get("user").id, idOf(c), c.req.param("fileId") ?? "");
+      return c.json({ path: `/api/file-links/${f.id}?${auth.signLink(`file:${f.id}`, FILE_LINK_MS)}` });
+    }),
+  );
+
+  /** The file behind a link from the route above: no sign-in, the signature is the permission. */
+  app.get("/api/file-links/:fileId", (c) => {
+    const fileId = c.req.param("fileId");
+    if (!auth.checkLink(`file:${fileId}`, c.req.query("e"), c.req.query("s"))) return c.json({ error: "This link has expired. Open the file again from the app." }, 403);
+    const f = uploads.uploadedFile(fileId);
+    if (!f || !existsSync(f.path)) return c.json({ error: "No such file." }, 404);
+    return c.body(readFileSync(f.path), 200, {
+      "Content-Type": FILE_TYPES[extname(f.name).toLowerCase()] ?? "application/octet-stream",
+      "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(f.name)}`,
+      "Cache-Control": "private, no-store",
+    });
+  });
 
   app.get(
     "/api/courses/:id/uploads",

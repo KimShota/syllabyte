@@ -237,8 +237,8 @@ export class Uploads {
   myFiles(userId: string, courseId: string): CourseFilesView {
     this.member(userId, courseId);
     const syllabus = this.db
-      .prepare("SELECT file_name, created_at FROM syllabus_uploads WHERE user_id = ? AND course_id = ? ORDER BY created_at DESC LIMIT 1")
-      .get(userId, courseId) as { file_name: string; created_at: number } | undefined;
+      .prepare("SELECT id, file_name, created_at FROM syllabus_uploads WHERE user_id = ? AND course_id = ? ORDER BY created_at DESC LIMIT 1")
+      .get(userId, courseId) as { id: string; file_name: string; created_at: number } | undefined;
     const lectures = this.courses.lectures(courseId);
     const rank = new Map(lectures.map((l, i) => [l.id, i]));
     // rowid: files sent together keep the order they were sent in
@@ -270,9 +270,30 @@ export class Uploads {
     // stable: files that are lectures in teaching order, the rest after them in upload order
     slides.sort((a, b) => a.rank - b.rank);
     return {
-      syllabus: syllabus ? { file_name: syllabus.file_name, uploaded_at: syllabus.created_at } : null,
+      syllabus: syllabus ? { id: syllabus.id, file_name: syllabus.file_name, uploaded_at: syllabus.created_at } : null,
       slides: slides.map(({ rank: _rank, ...s }) => s),
     };
+  }
+
+  /** One of this student's own uploaded files in the course (their syllabus or a slide file), or a 404. */
+  myFile(userId: string, courseId: string, fileId: string): { id: string; name: string } {
+    this.member(userId, courseId);
+    const row =
+      this.db.prepare("SELECT id, file_name FROM syllabus_uploads WHERE id = ? AND user_id = ? AND course_id = ?").get(fileId, userId, courseId) ??
+      this.db.prepare("SELECT id, file_name FROM deck_uploads WHERE id = ? AND user_id = ? AND course_id = ?").get(fileId, userId, courseId);
+    if (!row) throw new UploadError("No such file.", 404);
+    const r = row as { id: string; file_name: string };
+    return { id: r.id, name: r.file_name };
+  }
+
+  /** An uploaded file by its id, for a signed link (the link was only given to its owner). */
+  uploadedFile(fileId: string): { path: string; name: string } | null {
+    const row =
+      this.db.prepare("SELECT file_path, file_name FROM syllabus_uploads WHERE id = ?").get(fileId) ??
+      this.db.prepare("SELECT file_path, file_name FROM deck_uploads WHERE id = ?").get(fileId);
+    if (!row) return null;
+    const r = row as { file_path: string; file_name: string };
+    return { path: r.file_path, name: r.file_name };
   }
 
   /** Each lecture in teaching order, with its deck's state (U14). */

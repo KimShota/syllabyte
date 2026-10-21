@@ -370,6 +370,37 @@ describe("the student's files (Syllabus & Course Slides)", () => {
     const bob = await student(s, "bob@nyu.edu");
     expect((await bob.get(`/api/courses/${courseId}/files`)).status).toBe(404);
   });
+
+  it("opens a student's own file through a short-lived link, and nobody else's", async () => {
+    let now = Date.UTC(2026, 9, 21);
+    const s = makeServer({ clock: () => now });
+    const { ann, courseId } = await courseWithAnn(s);
+    await multipart(ann, `/api/courses/${courseId}/slides`, "files", [DECKS[0]]);
+    const files = await ann.json(`/api/courses/${courseId}/files`);
+    const slide = files.slides[0].id as string;
+
+    const link = async (who: typeof ann, fileId: string) => who.post(`/api/courses/${courseId}/files/${fileId}/link`, {});
+    const { path } = (await (await link(ann, slide)).json()) as { path: string };
+    const opened = await s.app.request(path); // no sign-in: the signature is the permission
+    expect(opened.status).toBe(200);
+    expect(opened.headers.get("Content-Type")).toBe("application/pdf");
+    expect(opened.headers.get("Content-Disposition")).toContain("slides.pdf");
+    expect(await opened.text()).toBe(DECKS[0].text);
+    const syllabus = (await (await link(ann, files.syllabus.id)).json()) as { path: string };
+    expect(await (await s.app.request(syllabus.path)).text()).toBe("Syllabus of CS-UH 2219E");
+
+    // a changed link, another file under the same signature, or an old link does not open
+    expect((await s.app.request(path.replace(/s=[0-9a-f]{4}/, "s=0000"))).status).toBe(403);
+    expect((await s.app.request(path.replace(slide, files.syllabus.id))).status).toBe(403);
+    now += 6 * 60 * 1000;
+    expect((await s.app.request(path)).status).toBe(403);
+
+    // a classmate cannot get a link to Ann's file
+    const bob = await student(s, "bob@nyu.edu");
+    await multipart(bob, "/api/courses", "syllabus", [{ name: "s.pdf", text: "Syllabus of CS-UH 2219E" }]);
+    await work(s);
+    expect((await link(bob, slide)).status).toBe(404);
+  });
 });
 
 describe("questions written as checks need them (V4-V6)", () => {

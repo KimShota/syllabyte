@@ -40,6 +40,28 @@ export class Auth {
     return createHmac("sha256", this.secret).update(`${email}\n${code}`).digest("hex");
   }
 
+  /**
+   * A link to `subject` that works without a sign-in until `ttlMs` from now: for opening an uploaded file in a browser
+   * view, which cannot send the app's token. The query string carries the expiry and its signature.
+   */
+  signLink(subject: string, ttlMs: number): string {
+    const expires = this.clock() + ttlMs;
+    return `e=${expires}&s=${this.linkSig(subject, expires)}`;
+  }
+
+  /** Whether a link from `signLink` for `subject` is genuine and not yet expired. */
+  checkLink(subject: string, expires: string | undefined, sig: string | undefined): boolean {
+    const e = Number(expires);
+    if (!Number.isFinite(e) || e < this.clock() || !sig) return false;
+    const want = Buffer.from(this.linkSig(subject, e));
+    const got = Buffer.from(sig);
+    return want.length === got.length && timingSafeEqual(want, got);
+  }
+
+  private linkSig(subject: string, expires: number): string {
+    return createHmac("sha256", this.secret).update(`link\n${subject}\n${expires}`).digest("hex");
+  }
+
   addToAllowlist(email: string, role: Role): void {
     this.db
       .prepare("INSERT INTO allowlist (email, role, added_at) VALUES (?, ?, ?) ON CONFLICT (email) DO UPDATE SET role = excluded.role")

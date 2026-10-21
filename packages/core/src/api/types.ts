@@ -160,7 +160,7 @@ export type MyCourseView =
 
 /** GET /api/courses/:id/files: the files this student uploaded to the course, for "Syllabus & Course Slides". */
 export interface CourseFilesView {
-  syllabus: { file_name: string; uploaded_at: number } | null;
+  syllabus: { id: string; file_name: string; uploaded_at: number } | null;
   /** in teaching order of the lecture each became, then the files not (yet) a lecture, oldest first */
   slides: {
     id: string;

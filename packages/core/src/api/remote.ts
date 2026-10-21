@@ -172,6 +172,9 @@ export function createBackend(o: BackendOptions) {
         ((await upload(`/api/courses/${courseId}/slides`, "files", files)) as unknown as { uploads: UploadView[] }).uploads,
       /** the student's own syllabus and slide files, for "Syllabus & Course Slides" */
       files: async (courseId: string): Promise<CourseFilesView> => (await get(`/api/courses/${courseId}/files`)) as unknown as CourseFilesView,
+      /** a link (a path on the server) that opens one of the student's files for a few minutes, no sign-in needed */
+      fileLink: async (courseId: string, fileId: string): Promise<string> =>
+        ((await request(`/api/courses/${courseId}/files/${fileId}/link`, {}, true)) as unknown as { path: string }).path,
       uploads: async (courseId: string): Promise<UploadView[]> => ((await get(`/api/courses/${courseId}/uploads`)) as unknown as { uploads: UploadView[] }).uploads,
       confirmUploads: async (courseId: string, order: UploadOrderEntry[]): Promise<UploadView[]> => {
         const out = ((await request(`/api/courses/${courseId}/uploads/confirm`, { order }, true)) as unknown as { uploads: UploadView[] }).uploads;
