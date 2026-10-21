@@ -2,7 +2,8 @@
 
 Branch: `slide-uploads` (from `main` at a09aa7b). Status: **decisions settled (2026-10-20); steps 1–7 built the same
 day (see "Built" at the end). A paid trial on L1–L3 of a real course (2026-10-20) led to the revision below
-(2026-10-21), which replaces U1, U2, U9, U10, U12 and parts of U11 and U13; it is being built.**
+(2026-10-21), which replaces U1, U2, U9, U10, U12 and parts of U11 and U13. The revision is built (steps 1-5 below);
+L4-L23 of the real course wait for approval.**
 
 ## Revision (2026-10-21)
 
@@ -55,6 +56,27 @@ student does). All stay inside the proposal's "a CAT before any video, per-KU re
 5. App: no lecture-list screen; the review screen with titles and order; "Writing your next question…" in a sitting;
    the course without syllabus slots.
 6. Checked with the stubbed worker end to end, then L4–L23 of the ML course for real (asks first).
+
+**Built (2026-10-21):** steps 1–5, one commit each. Checked: core 249 tests, server 77, Python 185 (+1 skipped
+without LibreOffice), phone 21 + typecheck + lint, web e2e 108 (the demo course is unchanged). End to end in the
+phone's web build against the real server and the real Python worker (LLM stubbed): syllabus and three decks picked
+out of order with meaningless file names, the review screen's suggested order with the unsure deck flagged, a deck
+moved and a lecture renamed, processing in the confirmed order, Home offering lecture 1's check first (no baseline),
+"Writing your next question…" while a question is written, then the question.
+Where the build differs from the text above:
+- **The reader skips decks the course already has** (the server sends the course's content keys), so a classmate's
+  copy costs nothing.
+- **The placement call runs once all of a student's files are read**; if it fails, the new decks go after the last
+  lecture, marked to check.
+- **A KU's tier difficulties** come from a `difficulty` the extraction now rates (as the bank's `ku_difficulty` did);
+  the estimate's range includes the questions not yet written, so a strong student can reach the advanced tier
+  before an advanced question exists.
+- **The likely next question** assumes the likelier answer at the lecture's ability; a second worker started with
+  `--kinds question` keeps checks moving during a long deck job.
+- **The researcher's tools:** `move-lecture <course> <n> <after>` replaces `add-lecture` and `move-deck`.
+- **Caps are configurable** by `SYLLABYTE_DECKS_PER_COURSE`, `SYLLABYTE_MAX_FILE_MB`, `SYLLABYTE_NEW_DECKS_PER_DAY`.
+- **The trial course** (`runs/ml-trial`) was migrated: its 20 empty syllabus lectures removed, the syllabus's
+  schedule kept as topics, the 102 questions already written kept as saved questions (backup: `db.before-v4.sqlite`).
 
 ## Why
 
