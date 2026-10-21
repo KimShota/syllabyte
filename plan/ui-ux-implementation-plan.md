@@ -63,7 +63,10 @@ These apply on every screen. Claude Code should treat them as invariants and tes
 
 1. **Per-KU levels (1–3) drive which video version a student gets.** A topic is a lecture. The overall level is only a summary (per-KU plan D2, D6; supersedes Q15).
 2. **Levels change only at a lecture boundary (the end of a check before a lecture) or by student correction** (per-KU plan D11; supersedes Q33). Answers in between update the estimate behind the scenes but never a level the student sees.
-3. **"Not sure yet" is missing evidence, never a wrong answer** [Q5]. It appears in the baseline, the checks before a lecture and prove-it. It **does not** appear in in-video checks (the "Guessing" confidence covers it) or retention quizzes.
+3. **"Not sure yet" counts as a wrong answer** (changed 2026-10-21; it was "missing evidence, never a wrong answer" [Q5]).
+   Not knowing is not knowing, and as missing evidence it let a student hold a high estimate by answering "Not sure"
+   after a few right answers. Accepted cost: a blind guess (right one time in three) now scores better on average, so
+   some students may guess. It appears in the baseline, the checks before a lecture and prove-it. It **does not** appear in in-video checks (the "Guessing" confidence covers it) or retention quizzes.
 4. **Every "because…" string a student sees is built from a template over stored data, never written freely by an LLM** (screens 1-result, 2, 5, 8, the "What changed and why" card). Numbers in reason text must equal the stored counts. Tests assert this.
 5. **Nothing overlays the video**, including captions [Q3, Q17].
 6. **No autoplay, no infinite feed, no streaks, points, leaderboards, or peer comparison.** Students only see their own history.
@@ -358,7 +361,7 @@ All thresholds live in the course config (§5.2). The engine of record is Python
 - **Item bank:** 3 items per KU, one per Bloom tier (basic = Remember/Understand, applied = Apply/Analyze, advanced = Evaluate/Create), generated per
   course upload (§7.3). Difficulty β = tier offset (−1 / 0 / +1) + 0.5 × the LLM's single rating of the KU; discrimination α = 1.0 until post-pilot calibration.
 - **Evidence for a lecture's θ:** its assessment items and its videos' quick-check, next-day and prove-it items (latest answer per item). A hinted
-  answer counts as the same item made easier (β − `irt_hint_beta_shift`); "Not sure" counts toward a sitting's length and for nothing in the estimate.
+  answer counts as the same item made easier (β − `irt_hint_beta_shift`); "Not sure" counts as a wrong answer, with no hint shift (rule 3).
 - **KU level (tier rule):** Level 3 if θ ≥ β of the KU's advanced item; Level 2 if θ ≥ β of its applied item; else Level 1. A lecture answered entirely
   "Not sure" is Level 1. A lecture not asked about yet borrows the θ pooled over every answer so far (provisional); with none it is "not checked".
 - **Overall level** = median of the KU levels, rounded down.

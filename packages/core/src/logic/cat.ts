@@ -17,8 +17,8 @@ import type { Level } from "../types";
  *   - selection: the most informative unseen item; ties go to the item earlier in the pool (catsim's argsort is
  *     not stable, so the Python engine fixes the order and this port matches it).
  *
- * Plan rules: "Not sure" counts toward the length but never enters the estimate (rule 3); an answer given after
- * a hint is scored as the same item made easier, b - hint_beta_shift (D10).
+ * Plan rules: "Not sure" is scored as a wrong answer (decided 2026-10-21, replacing rule 3, under which it never
+ * entered the estimate); an answer given after a hint is scored as the same item made easier, b - hint_beta_shift (D10).
  */
 
 export type Outcome = "correct" | "wrong" | "not_sure";
@@ -162,11 +162,12 @@ interface Scored {
 
 function scored(items: Map<string, BankItem>, answers: readonly Answer[], hintBetaShift: number): Scored[] {
   const out: Scored[] = [];
+  // "Not sure" is scored as wrong, with no hint shift
   for (const a of answers) {
-    if (a.outcome === "not_sure") continue;
     const item = items.get(a.item_id);
     if (!item) throw new Error(`answer for unknown item ${a.item_id}`);
-    out.push({ item, shift: a.hinted ? hintBetaShift : 0, correct: a.outcome === "correct" });
+    const hinted = a.hinted && a.outcome !== "not_sure";
+    out.push({ item, shift: hinted ? hintBetaShift : 0, correct: a.outcome === "correct" });
   }
   return out;
 }
@@ -251,7 +252,7 @@ export class CatSession {
   }
 
   get nScored(): number {
-    return this.answers.filter((a) => a.outcome !== "not_sure").length;
+    return this.answers.length; // every answer is scored; "Not sure" as wrong
   }
 
   nextItem(): BankItem | null {

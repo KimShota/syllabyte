@@ -69,11 +69,12 @@ describe("ability estimate", () => {
     }
   });
 
-  it("ignores 'Not sure' answers completely", () => {
+  it("scores 'Not sure' exactly as a wrong answer, with no hint shift", () => {
     const p = pool(-1, 0, 1, 0.5);
     const base = [ans("i0", "correct"), ans("i1", "wrong")];
-    expect(estimateTheta(p, [...base, ans("i2", "not_sure")])).toBe(estimateTheta(p, base));
-    expect(estimateTheta(p, [ans("i2", "not_sure"), ans("i3", "not_sure")], 0.2)).toBe(0.2);
+    expect(estimateTheta(p, [...base, ans("i2", "not_sure")])).toBe(estimateTheta(p, [...base, ans("i2", "wrong")]));
+    expect(estimateTheta(p, [...base, ans("i2", "not_sure", true)])).toBe(estimateTheta(p, [...base, ans("i2", "wrong")]));
+    expect(estimateTheta(p, [ans("i2", "not_sure"), ans("i3", "not_sure")], 0.2)).toBeLessThan(0.2);
   });
 
   it("counts a hinted correct answer for less, and a hinted wrong answer as worse", () => {
@@ -133,13 +134,18 @@ describe("session", () => {
     expect(s.done).toBe(true);
   });
 
-  it("counts 'Not sure' toward the length but not the estimate", () => {
-    const s = new CatSession(pool(-1, 0, 1, 2, 3), { length: 3 });
-    for (let k = 0; k < 3; k++) s.answer(s.nextItem()!.id, "not_sure");
+  it("counts 'Not sure' toward the length and as a wrong answer", () => {
+    const run = (outcome: "not_sure" | "wrong") => {
+      const s = new CatSession(pool(-1, 0, 1, 2, 3), { length: 3 });
+      for (let k = 0; k < 3; k++) s.answer(s.nextItem()!.id, outcome);
+      return s;
+    };
+    const s = run("not_sure");
     expect(s.done).toBe(true);
-    expect(s.nScored).toBe(0);
-    expect(s.theta).toBe(0);
-    expect(s.standardError).toBe(Infinity);
+    expect(s.nScored).toBe(3);
+    expect(s.theta).toBeLessThan(0);
+    expect(s.theta).toBe(run("wrong").theta);
+    expect(Number.isFinite(s.standardError)).toBe(true);
   });
 
   it("stops when the pool runs out and refuses repeated or unknown items", () => {

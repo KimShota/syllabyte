@@ -129,13 +129,12 @@ describe("an uploaded course through the API", () => {
     expect(after.preparing).toBeNull();
   });
 
-  it("writes the likely next question while the current one is answered", async () => {
+  it("writes nothing ahead while the current question is saved: each question is written when it is next", async () => {
     const input = { decks: [{ lecture_n: 1, result: deck("a", 3) }] };
     fxMod.setFixtures(course(input));
     writeNeeds(input, []);
-    const needs = mock.questionNeedsNow();
-    expect(needs).toHaveLength(1);
-    expect(needs[0].ku_id).toBe("ku-a-1");
+    expect((await api.getSitting("lecture-1")).current?.item.ku_id).toBe("ku-a-0");
+    expect(mock.questionNeedsNow()).toEqual([]);
   });
 
   it("spreads questions over the lecture's KUs and moves the tier with the answers", async () => {
@@ -146,6 +145,37 @@ describe("an uploaded course through the API", () => {
     expect(asked.map((q) => q.ku_id)).toEqual(["ku-a-0", "ku-a-1", "ku-a-2"]);
     expect(asked[0].tier).toBe("applied");
     expect(asked[2].tier).toBe("advanced");
+  });
+
+  it("asks one tier lower after a Not sure, down to basic, and goes back up after a scored answer", async () => {
+    const input = { decks: [{ lecture_n: 1, result: deck("a", 7) }] };
+    fxMod.setFixtures(course(input));
+    const saved: Item[] = [];
+    const tiers: string[] = [];
+    for (const how of ["right", "right", "not_sure", "not_sure", "not_sure", "right"] as const) {
+      writeNeeds(input, saved);
+      const it = (await api.getSitting("lecture-1")).current!.item;
+      tiers.push(it.tier!);
+      await api.answerSitting("lecture-1", it.id, how === "right" ? it.correct_index : "not_sure", 1000);
+    }
+    writeNeeds(input, saved);
+    tiers.push((await api.getSitting("lecture-1")).current!.item.tier!);
+    // two right answers reach advanced; each Not sure steps down one and counts as wrong, so after three of them a
+    // right answer lets the estimate choose again, from lower down
+    expect(tiers).toEqual(["applied", "applied", "advanced", "applied", "basic", "basic", "applied"]);
+  });
+
+  it("sets levels from the answers for a KU extracted without tier difficulties", async () => {
+    const old = deck("a", 3);
+    for (const k of old.kus) delete k.tier_difficulty;
+    const input = { decks: [{ lecture_n: 1, result: old }] };
+    fxMod.setFixtures(course(input));
+    await answerAll("lecture-1", "right", input);
+    const levels = store.getState().levels;
+    for (const k of old.kus) {
+      expect(levels[k.id].reason).toContain("3 right");
+      expect(levels[k.id].level).toBeGreaterThan(1);
+    }
   });
 
   it("says when a question could not be written", async () => {

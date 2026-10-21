@@ -102,11 +102,13 @@ class TestEstimation:
             for n in range(1, 7):
                 assert -1.0 <= estimate_theta(pool, answers[:n]) <= 1.5
 
-    def test_not_sure_does_not_enter_the_estimate(self):
+    def test_not_sure_is_scored_exactly_as_a_wrong_answer(self):
         pool = pool_of(-1.0, 0.0, 1.0, 0.5)
         base = [Answer("i0", "correct"), Answer("i1", "wrong")]
-        assert estimate_theta(pool, base + [Answer("i2", "not_sure")]) == estimate_theta(pool, base)
-        assert estimate_theta(pool, [Answer("i2", "not_sure"), Answer("i3", "not_sure")], 0.2) == 0.2
+        wrong = estimate_theta(pool, base + [Answer("i2", "wrong")])
+        assert estimate_theta(pool, base + [Answer("i2", "not_sure")]) == wrong
+        assert estimate_theta(pool, base + [Answer("i2", "not_sure", hinted=True)]) == wrong  # no hint shift
+        assert estimate_theta(pool, [Answer("i2", "not_sure"), Answer("i3", "not_sure")], 0.2) < 0.2
 
     def test_a_hinted_correct_answer_counts_for_less_than_an_unhinted_one(self):
         pool = pool_of(-1.0, 0.0, 1.0, 0.5)
@@ -175,12 +177,16 @@ class TestSession:
         bs = [next(i for i in pool if i.id == a).b for a in asked]
         assert bs == sorted(bs) and bs[0] == 0
 
-    def test_not_sure_counts_toward_the_length_but_not_the_estimate(self):
-        pool = pool_of(-1, 0, 1, 2, 3)
-        s = CatSession(pool, CatConfig(length=3))
-        for _ in range(3):
-            s.answer(s.next_item().id, "not_sure")
-        assert s.done and s.n_scored == 0 and s.theta == 0.0 and s.standard_error == math.inf
+    def test_not_sure_counts_toward_the_length_and_as_a_wrong_answer(self):
+        def run(outcome):
+            s = CatSession(pool_of(-1, 0, 1, 2, 3), CatConfig(length=3))
+            for _ in range(3):
+                s.answer(s.next_item().id, outcome)
+            return s
+
+        s = run("not_sure")
+        assert s.done and s.n_scored == 3 and s.theta < 0 and math.isfinite(s.standard_error)
+        assert s.theta == run("wrong").theta
 
     def test_stops_early_when_the_pool_runs_out(self):
         s = CatSession(pool_of(-1, 0, 1), CatConfig(length=5))

@@ -16,7 +16,8 @@ What comes from catsim, and what is ours:
     and a port could never reproduce it.
 
 Rules from the plan:
-  * "Not sure" counts toward the test length but never enters the estimate (plan §2 rule 3);
+  * "Not sure" is scored as a wrong answer: not knowing is not knowing (decided 2026-10-21, replacing plan §2 rule 3,
+    under which it never entered the estimate and a student could hold a high estimate by answering "Not sure");
   * an answer given after a hint is scored as the same item made easier, b - hint_beta_shift (D10);
   * discrimination is whatever the bank says; the bank fixes it at 1.0 until post-pilot calibration (D5).
 """
@@ -91,15 +92,14 @@ def _by_id(pool: Sequence[BankItem]) -> dict[str, BankItem]:
 
 
 def _scored(pool: Sequence[BankItem], answers: Sequence[Answer], hint_beta_shift: float):
-    """The answers that enter the estimate, as (item, shift, correct)."""
+    """The answers as they enter the estimate, (item, shift, correct); "Not sure" is wrong, with no hint shift."""
     items = _by_id(pool)
     out = []
     for a in answers:
-        if a.outcome == "not_sure":
-            continue
         if a.item_id not in items:
             raise ValueError(f"answer for unknown item {a.item_id}")
-        out.append((items[a.item_id], hint_beta_shift if a.hinted else 0.0, a.outcome == "correct"))
+        hinted = a.hinted and a.outcome != "not_sure"
+        out.append((items[a.item_id], hint_beta_shift if hinted else 0.0, a.outcome == "correct"))
     return out
 
 
@@ -178,7 +178,7 @@ class CatSession:
 
     @property
     def n_scored(self) -> int:
-        return sum(1 for a in self.answers if a.outcome != "not_sure")
+        return len(self.answers)  # every answer is scored; "Not sure" as wrong
 
     def next_item(self) -> BankItem | None:
         if self.done:

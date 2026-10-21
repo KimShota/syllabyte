@@ -118,14 +118,14 @@ export interface Estimate {
 function estimateFrom(pool: Item[], responses: ResponseRecord[], startTheta: number, shift: number, range: BankItem[] = []): Estimate {
   const answers = answersFor(pool, responses);
   const bank = [...pool.map(toBankItem), ...range];
-  const scored = answers.filter((a) => a.outcome !== "not_sure");
   const theta = bank.length === 0 ? startTheta : estimateTheta(bank, answers, startTheta, shift);
   return {
     theta,
     n_shown: answers.length,
-    n_scored: scored.length,
-    n_right: scored.filter((a) => a.outcome === "correct").length,
-    n_not_sure: answers.length - scored.length,
+    // every answer is scored, "Not sure" as wrong
+    n_scored: answers.length,
+    n_right: answers.filter((a) => a.outcome === "correct").length,
+    n_not_sure: answers.filter((a) => a.outcome === "not_sure").length,
     se: bank.length === 0 ? Infinity : standardError(bank, answers, theta, shift),
   };
 }
@@ -177,7 +177,7 @@ function levelReason(
   if (provisional) {
     return `We have not asked about ${t} yet. From your ${count(basis.n_scored, "answer")} so far (${basis.n_right} right) and how hard this concept is, we start you at Level ${level}. We will check it before that lecture.`;
   }
-  const notSure = basis.n_not_sure > 0 ? `, and ${basis.n_not_sure} “Not sure” did not count` : "";
+  const notSure = basis.n_not_sure > 0 ? `, and ${basis.n_not_sure} “Not sure” counted as wrong` : "";
   const lead = `From your ${count(basis.n_scored, "answer")} on ${t} (${basis.n_right} right${notSure}), `;
   if (level === 1) return `${lead}you are not yet likely to handle this concept's applied questions, so videos start from the basics with more hints.`;
   if (level === 2) return `${lead}you are likely to handle this concept's applied questions but not yet its advanced ones, so we use medium pacing.`;
@@ -196,11 +196,14 @@ export function kuLevels(input: ProfileInput): Record<string, KuLevelEstimate> {
     const own = estimates.get(ku.lecture_n)!;
     const title = titles.get(ku.lecture_n) ?? `Lecture ${ku.lecture_n}`;
     const tiers = new Map(items.filter((i) => i.ku_id === ku.id && i.context === "assessment" && i.tier).map((i) => [i.tier!, i]));
-    // on demand a KU's difficulties come with it, before any of its questions is written
-    const betas = ku.tier_difficulty ?? (tiers.get("applied") && tiers.get("advanced") ? tierDifficulty(ku, items) : null);
+    // on demand a KU's difficulties come with it, before any of its questions is written; one extracted without them
+    // (before V4) takes them from its questions or the plain tier offsets, as the question picker does, since on demand
+    // a KU rarely has both an applied and an advanced question
+    const fallback = course.config.questions_on_demand || (tiers.get("applied") && tiers.get("advanced"));
+    const betas = ku.tier_difficulty ?? (fallback ? tierDifficulty(ku, items) : null);
     const base = { ku_id: ku.id, lecture_n: ku.lecture_n };
 
-    if (own.n_shown > 0 && own.n_scored === 0) {
+    if (own.n_shown > 0 && own.n_not_sure === own.n_shown) {
       out[ku.id] = {
         ...base, level: 1, not_checked: false, provisional: false, theta: null, n_scored: 0, n_right: 0, n_not_sure: own.n_not_sure,
         reason: `You chose “Not sure” on ${own.n_not_sure === 2 ? "both" : `all ${own.n_not_sure}`} questions on “${title}”, so videos start from the basics with more hints.`,

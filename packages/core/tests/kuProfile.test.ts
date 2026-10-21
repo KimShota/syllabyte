@@ -52,7 +52,7 @@ describe("lecture estimate", () => {
   it("counts answers and matches the engine's own estimate", () => {
     const rs = [answer("as-ku-a-basic", "right"), answer("as-ku-b-applied", "wrong"), answer("as-ku-a-advanced", "not_sure"), answer("as-ku-b-basic", "right")];
     const est = lectureEstimate(input(rs), 1);
-    expect(est).toMatchObject({ n_shown: 4, n_scored: 3, n_right: 2, n_not_sure: 1 });
+    expect(est).toMatchObject({ n_shown: 4, n_scored: 4, n_right: 2, n_not_sure: 1 });
     const pool = evidenceItems(course, items, 1).map(toBankItem);
     expect(est.theta).toBe(estimateTheta(pool, answersFor(pool, rs), 0, 1));
     expect(Number.isFinite(est.se)).toBe(true);
@@ -108,12 +108,13 @@ describe("KU levels", () => {
     expect(lv["ku-a"].level).toBeGreaterThan(lv["ku-b"].level);
   });
 
-  it("makes a lecture answered entirely 'Not sure' novice, and leaves other lectures unchecked", () => {
+  it("makes a lecture answered entirely 'Not sure' novice, and starts other lectures provisionally at the basics", () => {
     const rs = ["as-ku-a-basic", "as-ku-b-basic", "as-ku-a-applied"].map((id) => answer(id, "not_sure"));
     const lv = kuLevels(input(rs));
     expect(lv["ku-a"]).toMatchObject({ level: 1, not_checked: false, provisional: false });
     expect(lv["ku-a"].reason).toBe("You chose “Not sure” on all 3 questions on “Lecture One”, so videos start from the basics with more hints.");
-    expect(lv["ku-c"]).toMatchObject({ level: 1, not_checked: true });
+    // "Not sure" counts as wrong, so the pooled answers say something about lectures not asked about yet
+    expect(lv["ku-c"]).toMatchObject({ level: 1, not_checked: false, provisional: true });
   });
 
   it("says 'both' for two 'Not sure' answers", () => {
@@ -124,8 +125,8 @@ describe("KU levels", () => {
   it("builds every reason from the stored counts (rule 4)", () => {
     const rs = [answer("as-ku-a-basic", "right"), answer("as-ku-b-applied", "wrong"), answer("as-ku-b-basic", "right"), answer("as-ku-a-advanced", "not_sure")];
     const l = kuLevels(input(rs))["ku-a"];
-    expect(l).toMatchObject({ n_scored: 3, n_right: 2, n_not_sure: 1 });
-    expect(l.reason).toContain("From your 3 answers on “Lecture One” (2 right, and 1 “Not sure” did not count)");
+    expect(l).toMatchObject({ n_scored: 4, n_right: 2, n_not_sure: 1 });
+    expect(l.reason).toContain("From your 4 answers on “Lecture One” (2 right, and 1 “Not sure” counted as wrong)");
   });
 
   it("never lets a stronger set of answers produce a lower level for a KU", () => {

@@ -71,8 +71,9 @@ Where the build differs from the text above:
 - **A KU's tier difficulties** come from a `difficulty` the extraction now rates (as the bank's `ku_difficulty` did);
   the estimate's range includes the questions not yet written, so a strong student can reach the advanced tier
   before an advanced question exists.
-- **The likely next question** assumes the likelier answer at the lecture's ability; a second worker started with
-  `--kinds question` keeps checks moving during a long deck job.
+- **No writing ahead** (changed 2026-10-21): a check asks the server for the question it waits for and nothing more,
+  because the next question depends on the answer and most pre-check answers are wrong or "not sure"; a second
+  worker started with `--kinds question` keeps checks moving during a long deck job.
 - **One worker can run several jobs at once** (`--concurrency N`, threads): reads, placement and questions run side
   by side; deck jobs stay in lecture order because the server hands out a deck only after the earlier ones.
 - **The researcher's tools:** `move-lecture <course> <n> <after>` replaces `add-lecture` and `move-deck`.

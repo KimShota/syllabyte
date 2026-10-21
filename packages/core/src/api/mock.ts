@@ -283,7 +283,7 @@ const failed = (need: QuestionNeed) => (fixtures().question_failures ?? []).some
 
 /**
  * The questions to write now for this student (V4): for the check that is due and any check they are in the middle
- * of, the one it waits for and the likely next one. The server queues them after each of the student's requests.
+ * of, the one it waits for and nothing ahead of it. The server queues them after each of the student's requests.
  */
 export function questionNeedsNow(): QuestionNeed[] {
   if (!cfg().questions_on_demand) return [];

@@ -361,7 +361,7 @@ describe("questions written as checks need them (V4-V6)", () => {
     expect(first).toMatchObject({ current: null, preparing: "writing", total: 2 });
   });
 
-  it("writes the question a check waits for before anything else, then the likely next one", async () => {
+  it("writes the question a check waits for before anything else, and none ahead of it", async () => {
     const { s, ann, sitting } = await readyCourse();
     await ann.rpc("getSitting", sitting);
     // a deck upload waiting in the queue does not hold the question back
@@ -377,9 +377,8 @@ describe("questions written as checks need them (V4-V6)", () => {
 
     const ready = await ann.rpc<Sitting>("getSitting", sitting);
     expect(ready.current?.item.id).toBe("as-ku-potential-outcomes-intro-a-applied-1");
-    // asking for the sitting queued the next question too, for the likelier answer
-    const next = await work(s, { kinds: ["question"] });
-    expect(next.map((j) => j.payload.ku.id)).toEqual(["ku-potential-outcomes-intro-b"]);
+    // the next question is written only once the student has answered and it is the one the check waits for
+    expect(await work(s, { kinds: ["question"] })).toEqual([]);
   });
 
   it("asks a classmate the saved questions, so nothing is written twice", async () => {

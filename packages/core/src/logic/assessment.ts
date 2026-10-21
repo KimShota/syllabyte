@@ -1,5 +1,5 @@
 import type { Course, Item, ItemTier, KuEntry, QuestionNeed, ResponseRecord } from "../types";
-import { icc, information, selectNext, standardError, TIE_TOLERANCE } from "./cat";
+import { information, selectNext, standardError, TIE_TOLERANCE } from "./cat";
 import { answersFor, bankItems, EVIDENCE_CONTEXTS, evidenceItems, lectureEstimate, tierDifficulty, toBankItem } from "./kuProfile";
 import { lecturesInOrder, taughtBefore } from "./lectures";
 
@@ -141,6 +141,23 @@ export function dependentCounts(kus: readonly KuEntry[]): Map<string, number> {
   return out;
 }
 
+/**
+ * The highest tier to ask on a lecture right after a "Not sure" on it: one below the tier of that question (basic stays
+ * basic). "Not sure" counts as wrong, which lowers the estimate too; this makes sure the very next question is easier,
+ * where a real answer is likelier.
+ * Null when the lecture's latest answer was right or wrong.
+ */
+function notSureCap(ctx: Ctx, lectureN: number): ItemTier | null {
+  const lectureOf = new Map(ctx.course.kus.map((k) => [k.id, k.lecture_n]));
+  const asked = new Map(
+    ctx.items.filter((i) => i.context === "assessment" && i.tier && i.ku_id !== null && lectureOf.get(i.ku_id) === lectureN).map((i) => [i.id, i]),
+  );
+  let last: ResponseRecord | null = null;
+  for (const r of ctx.responses) if (asked.has(r.item_id) && (!last || r.at >= last.at)) last = r;
+  if (!last || last.choice !== "not_sure") return null;
+  return TIERS[Math.max(0, TIERS.indexOf(asked.get(last.item_id)!.tier!) - 1)];
+}
+
 /** The KU and tier to ask next on one lecture (V5), and a saved question for it the student has not seen, if any. */
 function pickOnDemand(ctx: Ctx, lectureN: number, seen: Set<string>): Ask | null {
   const kus = ctx.course.kus.filter((k) => k.lecture_n === lectureN);
@@ -163,6 +180,8 @@ function pickOnDemand(ctx: Ctx, lectureN: number, seen: Set<string>): Ask | null
   for (const t of TIERS.slice(1)) {
     if (information(theta, 1, betas[t]) > information(theta, 1, betas[tier]) + TIE_TOLERANCE) tier = t;
   }
+  const cap = notSureCap(ctx, lectureN);
+  if (cap && TIERS.indexOf(tier) > TIERS.indexOf(cap)) tier = cap;
   const item = ctx.items.find((i) => i.context === "assessment" && i.ku_id === ku.id && i.tier === tier && !seen.has(i.id));
   return item ? { item, need: null } : { item: null, need: { ku_id: ku.id, tier } };
 }
@@ -182,7 +201,7 @@ function leastCertainEarlier(ctx: Ctx, before: number, seen: Set<string>): numbe
     const pool = evidenceItems(ctx.course, ctx.items, l.n).map(toBankItem);
     const answers = answersFor(pool, ctx.responses);
     const est = lectureEstimate(ctx, l.n);
-    const se = answers.some((a) => a.outcome !== "not_sure") ? standardError(pool, answers, est.theta, ctx.course.config.irt_hint_beta_shift) : Infinity;
+    const se = answers.length ? standardError(pool, answers, est.theta, ctx.course.config.irt_hint_beta_shift) : Infinity;
     if (best === null || se > best.se) best = { n: l.n, se };
   }
   return best ? best.n : null;
@@ -224,23 +243,11 @@ export function nextAssessmentStep(plan: AssessmentPlan, answered: number, ctx: 
 }
 
 /**
- * The questions to write now for a sitting at position `answered` (V4): the one it waits for, or, when that one is
- * saved, the one after it if the student gives the likelier answer (right when P(correct) >= 0.5 at the lecture's
- * theta). Writing the next question while the current one is answered hides the wait in the common case; when the
- * answer goes the other way the student waits once.
+ * The question to write now for a sitting at position `answered`: the one it waits for, and only that one. The next
+ * question depends on this answer, and most pre-checks are answered wrong or "not sure", so writing ahead for a guessed
+ * answer mostly wrote questions nobody was asked. A student waits for each question that is not saved yet.
  */
 export function questionNeeds(plan: AssessmentPlan, answered: number, ctx: Ctx): QuestionNeed[] {
   const cur = nextAssessmentStep(plan, answered, ctx);
-  if (!cur) return [];
-  if (cur.need) return [cur.need];
-  const item = cur.item!;
-  const right = icc(lectureEstimate(ctx, cur.lecture_n).theta, item.discrimination, item.difficulty_prior) >= 0.5;
-  const at = Math.max(0, ...ctx.responses.map((r) => r.at)) + 1;
-  const guess: ResponseRecord = {
-    id: "guess", item_id: item.id, topic_id: item.topic_id, video_id: null, context: item.context,
-    choice: right ? item.correct_index : (item.correct_index + 1) % item.options.length, correct: right,
-    confidence: null, hint_used: false, latency_ms: 0, at,
-  };
-  const next = nextAssessmentStep(plan, answered + 1, { ...ctx, responses: [...ctx.responses, guess] });
-  return next?.need ? [next.need] : [];
+  return cur?.need ? [cur.need] : [];
 }

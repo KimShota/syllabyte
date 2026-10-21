@@ -765,15 +765,15 @@
      "item_id": "q00",
      "outcome": "not_sure",
      "hinted": false,
-     "theta": 0.2976911986267922,
-     "se": 1.2424614075452658
+     "theta": -0.25853925258456745,
+     "se": 1.0211497680188255
     },
     {
-     "item_id": "q03",
+     "item_id": "q12",
      "outcome": "not_sure",
      "hinted": false,
-     "theta": 0.2976911986267922,
-     "se": 1.2424614075452658
+     "theta": -0.7647799811170873,
+     "se": 0.9303205687341475
     }
    ]
   },
@@ -829,29 +829,29 @@
      "item_id": "q04",
      "outcome": "not_sure",
      "hinted": false,
-     "theta": 0.0,
-     "se": null
+     "theta": -1.09,
+     "se": 2.2820142127459064
     },
     {
-     "item_id": "q03",
+     "item_id": "q05",
      "outcome": "not_sure",
      "hinted": false,
-     "theta": 0.0,
-     "se": null
+     "theta": -1.6350000000000002,
+     "se": 1.6563341257864561
     },
     {
-     "item_id": "q02",
+     "item_id": "q01",
      "outcome": "not_sure",
      "hinted": false,
-     "theta": 0.0,
-     "se": null
+     "theta": -1.9075000000000002,
+     "se": 1.3301407365080522
     },
     {
-     "item_id": "q00",
+     "item_id": "q06",
      "outcome": "not_sure",
      "hinted": false,
-     "theta": 0.0,
-     "se": null
+     "theta": -2.04375,
+     "se": 1.127593261353269
     }
    ]
   },
@@ -1743,15 +1743,15 @@
      "item_id": "q01",
      "outcome": "not_sure",
      "hinted": false,
-     "theta": 1.055,
-     "se": 2.652875641787875
+     "theta": 0.17500004856087786,
+     "se": 1.5004638486025434
     },
     {
-     "item_id": "q04",
+     "item_id": "q06",
      "outcome": "not_sure",
      "hinted": false,
-     "theta": 1.055,
-     "se": 2.652875641787875
+     "theta": -0.5147449152994171,
+     "se": 1.2704931991854034
     }
    ]
   },
@@ -2603,36 +2603,36 @@
      "item_id": "q06",
      "outcome": "not_sure",
      "hinted": false,
-     "theta": 1.9475,
-     "se": 1.2239154870697386
+     "theta": 1.9973536353018841,
+     "se": 0.8567720468694756
     },
     {
      "item_id": "q07",
      "outcome": "not_sure",
      "hinted": false,
-     "theta": 1.9475,
-     "se": 1.2239154870697386
+     "theta": 1.6727841044648646,
+     "se": 0.8211232451726742
     },
     {
      "item_id": "q04",
      "outcome": "correct",
      "hinted": false,
-     "theta": 2.19375,
-     "se": 1.2299715573702505
+     "theta": 1.8117940442277487,
+     "se": 0.7792405845514608
     },
     {
      "item_id": "q03",
      "outcome": "correct",
      "hinted": false,
-     "theta": 2.316875,
-     "se": 1.2429023793235916
+     "theta": 1.8814303629836533,
+     "se": 0.7631831260833194
     },
     {
      "item_id": "q00",
      "outcome": "wrong",
      "hinted": false,
-     "theta": 2.083556729218898,
-     "se": 1.100238218630269
+     "theta": 1.443132353959068,
+     "se": 0.7532738425327964
     }
    ]
   },
