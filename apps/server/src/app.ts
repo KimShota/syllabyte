@@ -195,6 +195,11 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
   );
 
   app.get(
+    "/api/courses/:id/files",
+    uploadErrors((c) => c.json(uploads.myFiles(c.get("user").id, idOf(c)))),
+  );
+
+  app.get(
     "/api/courses/:id/uploads",
     uploadErrors((c) => c.json({ uploads: uploads.uploadViews(c.get("user").id, idOf(c)) })),
   );

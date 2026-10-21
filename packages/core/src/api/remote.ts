@@ -1,6 +1,6 @@
 import type { ClientEvent } from "../events";
 import type { QuestionNeed } from "../types";
-import type { Api, MyCourseView, UploadOrderEntry, UploadFile, UploadView } from "./types";
+import type { Api, CourseFilesView, MyCourseView, UploadOrderEntry, UploadFile, UploadView } from "./types";
 
 /**
  * The `Api` over HTTP to apps/server (plan/backend-plan.md): every method is `POST /api/rpc/<method>` with
@@ -170,6 +170,8 @@ export function createBackend(o: BackendOptions) {
       create: async (syllabus: UploadFile): Promise<{ upload_id: string }> => (await upload("/api/courses", "syllabus", [syllabus])) as unknown as { upload_id: string },
       addSlides: async (courseId: string, files: UploadFile[]): Promise<UploadView[]> =>
         ((await upload(`/api/courses/${courseId}/slides`, "files", files)) as unknown as { uploads: UploadView[] }).uploads,
+      /** the student's own syllabus and slide files, for "Syllabus & Course Slides" */
+      files: async (courseId: string): Promise<CourseFilesView> => (await get(`/api/courses/${courseId}/files`)) as unknown as CourseFilesView,
       uploads: async (courseId: string): Promise<UploadView[]> => ((await get(`/api/courses/${courseId}/uploads`)) as unknown as { uploads: UploadView[] }).uploads,
       confirmUploads: async (courseId: string, order: UploadOrderEntry[]): Promise<UploadView[]> => {
         const out = ((await request(`/api/courses/${courseId}/uploads/confirm`, { order }, true)) as unknown as { uploads: UploadView[] }).uploads;

@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import type { DeckKu, DeckResult } from "@syllabyte/core/logic/assemble";
 import { tierDifficulty } from "@syllabyte/core/logic/kuProfile";
-import type { LectureStateView as LectureState, UploadOrderEntry, UploadView } from "@syllabyte/core/api/types";
+import type { CourseFilesView, LectureStateView as LectureState, UploadOrderEntry, UploadView } from "@syllabyte/core/api/types";
 import type { Item, ItemTier, QuestionNeed } from "@syllabyte/core/types";
 import type { Courses, DeckRow } from "./courses";
 import type { Db } from "./db";
@@ -231,6 +231,48 @@ export class Uploads {
     }
     const c = this.courses.get(courseId)!;
     return { status: "ready" as const, course: { id: c.id, code: c.code, name: c.name, lectures: this.lectureStates(courseId) } };
+  }
+
+  /** The files this student uploaded to the course: their syllabus and every slide file, with what became of each. */
+  myFiles(userId: string, courseId: string): CourseFilesView {
+    this.member(userId, courseId);
+    const syllabus = this.db
+      .prepare("SELECT file_name, created_at FROM syllabus_uploads WHERE user_id = ? AND course_id = ? ORDER BY created_at DESC LIMIT 1")
+      .get(userId, courseId) as { file_name: string; created_at: number } | undefined;
+    const lectures = this.courses.lectures(courseId);
+    const rank = new Map(lectures.map((l, i) => [l.id, i]));
+    // rowid: files sent together keep the order they were sent in
+    const rows = this.db.prepare("SELECT * FROM deck_uploads WHERE user_id = ? AND course_id = ? ORDER BY created_at, rowid").all(userId, courseId) as unknown as DeckUploadRow[];
+    const slides = rows.map((u) => {
+      const deck = u.deck_id ? this.courses.deck(u.deck_id) : null;
+      const lecture = deck?.lecture_id ? lectures.find((l) => l.id === deck.lecture_id) : undefined;
+      const state: CourseFilesView["slides"][number]["state"] =
+        u.status === "reading"
+          ? "reading"
+          : u.status === "failed" || deck?.status === "failed"
+            ? "failed"
+            : u.outcome === "existing"
+              ? "same_as"
+              : u.outcome === "updated_version"
+                ? "updated_version"
+                : lecture
+                  ? "lecture"
+                  : "to_review";
+      return {
+        id: u.id,
+        file_name: u.file_name,
+        uploaded_at: u.created_at,
+        state,
+        lecture: lecture ? { n: lecture.n, title: lecture.title } : null,
+        rank: deck?.lecture_id && state === "lecture" ? rank.get(deck.lecture_id)! : Infinity,
+      };
+    });
+    // stable: files that are lectures in teaching order, the rest after them in upload order
+    slides.sort((a, b) => a.rank - b.rank);
+    return {
+      syllabus: syllabus ? { file_name: syllabus.file_name, uploaded_at: syllabus.created_at } : null,
+      slides: slides.map(({ rank: _rank, ...s }) => s),
+    };
   }
 
   /** Each lecture in teaching order, with its deck's state (U14). */

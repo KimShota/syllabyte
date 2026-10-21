@@ -158,6 +158,24 @@ export type MyCourseView =
       };
     };
 
+/** GET /api/courses/:id/files: the files this student uploaded to the course, for "Syllabus & Course Slides". */
+export interface CourseFilesView {
+  syllabus: { file_name: string; uploaded_at: number } | null;
+  /** in teaching order of the lecture each became, then the files not (yet) a lecture, oldest first */
+  slides: {
+    id: string;
+    file_name: string;
+    uploaded_at: number;
+    /**
+     * lecture: these slides are that lecture; same_as: a copy of slides the course already has (that lecture);
+     * updated_version: a newer version of that lecture's slides, logged but not used; to_review: waiting for the
+     * student to confirm where it goes; reading: still being read; failed: could not be read or processed
+     */
+    state: "lecture" | "same_as" | "updated_version" | "to_review" | "reading" | "failed";
+    lecture: { n: number; title: string } | null;
+  }[];
+}
+
 /** One row of the review screen (V1). */
 export interface UploadView {
   id: string;

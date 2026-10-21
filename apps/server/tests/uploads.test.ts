@@ -339,6 +339,39 @@ async function sitCheck(s: Server, who: Student, sitting: string, finish = true)
   if (finish) await who.rpc("finishSitting", sitting);
 }
 
+describe("the student's files (Syllabus & Course Slides)", () => {
+  it("lists their syllabus and every slide file, lectures in teaching order, then the rest", async () => {
+    const s = makeServer();
+    const { ann, courseId } = await courseWithAnn(s);
+    // uploaded out of teaching order: the file named week-notes.pdf teaches lecture 3
+    await uploadAndConfirm(s, ann, courseId, [DECKS[2], DECKS[0]]);
+    await work(s);
+    // a copy of slides the course has, and new slides not confirmed yet
+    await multipart(ann, `/api/courses/${courseId}/slides`, "files", [{ ...DECKS[0], name: "copy.pdf" }, DECKS[1]]);
+    await work(s, { kinds: ["deck_read", "placement"] });
+
+    const files = await ann.json(`/api/courses/${courseId}/files`);
+    expect(files.syllabus).toMatchObject({ file_name: "syllabus.pdf" });
+    expect(files.slides.map((f: any) => [f.file_name, f.state])).toEqual([
+      ["slides.pdf", "lecture"],
+      ["week-notes.pdf", "lecture"],
+      ["copy.pdf", "same_as"],
+      ["download (1).pdf", "to_review"],
+    ]);
+    expect(files.slides[0].lecture.n).toBeLessThan(files.slides[1].lecture.n);
+    // the copy names the lecture it duplicates; slides waiting for review are no lecture yet
+    expect(files.slides[2].lecture).toEqual(files.slides[0].lecture);
+    expect(files.slides[3].lecture).toBeNull();
+  });
+
+  it("shows a student only their own course's files", async () => {
+    const s = makeServer();
+    const { courseId } = await courseWithAnn(s);
+    const bob = await student(s, "bob@nyu.edu");
+    expect((await bob.get(`/api/courses/${courseId}/files`)).status).toBe(404);
+  });
+});
+
 describe("questions written as checks need them (V4-V6)", () => {
   type Sitting = { current: { item: { id: string; correct_index: number; tier: string } } | null; preparing: string | null; total: number };
 
