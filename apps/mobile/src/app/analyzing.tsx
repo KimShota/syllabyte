@@ -18,8 +18,8 @@ const SLIDE_MS = 1800;
 
 /**
  * "Analyzing your materials…": a scan over each slide, then on to the baseline check. With a backend
- * (plan/slide-uploads-plan.md) it runs while the server reads the syllabus, then goes to the lecture list (for the
- * student who added the course) or on into the course; a syllabus that couldn't be read goes back to the welcome
+ * (plan/slide-uploads-plan.md) it runs while the server reads the syllabus, then goes on into the course (or to the
+ * review screen for slides picked with the syllabus); a syllabus that couldn't be read goes back to the welcome
  * screen, which says why.
  */
 export default function Analyzing() {
@@ -37,12 +37,7 @@ export default function Analyzing() {
       router.replace("/welcome");
       return;
     }
-    const c = myCourse.course;
-    if (c.is_creator && !c.lectures_confirmed) {
-      router.replace("/setup/lectures");
-      return;
-    }
-    void finishSetup(c.id).then((next) => router.replace(next), () => router.replace("/"));
+    void finishSetup(myCourse.course.id).then((next) => router.replace(next), () => router.replace("/"));
   }, [myCourse]);
 
   useEffect(() => {

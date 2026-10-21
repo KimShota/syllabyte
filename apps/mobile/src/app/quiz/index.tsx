@@ -8,6 +8,7 @@ import { T } from "@/components/T";
 import { api } from "@syllabyte/core/api/client";
 import { useQuery } from "@/state/app";
 import { colors, radius, shadow } from "@/theme/tokens";
+import { lectureNumber } from "@/data/course";
 
 const RULES: { icon: IconName; tone: string; text: string }[] = [
   { icon: "arrow-forward", tone: colors.primary, text: "You can't go back to the previous question once you answer" },
@@ -38,7 +39,7 @@ export default function QuizIntro() {
             </View>
           </View>
           <T variant="titleMobile" style={{ textAlign: "center", maxWidth: 280 }} accessibilityRole="header">
-            {lecture ? `A quick check before Lecture ${lecture}` : "A quick check, no grade"}
+            {lecture ? `A quick check before Lecture ${lectureNumber(lecture)}` : "A quick check, no grade"}
           </T>
           {lecture ? (
             <T variant="body" color={colors.onSurfaceVariant} style={{ textAlign: "center", marginTop: 6, maxWidth: 300 }}>

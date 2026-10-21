@@ -600,6 +600,8 @@ export interface SittingView {
    * could not be; null when `current` is set or the sitting is done.
    */
   preparing?: "writing" | "failed" | null;
+  /** the question it is waiting for, to ask for it again when it failed */
+  waiting_for?: QuestionNeed | null;
 }
 
 /** The check before the upcoming lecture's videos, shown at the top of the playlist when it is due. */

@@ -10,6 +10,7 @@ import { firstUpNext } from "@/data/selectors";
 import { useQuery } from "@/state/app";
 import { fetchProgress } from "@/state/progress";
 import { colors, radius, shadow } from "@/theme/tokens";
+import { lectureNumber } from "@/data/course";
 
 /** After the check before a lecture: the levels are published and the playlist rebuilt (plan D11). */
 export default function LectureChecked() {
@@ -37,13 +38,13 @@ export default function LectureChecked() {
           <Icon name="check" size={32} color={colors.onPrimary} />
         </View>
         <T variant="eyebrow" color={colors.secondary}>
-          {n ? `Before Lecture ${n}` : "Lecture check"}
+          {n ? `Before Lecture ${lectureNumber(n)}` : "Lecture check"}
         </T>
         <T variant="title" style={{ textAlign: "center" }} accessibilityRole="header">
           Check done
         </T>
         <T variant="body" color={colors.onSurfaceVariant} style={{ textAlign: "center", maxWidth: 300 }}>
-          {n ? `Your Lecture ${n} videos are now tuned to what you know.` : "Your videos are now tuned to what you know."} Nothing here is graded.
+          {n ? `Your Lecture ${lectureNumber(n)} videos are now tuned to what you know.` : "Your videos are now tuned to what you know."} Nothing here is graded.
         </T>
       </View>
       <View style={{ gap: 10 }}>

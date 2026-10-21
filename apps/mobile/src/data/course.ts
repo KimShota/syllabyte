@@ -168,6 +168,15 @@ const subscribe = (l: () => void) => {
 };
 
 /** Re-renders a screen when the course it draws changes (the uploaded course loads, or a lecture's slides land). */
+/**
+ * The number a student sees for lecture `n`: its place in the course. An uploaded course's lecture keeps its id when
+ * one is placed before it (plan/slide-uploads-plan.md V1), so the two differ there; in the demo they are the same.
+ */
+export function lectureNumber(n: number): number {
+  const i = COURSE.lectures.findIndex((l) => l.n === n);
+  return i >= 0 ? i + 1 : n;
+}
+
 export function useCourseVersion(): number {
   return useSyncExternalStore(subscribe, () => version, () => version);
 }
@@ -203,6 +212,7 @@ export function uploadedCourseDef(course: Course, lectures: LectureStateView[]):
       term: "",
       roadmapEyebrow: `${course.code || course.name} · Roadmap`,
       finalExam: null,
+      // only lectures with slides exist (V3): "3 lectures so far"
       lecturesPlanned: defs.length,
       lectures: defs,
     },

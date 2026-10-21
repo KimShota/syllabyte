@@ -75,14 +75,13 @@ export function CourseSync(): null {
 
 /**
  * Where a student without a usable course goes first: the welcome screen (no course, or the syllabus couldn't be
- * read), the analyzing screen (it is being read), or the lecture list (they added the course and haven't confirmed
- * it, U11). Null once the course is set up.
+ * read) or the analyzing screen (it is being read). Null once the course exists: its lectures come from the slides
+ * (plan/slide-uploads-plan.md V3), so there is no list to confirm.
  */
-export function setupRoute(v: MyCourseView | null): "/welcome" | "/analyzing" | "/setup/lectures" | null {
+export function setupRoute(v: MyCourseView | null): "/welcome" | "/analyzing" | null {
   if (!v) return null;
   if (v.status === "none" || v.status === "failed") return "/welcome";
   if (v.status === "reading") return "/analyzing";
-  if (v.course.is_creator && !v.course.lectures_confirmed) return "/setup/lectures";
   return null;
 }
 

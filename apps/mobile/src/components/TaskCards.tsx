@@ -9,6 +9,7 @@ import { Icon, type IconName } from "./Icon";
 import { T } from "./T";
 import { useQuery } from "@/state/app";
 import { colors, fonts, radius, shadow } from "@/theme/tokens";
+import { lectureNumber } from "@/data/course";
 
 /** What's waiting for the student, above the course list on Home: a lecture check, questionnaires. (The baseline isn't a card: it can't be put off, see BaselineGate.) */
 export function TaskCards() {
@@ -46,7 +47,7 @@ export function PrecheckCard({ check }: { check: PrecheckView }) {
     <TaskCard
       icon="fact-check"
       tone="secondary"
-      eyebrow={`Before Lecture ${check.lecture_n}`}
+      eyebrow={`Before Lecture ${lectureNumber(check.lecture_n)}`}
       title={started ? "Finish the lecture check" : "Take the check before this lecture"}
       body={`${check.total} questions, about ${minutes} ${minutes === 1 ? "minute" : "minutes"}. Its videos open once you finish. It tunes “${check.title}” to what you know now. Not graded.`}
       action={started ? "Continue" : "Start"}

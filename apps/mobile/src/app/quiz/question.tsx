@@ -8,10 +8,15 @@ import { Button } from "@/components/Button";
 import { IconButton } from "@/components/Header";
 import { Icon } from "@/components/Icon";
 import { T } from "@/components/T";
+import { Spin } from "@/components/Motion";
 import { useQuery } from "@/state/app";
+import { courseCalls } from "@/state/session";
 import { colors, fonts, radius, shadow } from "@/theme/tokens";
+import { lectureNumber } from "@/data/course";
 
 const LETTERS = ["A", "B", "C", "D", "E"];
+/** how often to look again while the next question is being written (plan/slide-uploads-plan.md V4) */
+const WRITING_POLL_MS = 2000;
 
 /**
  * One question at a time; no going back. The sitting is the baseline before any video ("week0", the default) or
@@ -21,7 +26,8 @@ const LETTERS = ["A", "B", "C", "D", "E"];
 export default function QuizQuestion() {
   const insets = useSafeAreaInsets();
   const sittingId = useLocalSearchParams<{ sitting?: string }>().sitting ?? "week0";
-  const sitting = useQuery(() => api.getSitting(sittingId), [sittingId]);
+  const [tick, setTick] = useState(0);
+  const sitting = useQuery(() => api.getSitting(sittingId), [sittingId, tick]);
   const item = sitting?.current?.item ?? null;
   const [itemId, setItemId] = useState<string | null>(null);
   const [choice, setChoice] = useState<Choice | null>(null);
@@ -39,7 +45,13 @@ export default function QuizQuestion() {
 
   // the last answer is in: publish the levels and move on (also when coming back to a check already answered)
   const finishing = useRef(false);
-  const over = !!sitting && !sitting.current;
+  const over = !!sitting && sitting.done;
+  const writing = sitting?.preparing === "writing";
+  useEffect(() => {
+    if (!writing) return;
+    const id = setTimeout(() => setTick((t) => t + 1), WRITING_POLL_MS);
+    return () => clearTimeout(id);
+  }, [writing, tick]);
   useEffect(() => {
     if (!over || finishing.current) return;
     finishing.current = true;
@@ -48,6 +60,15 @@ export default function QuizQuestion() {
       .then(() => router.replace(sittingId === "week0" ? "/quiz/done" : { pathname: "/quiz/checked", params: { sitting: sittingId } }));
   }, [over, sittingId]);
 
+  if (sitting && !item && sitting.preparing) {
+    return <Preparing failed={sitting.preparing === "failed"} onRetry={async () => {
+      if (sitting.waiting_for && courseCalls) await courseCalls.retryQuestion(sitting.waiting_for).catch(() => {});
+      setTick((t) => t + 1);
+    }} onFinish={() => {
+      finishing.current = true;
+      void api.finishSitting(sittingId).then(() => router.replace({ pathname: "/quiz/checked", params: { sitting: sittingId } }));
+    }} answered={sitting.answered} />;
+  }
   if (!sitting || !item) return <View style={styles.screen} />;
   const total = sitting.total;
   const index = sitting.answered;
@@ -72,7 +93,7 @@ export default function QuizQuestion() {
         <View style={styles.headerBar}>
           <View>
             <T variant="eyebrow" color={colors.onSurfaceVariant}>
-              {sitting.lecture_n ? `Before Lecture ${sitting.lecture_n}` : "SyllaByte Assessment"}
+              {sitting.lecture_n ? `Before Lecture ${lectureNumber(sitting.lecture_n)}` : "SyllaByte Assessment"}
             </T>
             <T variant="bodySemibold">{sitting.lecture_n ? "Lecture check" : "Active Quiz Session"}</T>
           </View>
@@ -123,6 +144,42 @@ export default function QuizQuestion() {
         onPress={confirm}
         style={{ marginHorizontal: 16, backgroundColor: choice === null ? colors.primary : colors.primaryDeep }}
       />
+    </View>
+  );
+}
+
+/**
+ * The next question is being written for this student's level (V4). Usually it was written while they answered the
+ * last one; when their answer moved the level, this shows for a few seconds. If it can't be written, they can ask
+ * again or finish the check with the answers they gave.
+ */
+function Preparing({ failed, answered, onRetry, onFinish }: { failed: boolean; answered: number; onRetry: () => void; onFinish: () => void }) {
+  const insets = useSafeAreaInsets();
+  return (
+    <View style={[styles.screen, styles.preparing, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 16 }]}>
+      <View style={styles.preparingBody} accessibilityLiveRegion="polite">
+        {failed ? (
+          <Icon name="error-outline" size={36} color={colors.error} />
+        ) : (
+          <Spin>
+            <Icon name="autorenew" size={36} color={colors.primary} />
+          </Spin>
+        )}
+        <T variant="cardTitle" style={{ textAlign: "center" }} accessibilityRole="header">
+          {failed ? "We couldn't write the next question" : "Writing your next question…"}
+        </T>
+        <T variant="body" color={colors.onSurfaceVariant} style={{ textAlign: "center" }}>
+          {failed
+            ? "Try again, or finish the check with the answers you've given."
+            : "It's made from your slides, at the level your answers so far point to. This takes a few seconds."}
+        </T>
+      </View>
+      {failed ? (
+        <View style={{ gap: 10, marginHorizontal: 16 }}>
+          <Button label="Try again" icon="refresh" onPress={onRetry} />
+          {answered > 0 ? <Button label="Finish the check" kind="secondary" onPress={onFinish} /> : null}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -215,5 +272,7 @@ const styles = StyleSheet.create({
     borderColor: colors.outlineVariant,
   },
   notSureSelected: { borderColor: colors.primary, backgroundColor: colors.primaryTint },
+  preparing: { justifyContent: "space-between" },
+  preparingBody: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12, paddingHorizontal: 32 },
   notSureIcon: { width: 28, height: 28, borderRadius: 14, backgroundColor: colors.surfaceContainerHigh, alignItems: "center", justifyContent: "center" },
 });

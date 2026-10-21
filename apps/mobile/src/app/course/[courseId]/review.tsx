@@ -1,99 +1,101 @@
 import { useCallback, useEffect, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, TextInput, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import type { LectureStateView, UploadChoice, UploadView } from "@syllabyte/core/api/types";
+import type { LectureStateView, UploadOrderEntry, UploadView } from "@syllabyte/core/api/types";
 import { Button } from "@/components/Button";
-import { BackButton, Header } from "@/components/Header";
+import { BackButton, Header, IconButton } from "@/components/Header";
 import { Icon } from "@/components/Icon";
 import { Spin } from "@/components/Motion";
 import { T } from "@/components/T";
 import { refreshCourse, useMyCourse } from "@/state/course";
 import { courseCalls } from "@/state/session";
 import { pickAndAddSlides } from "@/state/uploads";
-import { colors, fonts, radius, shadow, space } from "@/theme/tokens";
+import { colors, fonts, radius, shadow, space, type } from "@/theme/tokens";
 
-/** how often to look again while files are being read */
+/** how often to look again while files are being read and placed */
 const POLL_MS = 3000;
 
-type Kind = NonNullable<UploadChoice["kind"]>;
+/** A row of the order: a lecture already in the course (fixed), or a new deck this student places. */
+type Key = `lecture:${number}` | `upload:${string}`;
 
 /**
- * Placing slide files in lectures (plan/slide-uploads-plan.md U13), the same for one file or a whole course at once.
- * Each file is read on the server first; then it shows the lecture it looks like. A file nobody has placed yet is
- * placed by this student (U11); one a classmate already added is already in its lecture. A lecture that already has
- * slides asks whether the file is an extra part or an updated version (U12). "Confirm all" sends every choice.
+ * Placing slide files (plan/slide-uploads-plan.md V1, V2), the same for one file or a whole course at once. Each file
+ * is read on the server for what it teaches (file names don't matter), then the new ones are put in order among the
+ * course's lectures. The student who uploads a deck first checks that order and the titles, moves a deck up or down
+ * if needed, and confirms; the lectures already in the course stay where they are. Files already in the course, and
+ * updated versions of slides already in it, need nothing.
  */
 export default function ReviewUploads() {
   const { courseId } = useLocalSearchParams<{ courseId: string }>();
   const insets = useSafeAreaInsets();
   const myCourse = useMyCourse();
   const lectures = myCourse?.status === "ready" ? myCourse.course.lectures : [];
-  const scheduleFound = myCourse?.status === "ready" ? myCourse.course.schedule_found : true;
   const [rows, setRows] = useState<UploadView[] | null>(null);
-  const [lectureOf, setLectureOf] = useState<Record<string, number | undefined>>({});
-  const [kindOf, setKindOf] = useState<Record<string, Kind | undefined>>({});
+  // null until the student moves something: the suggested order
+  const [moved, setOrder] = useState<Key[] | null>(null);
+  const [titles, setTitles] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const apply = useCallback((next: UploadView[]) => {
-    setRows(next);
-    // the suggestion is the starting choice; the student's own choice stays
-    setLectureOf((cur) => {
-      const out = { ...cur };
-      for (const u of next) if (out[u.id] === undefined && u.suggested_lecture_n !== null) out[u.id] = u.suggested_lecture_n;
-      return out;
-    });
-  }, []);
   const load = useCallback(async () => {
-    if (courseCalls) apply(await courseCalls.uploads(courseId));
-  }, [courseId, apply]);
+    if (courseCalls) setRows(await courseCalls.uploads(courseId));
+  }, [courseId]);
 
   useEffect(() => {
-    courseCalls?.uploads(courseId).then(apply, () => {});
-  }, [courseId, apply]);
-  const reading = rows?.some((u) => u.status === "reading") ?? false;
+    courseCalls?.uploads(courseId).then(setRows, () => {});
+  }, [courseId]);
+  const working = rows?.some((u) => u.placing) ?? false;
   useEffect(() => {
-    if (!reading) return;
-    const id = setInterval(() => courseCalls?.uploads(courseId).then(apply, () => {}), POLL_MS);
+    if (!working) return;
+    const id = setInterval(() => courseCalls?.uploads(courseId).then(setRows, () => {}), POLL_MS);
     return () => clearInterval(id);
-  }, [reading, courseId, apply]);
+  }, [working, courseId]);
 
   if (!rows) return <View style={styles.screen} />;
 
-  // a course without a schedule grows a lecture per file: the next number is on offer
-  const options: { n: number; title: string; isNew: boolean }[] = [
-    ...lectures.map((l) => ({ n: l.n, title: l.title, isNew: false })),
-    ...(scheduleFound ? [] : [{ n: lectures.length + 1, title: "New lecture", isNew: true }]),
-  ];
-  const hasSlides = (n: number | undefined) => lectures.some((l) => l.n === n && l.decks.length > 0);
-  const needsKind = (u: UploadView) => u.can_place && hasSlides(lectureOf[u.id]);
-  const unsure = (u: UploadView) => u.status === "read" && u.can_place && (u.suggested_lecture_n === null || !u.suggestion_sure);
-  // the ones to check come first (U13)
-  const ordered = [...rows].sort((a, b) => Number(unsure(b)) - Number(unsure(a)));
+  const placeable = rows.filter((u) => u.can_place && !u.placing);
+  const byId = new Map(rows.map((u) => [u.id, u]));
+  const suggested: Key[] = [
+    ...lectures.map((l) => ({ at: l.position, key: `lecture:${l.n}` as Key })),
+    ...placeable.map((u) => ({ at: u.suggested_position ?? Infinity, key: `upload:${u.id}` as Key })),
+  ]
+    .sort((a, b) => a.at - b.at)
+    .map((r) => r.key);
+  // a moved order is kept while it lists the same rows (new files or a classmate's lecture reset it)
+  const order = moved && moved.length === suggested.length && moved.every((k) => suggested.includes(k)) ? moved : suggested;
+  const others = rows.filter((u) => !u.can_place || u.placing);
   const toConfirm = rows.filter((u) => u.status === "read");
-  const missing = toConfirm.filter((u) => u.can_place && (lectureOf[u.id] === undefined || (needsKind(u) && !kindOf[u.id])));
-  const canConfirm = !busy && !reading && toConfirm.length > 0 && missing.length === 0;
+  const titleOf = (u: UploadView) => titles[u.id] ?? u.title ?? "";
+  const blank = placeable.some((u) => !titleOf(u).trim());
+  const canConfirm = !busy && !working && toConfirm.length > 0 && !blank;
+
+  const move = (key: Key, by: -1 | 1) => {
+    const i = order.indexOf(key);
+    const j = i + by;
+    if (j < 0 || j >= order.length) return;
+    const next = [...order];
+    [next[i], next[j]] = [next[j], next[i]];
+    setOrder(next);
+  };
 
   async function confirm() {
     if (!courseCalls) return;
     setError(null);
     setBusy(true);
     try {
-      await courseCalls.confirmUploads(
-        courseId,
-        toConfirm.map((u) => ({
-          upload_id: u.id,
-          ...(u.can_place ? { lecture_n: lectureOf[u.id] } : {}),
-          ...(u.can_place && needsKind(u) ? { kind: kindOf[u.id] } : {}),
-        })),
+      const entries: UploadOrderEntry[] = order.map((k) =>
+        k.startsWith("lecture:") ? { lecture_n: Number(k.slice(8)) } : { upload_id: k.slice(7), title: titleOf(byId.get(k.slice(7))!).trim() },
       );
+      await courseCalls.confirmUploads(courseId, entries);
       await refreshCourse();
       if (router.canGoBack()) router.back();
       else router.replace({ pathname: "/course/[courseId]", params: { courseId } });
     } catch (e) {
       setError(e instanceof Error ? e.message : "The slides could not be placed.");
       setBusy(false);
+      setOrder(null);
+      await refreshCourse().catch(() => null);
       void load().catch(() => {});
     }
   }
@@ -108,7 +110,7 @@ export default function ReviewUploads() {
   }
 
   return (
-    <View style={styles.screen}>
+    <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <Header
         bordered
         left={<BackButton />}
@@ -118,31 +120,47 @@ export default function ReviewUploads() {
           </T>
         }
       />
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <T variant="body" color={colors.onSurfaceVariant}>
-          {reading
-            ? "Reading your files. This takes a few seconds each."
-            : toConfirm.length
-              ? "Check the lecture for each file, then confirm. The ones we weren't sure about are first."
-              : "Nothing left to place."}
+          {working
+            ? "Reading your files to see what each one teaches, then putting them in order. This takes a few seconds each."
+            : placeable.length
+              ? "This is the order we think your lectures go in. Check the new ones and their titles, move any that are out of place, then confirm."
+              : toConfirm.length
+                ? "Nothing to place: these slides are already in your course."
+                : "Nothing left to place."}
         </T>
 
-        <View style={styles.list}>
-          {ordered.map((u) => (
-            <UploadRow
-              key={u.id}
-              u={u}
-              options={options}
-              lectures={lectures}
-              chosen={lectureOf[u.id]}
-              onChoose={(n) => setLectureOf({ ...lectureOf, [u.id]: n })}
-              kind={kindOf[u.id]}
-              onKind={(k) => setKindOf({ ...kindOf, [u.id]: k })}
-              askKind={needsKind(u)}
-              flagged={unsure(u)}
-            />
-          ))}
-        </View>
+        {placeable.length ? (
+          <View style={styles.list}>
+            {order.map((key, i) => {
+              if (key.startsWith("lecture:")) {
+                const l = lectures.find((x) => `lecture:${x.n}` === key);
+                return l ? <LectureRow key={key} at={i + 1} lecture={l} /> : null;
+              }
+              const u = byId.get(key.slice(7))!;
+              return (
+                <NewDeckRow
+                  key={key}
+                  at={i + 1}
+                  u={u}
+                  title={titleOf(u)}
+                  onTitle={(t) => setTitles({ ...titles, [u.id]: t })}
+                  onUp={i > 0 ? () => move(key, -1) : null}
+                  onDown={i < order.length - 1 ? () => move(key, 1) : null}
+                />
+              );
+            })}
+          </View>
+        ) : null}
+
+        {others.length ? (
+          <View style={styles.list}>
+            {others.map((u) => (
+              <OtherRow key={u.id} u={u} lectures={lectures} />
+            ))}
+          </View>
+        ) : null}
         <Button label="Add more files" icon="upload-file" kind="secondary" height={44} onPress={addMore} style={{ marginTop: 12 }} />
       </ScrollView>
 
@@ -151,204 +169,132 @@ export default function ReviewUploads() {
           <T variant="caption" color={colors.error} style={{ textAlign: "center" }} accessibilityLiveRegion="polite">
             {error}
           </T>
-        ) : missing.length ? (
+        ) : blank ? (
           <T variant="caption" color={colors.onSurfaceVariant} style={{ textAlign: "center" }}>
-            {missing.length === 1 ? "One file still needs an answer." : `${missing.length} files still need an answer.`}
+            Every lecture needs a title.
           </T>
         ) : null}
-        <Button
-          label={busy ? "Placing…" : toConfirm.length > 1 ? "Confirm all" : "Confirm"}
-          trailingIcon="check"
-          disabled={!canConfirm}
-          onPress={confirm}
-        />
+        <Button label={busy ? "Placing…" : placeable.length > 1 ? "Confirm all" : "Confirm"} trailingIcon="check" disabled={!canConfirm} onPress={confirm} />
       </View>
+    </KeyboardAvoidingView>
+  );
+}
+
+const Badge = ({ at, muted }: { at: number; muted?: boolean }) => (
+  <View style={[styles.badge, muted && { backgroundColor: colors.surfaceContainerHigh }]}>
+    <T variant="codeSm" color={muted ? colors.onSurfaceVariant : colors.onPrimary} style={{ fontFamily: fonts.monoSemibold }}>
+      {String(at).padStart(2, "0")}
+    </T>
+  </View>
+);
+
+/** A lecture already in the course: it stays where it is. */
+function LectureRow({ at, lecture }: { at: number; lecture: LectureStateView }) {
+  return (
+    <View style={styles.fixed} accessible accessibilityLabel={`Lecture ${at}: ${lecture.title}, already in the course`}>
+      <Badge at={at} muted />
+      <T variant="body" color={colors.onSurfaceVariant} numberOfLines={1} style={{ flex: 1 }}>
+        {lecture.title}
+      </T>
+      <Icon name="lock-outline" size={16} color={colors.outline} />
     </View>
   );
 }
 
-function UploadRow({
+/** A new deck: its title (editable), what it teaches, and arrows to move it. */
+function NewDeckRow({
+  at,
   u,
-  options,
-  lectures,
-  chosen,
-  onChoose,
-  kind,
-  onKind,
-  askKind,
-  flagged,
+  title,
+  onTitle,
+  onUp,
+  onDown,
 }: {
+  at: number;
   u: UploadView;
-  options: { n: number; title: string; isNew: boolean }[];
-  lectures: LectureStateView[];
-  chosen: number | undefined;
-  onChoose: (n: number) => void;
-  kind: Kind | undefined;
-  onKind: (k: Kind) => void;
-  askKind: boolean;
-  flagged: boolean;
+  title: string;
+  onTitle: (t: string) => void;
+  onUp: (() => void) | null;
+  onDown: (() => void) | null;
 }) {
-  const placed = u.placed_lecture_n !== null ? lectures.find((l) => l.n === u.placed_lecture_n) : null;
+  const unsure = !u.suggestion_sure;
+  const name = title || u.file_name;
   return (
-    <View style={[styles.card, flagged && styles.cardFlagged]}>
+    <View style={[styles.card, unsure && styles.cardFlagged]}>
       <View style={styles.cardHead}>
-        <Icon name={u.status === "failed" ? "error-outline" : "description"} size={20} color={u.status === "failed" ? colors.error : colors.primary} />
-        <View style={{ flex: 1 }}>
-          <T variant="bodySemibold" numberOfLines={1}>
-            {u.file_name}
-          </T>
-          {u.deck ? (
-            <T variant="codeSm" color={colors.onSurfaceVariant} numberOfLines={1}>
-              {u.deck.page_count} pages{u.deck.first_title ? ` · ${u.deck.first_title}` : ""}
-            </T>
-          ) : null}
+        <Badge at={at} />
+        <TextInput
+          value={title}
+          onChangeText={onTitle}
+          placeholder="Lecture title"
+          placeholderTextColor={colors.outline}
+          maxLength={120}
+          style={styles.input}
+          accessibilityLabel={`Lecture ${at} title`}
+        />
+        <View style={styles.moves}>
+          {onUp ? <IconButton icon="keyboard-arrow-up" label={`Move ${name} earlier`} onPress={onUp} color={colors.primary} size={22} /> : <View style={styles.noMove} />}
+          {onDown ? <IconButton icon="keyboard-arrow-down" label={`Move ${name} later`} onPress={onDown} color={colors.primary} size={22} /> : <View style={styles.noMove} />}
         </View>
-        {flagged ? (
+      </View>
+      {u.summary ? (
+        <T variant="caption" color={colors.onSurfaceVariant} numberOfLines={3} style={{ marginTop: 6 }}>
+          {u.summary}
+        </T>
+      ) : null}
+      <View style={styles.meta}>
+        <T variant="codeSm" color={colors.onSurfaceVariant} numberOfLines={1} style={{ flex: 1 }}>
+          {u.file_name}
+          {u.deck ? ` · ${u.deck.page_count} pages` : ""}
+        </T>
+        {unsure ? (
           <View style={styles.flag}>
             <T variant="codeSm" color={colors.tertiary} style={{ fontFamily: fonts.monoSemibold, fontSize: 10 }}>
-              CHECK THIS
+              CHECK THE ORDER
             </T>
           </View>
         ) : null}
       </View>
-
-      {u.status === "reading" ? (
-        <View style={styles.status}>
-          <Spin>
-            <Icon name="autorenew" size={16} color={colors.primary} />
-          </Spin>
-          <T variant="caption" color={colors.onSurfaceVariant}>
-            Reading…
-          </T>
-        </View>
-      ) : null}
-
-      {u.status === "failed" ? (
-        <T variant="caption" color={colors.error} style={{ marginTop: 8 }}>
-          {u.error ?? "This file could not be read."}
-        </T>
-      ) : null}
-
-      {u.status === "read" && !u.can_place ? (
-        <View style={styles.status}>
-          <Icon name="check-circle" size={16} color={colors.secondary} />
-          <T variant="caption" color={colors.onSurfaceVariant} style={{ flex: 1 }}>
-            {placed ? `Already in Lecture ${placed.n}: ${placed.title}. A classmate added these slides.` : "Already in your course."}
-          </T>
-        </View>
-      ) : null}
-
-      {u.status === "read" && u.can_place ? (
-        <>
-          <T variant="caption" color={colors.onSurfaceVariant} style={{ marginTop: 10 }}>
-            {u.suggested_lecture_n === null ? "Which lecture is this?" : u.suggestion_sure ? "Lecture" : "Our guess. Is it right?"}
-          </T>
-          <LecturePicker options={options} chosen={chosen} onChoose={onChoose} />
-          {askKind ? (
-            <View style={{ marginTop: 10 }}>
-              <T variant="caption" color={colors.onSurfaceVariant}>
-                Lecture {chosen} already has slides. Is this file…
-              </T>
-              <View style={styles.kinds}>
-                {(
-                  [
-                    ["extra_part", "An extra part"],
-                    ["updated_version", "An updated version"],
-                  ] as const
-                ).map(([k, label]) => (
-                  <Pressable
-                    key={k}
-                    accessibilityRole="radio"
-                    accessibilityState={{ selected: kind === k }}
-                    onPress={() => onKind(k)}
-                    style={[styles.kind, kind === k && styles.chipOn]}
-                  >
-                    <T variant="caption" color={kind === k ? colors.onPrimary : colors.onSurface} style={{ fontFamily: fonts.semibold }}>
-                      {label}
-                    </T>
-                  </Pressable>
-                ))}
-              </View>
-              {kind === "updated_version" ? (
-                <T variant="caption" color={colors.onSurfaceVariant} style={{ marginTop: 6 }}>
-                  The lecture keeps its current videos and questions. We{"'"}ll note the new version for the research team.
-                </T>
-              ) : null}
-            </View>
-          ) : null}
-        </>
-      ) : null}
     </View>
   );
 }
 
-/**
- * The chosen lecture as one row, opening the whole list when tapped (a course can have 14 lectures). Open from the
- * start when nothing matched.
- */
-function LecturePicker({
-  options,
-  chosen,
-  onChoose,
-}: {
-  options: { n: number; title: string; isNew: boolean }[];
-  chosen: number | undefined;
-  onChoose: (n: number) => void;
-}) {
-  const [open, setOpen] = useState(chosen === undefined);
-  const label = (o: { n: number; title: string; isNew: boolean }) => (o.isNew ? `New lecture ${o.n}` : o.title);
-  const current = options.find((o) => o.n === chosen);
-  if (!open && current) {
-    return (
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Lecture ${current.n}: ${label(current)}. Change`}
-        onPress={() => setOpen(true)}
-        style={({ pressed }) => [styles.choice, pressed && { backgroundColor: colors.surfaceContainer }]}
-      >
-        <View style={styles.badge}>
-          <T variant="codeSm" color={colors.onPrimary} style={{ fontFamily: fonts.monoSemibold }}>
-            {String(current.n).padStart(2, "0")}
-          </T>
-        </View>
-        <T variant="bodySemibold" numberOfLines={1} style={{ flex: 1 }}>
-          {label(current)}
-        </T>
-        <T variant="caption" color={colors.primary} style={{ fontFamily: fonts.semibold }}>
-          Change
-        </T>
-        <Icon name="expand-more" size={18} color={colors.primary} />
-      </Pressable>
-    );
-  }
+/** A file that needs no placing: being read, already in the course, an updated version, or one that failed. */
+function OtherRow({ u, lectures }: { u: UploadView; lectures: LectureStateView[] }) {
+  const i = u.placed_lecture_n === null ? -1 : lectures.findIndex((l) => l.n === u.placed_lecture_n);
+  const where = i >= 0 ? `Lecture ${i + 1}: ${lectures[i].title}` : null;
+  const failed = u.status === "failed";
+  const message = u.placing
+    ? u.status === "reading"
+      ? "Reading…"
+      : "Putting it in order…"
+    : failed
+      ? (u.error ?? "This file could not be read.")
+      : u.outcome === "updated_version"
+        ? `These look like the slides for ${where ?? "a lecture"}, which are already in. The lecture keeps its questions and videos; we'll note the new version for the research team.`
+        : where
+          ? `Already in ${where}. A classmate added these slides.`
+          : "Already in your course.";
   return (
-    <View style={styles.options} accessibilityRole="radiogroup">
-      {options.map((o) => {
-        const on = chosen === o.n;
-        return (
-          <Pressable
-            key={o.n}
-            accessibilityRole="radio"
-            accessibilityState={{ selected: on }}
-            accessibilityLabel={`Lecture ${o.n}: ${label(o)}`}
-            onPress={() => {
-              onChoose(o.n);
-              setOpen(false);
-            }}
-            style={({ pressed }) => [styles.option, on && styles.optionOn, pressed && !on && { backgroundColor: colors.surfaceContainer }]}
-          >
-            <View style={[styles.badge, !on && { backgroundColor: colors.primaryTint }]}>
-              <T variant="codeSm" color={on ? colors.onPrimary : colors.primaryDeep} style={{ fontFamily: fonts.monoSemibold }}>
-                {o.isNew ? "+" : String(o.n).padStart(2, "0")}
-              </T>
-            </View>
-            <T variant="body" numberOfLines={1} style={{ flex: 1 }}>
-              {label(o)}
-            </T>
-            {on ? <Icon name="check" size={18} color={colors.primary} /> : null}
-          </Pressable>
-        );
-      })}
+    <View style={styles.card}>
+      <View style={styles.cardHead}>
+        <Icon name={failed ? "error-outline" : "description"} size={20} color={failed ? colors.error : colors.primary} />
+        <T variant="bodySemibold" numberOfLines={1} style={{ flex: 1 }}>
+          {u.file_name}
+        </T>
+      </View>
+      <View style={styles.status}>
+        {u.placing ? (
+          <Spin>
+            <Icon name="autorenew" size={16} color={colors.primary} />
+          </Spin>
+        ) : failed ? null : (
+          <Icon name="check-circle" size={16} color={colors.secondary} />
+        )}
+        <T variant="caption" color={failed ? colors.error : colors.onSurfaceVariant} style={{ flex: 1 }}>
+          {message}
+        </T>
+      </View>
     </View>
   );
 }
@@ -356,19 +302,17 @@ function LecturePicker({
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.surface },
   content: { paddingHorizontal: space.gutter, paddingTop: 16, paddingBottom: 24 },
-  list: { marginTop: 16, gap: 10 },
-  card: { padding: 14, borderRadius: radius.lg, backgroundColor: colors.surfaceContainerLowest, ...shadow.card },
+  list: { marginTop: 16, gap: 8 },
+  fixed: { flexDirection: "row", alignItems: "center", gap: 10, minHeight: 44, paddingHorizontal: 10, borderRadius: radius.lg, backgroundColor: colors.surfaceContainerLow },
+  card: { padding: 12, borderRadius: radius.lg, backgroundColor: colors.surfaceContainerLowest, ...shadow.card },
   cardFlagged: { borderWidth: 1.5, borderColor: colors.tertiaryFixedDim },
   cardHead: { flexDirection: "row", alignItems: "center", gap: 10 },
+  input: { ...type.bodySemibold, flex: 1, minHeight: 44, color: colors.onSurface },
+  moves: { flexDirection: "row" },
+  noMove: { width: 44, height: 44 },
+  meta: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 },
   flag: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.full, backgroundColor: colors.tertiaryFixed },
   status: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10 },
-  choice: { flexDirection: "row", alignItems: "center", gap: 10, minHeight: 48, marginTop: 8, paddingHorizontal: 10, borderRadius: radius.lg, backgroundColor: colors.surfaceContainerLow },
-  options: { marginTop: 8, gap: 4 },
-  option: { flexDirection: "row", alignItems: "center", gap: 10, minHeight: 44, paddingHorizontal: 10, borderRadius: radius.lg },
-  optionOn: { backgroundColor: colors.primaryTint },
   badge: { width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: colors.primary },
-  chipOn: { backgroundColor: colors.primary },
-  kinds: { flexDirection: "row", gap: 8, marginTop: 8 },
-  kind: { flex: 1, minHeight: 40, alignItems: "center", justifyContent: "center", borderRadius: radius.lg, backgroundColor: colors.surfaceContainer },
   footer: { paddingHorizontal: space.gutter, paddingTop: 12, gap: 8, borderTopWidth: 1, borderTopColor: colors.surfaceContainerHigh, backgroundColor: colors.surface },
 });

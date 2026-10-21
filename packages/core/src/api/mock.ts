@@ -366,6 +366,7 @@ export const mockApi: Api = {
       answered: st?.answered_ids.length ?? 0, done: Boolean(st?.finished_at) || next === null,
       current: next?.item ? { item: next.item, lecture_n: next.lecture_n, lecture_title: lectureTitle(next.lecture_n), role: next.role } : null,
       preparing: next?.need ? (failed(next.need) ? "failed" : "writing") : null,
+      waiting_for: next?.need ?? null,
     };
   },
 

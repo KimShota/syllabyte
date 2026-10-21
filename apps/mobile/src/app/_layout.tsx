@@ -21,7 +21,7 @@ void startApp();
 
 /** The quick check is the first thing every student does, and there is no way around it (plan D8, mobile-app-plan). */
 const OPEN_BEFORE_BASELINE = (pathname: string) =>
-  pathname === "/signin" || pathname === "/welcome" || pathname === "/analyzing" || pathname === "/setup/lectures" || pathname.startsWith("/quiz") ||
+  pathname === "/signin" || pathname === "/welcome" || pathname === "/analyzing" || pathname.startsWith("/quiz") ||
   // adding slides is how an uploaded course gets its first questions
   /^\/course\/[^/]+\/review$/.test(pathname);
 
@@ -106,7 +106,6 @@ export default function RootLayout() {
         <Stack.Screen name="signin" options={{ animation: "fade", gestureEnabled: false }} />
         <Stack.Screen name="welcome" options={{ animation: "fade" }} />
         <Stack.Screen name="analyzing" options={{ animation: "fade", gestureEnabled: false }} />
-        <Stack.Screen name="setup/lectures" options={{ animation: "fade", gestureEnabled: false }} />
         <Stack.Screen name="course/[courseId]/review" options={{ animation: "slide_from_bottom" }} />
         <Stack.Screen name="quiz/index" options={{ animation: "slide_from_bottom" }} />
         <Stack.Screen name="quiz/question" options={{ gestureEnabled: false }} />

@@ -7,7 +7,7 @@ import { ProgressBar } from "./ProgressBar";
 import { Sheet } from "./Sheet";
 import { T } from "./T";
 import { REMOTE } from "@/data/backend";
-import { COURSE, OTHER_COURSES, useCourseVersion } from "@/data/course";
+import { COURSE, OTHER_COURSES, useCourseVersion, lectureNumber } from "@/data/course";
 import { courseProgress } from "@/data/selectors";
 import { useProgress } from "@/state/progress";
 import { colors, fonts, radius, shadow } from "@/theme/tokens";
@@ -26,7 +26,7 @@ export function CoursesDrawer({ visible, onClose, currentId }: { visible: boolea
   useCourseVersion();
   const main = courseProgress(COURSE, useProgress());
   const all = [
-    { id: COURSE.id, name: COURSE.name, meta: [COURSE.code, COURSE.term].filter(Boolean).join(" · "), progress: main.fraction, done: false, activeLecture: main.activeLecture?.n ?? null, planned: COURSE.lecturesPlanned },
+    { id: COURSE.id, name: COURSE.name, meta: [COURSE.code, COURSE.term].filter(Boolean).join(" · "), progress: main.fraction, done: false, activeLecture: main.activeLecture ? lectureNumber(main.activeLecture.n) : null, planned: COURSE.lecturesPlanned },
     ...OTHER_COURSES.filter((c) => !c.analyzing).map((c) => ({
       id: c.id,
       name: c.name,

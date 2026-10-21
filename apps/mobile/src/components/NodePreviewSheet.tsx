@@ -10,6 +10,7 @@ import type { Ku, KuStatus } from "@/data/types";
 import type { PrecheckView } from "@syllabyte/core/types";
 import { toggleNotify, usePrefs } from "@/state/app";
 import { colors, fonts, radius } from "@/theme/tokens";
+import { lectureNumber } from "@/data/course";
 
 function slideSpan(ku: Ku) {
   const [a, b] = ku.slides;
@@ -75,7 +76,7 @@ export function NodePreviewSheet({
   }
 
   if (ku && locked) {
-    description = `Lecture ${ku.lectureN}'s videos open after a quick check (${check.total} questions, no grade) that tunes them to what you know now.`;
+    description = `Lecture ${lectureNumber(ku.lectureN)}'s videos open after a quick check (${check.total} questions, no grade) that tunes them to what you know now.`;
     action = <Button label="Take the check first" icon="lock" onPress={play} style={styles.action} />;
   }
 

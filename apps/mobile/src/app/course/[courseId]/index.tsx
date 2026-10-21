@@ -11,7 +11,7 @@ import { ProgressBar } from "@/components/ProgressBar";
 import { Serpentine, type SerpentineRow, type SpineSegment } from "@/components/Serpentine";
 import { T } from "@/components/T";
 import { REMOTE } from "@/data/backend";
-import { COURSE, OTHER_COURSES, useCourseVersion } from "@/data/course";
+import { COURSE, OTHER_COURSES, useCourseVersion, lectureNumber } from "@/data/course";
 import { courseLectures, type LectureNodeView } from "@/data/selectors";
 import type { LectureStatus } from "@/data/types";
 import { useProgress } from "@/state/progress";
@@ -100,7 +100,8 @@ export default function CourseRoadmap() {
               }}
             />
             <T variant="caption" color={addError ? colors.error : colors.onSurfaceVariant} style={{ textAlign: "center" }} accessibilityLiveRegion="polite">
-              {addError ?? "PDF or PowerPoint, one file per lecture. Add them all now or as the semester goes."}
+              {addError ??
+                `${COURSE.lectures.length ? `${COURSE.lectures.length} ${COURSE.lectures.length === 1 ? "lecture" : "lectures"} so far. ` : ""}PDF or PowerPoint, one file per lecture. Add them all now or as the semester goes.`}
             </T>
           </View>
         ) : null}
@@ -115,6 +116,17 @@ export default function CourseRoadmap() {
               Only Computational Social Science has slides and videos in this build.
             </T>
             <Button label="Open Computational Social Science" kind="secondary" onPress={() => router.setParams({ courseId: COURSE.id })} />
+          </View>
+        ) : REMOTE && lectures.length === 0 ? (
+          // an uploaded course has lectures only once their slides are in (plan/slide-uploads-plan.md V3)
+          <View style={styles.stub}>
+            <Icon name="upload-file" size={32} color={colors.primary} />
+            <T variant="cardTitle" style={{ textAlign: "center" }}>
+              Add your first lecture{"'"}s slides
+            </T>
+            <T variant="body" color={colors.onSurfaceVariant} style={{ textAlign: "center" }}>
+              Each slide file becomes a lecture. We read what it teaches and put it in order, so file names don{"'"}t matter.
+            </T>
           </View>
         ) : (
           <View style={{ marginTop: 24 }}>
@@ -158,7 +170,7 @@ function Path({ lectures }: { lectures: LectureNodeView[] }) {
       ),
     }] : []),
     ...top.map((view) => {
-      const nodeRight = view.lecture.n % 2 === 1;
+      const nodeRight = lectureNumber(view.lecture.n) % 2 === 1;
       return {
         key: `l${view.lecture.n}`,
         height: view.status === "active" ? 170 : 150,
@@ -180,7 +192,7 @@ function LectureRow({ view, nodeRight, width }: { view: LectureNodeView; nodeRig
   const { lecture, status, progress } = view;
   const cardWidth = Math.min(230, width * 0.62);
   const openLecture = () => router.push({ pathname: "/course/[courseId]/lecture/[n]", params: { courseId: COURSE.id, n: String(lecture.n) } });
-  const label = `Lecture ${lecture.n}: ${lecture.title}`;
+  const label = `Lecture ${lectureNumber(lecture.n)}: ${lecture.title}`;
 
   const node = (() => {
     switch (status) {
@@ -210,7 +222,7 @@ function LectureRow({ view, nodeRight, width }: { view: LectureNodeView; nodeRig
         return (
           <Pressable accessibilityRole="button" accessibilityLabel={`Open ${label}`} onPress={openLecture} style={[styles.node, styles.nodeOpen]}>
             <T variant="eyebrow" color={colors.primaryDeep} style={{ fontFamily: fonts.monoSemibold, letterSpacing: 0.5 }}>
-              {String(lecture.n).padStart(2, "0")}
+              {String(lectureNumber(lecture.n)).padStart(2, "0")}
             </T>
           </Pressable>
         );
@@ -316,7 +328,7 @@ function AwaitingChip({ state }: { state: LectureNodeView["lecture"]["state"] })
       ? { icon: "autorenew" as const, text: "Analyzing slides…", color: colors.primary, bg: colors.primaryTint }
       : state === "failed"
         ? { icon: "error-outline" as const, text: "Couldn't read these slides", color: colors.error, bg: colors.errorContainer }
-        : { icon: "schedule" as const, text: state === "waiting" ? "Waiting for slides" : "Awaiting slides", color: colors.onSurfaceVariant, bg: colors.surfaceContainerHigh };
+        : { icon: "schedule" as const, text: "Awaiting slides", color: colors.onSurfaceVariant, bg: colors.surfaceContainerHigh };
   return (
     <View style={[styles.chip, { backgroundColor: look.bg }]}>
       <Icon name={look.icon} size={12} color={look.color} />

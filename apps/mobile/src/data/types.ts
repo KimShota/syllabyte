@@ -55,7 +55,7 @@ export interface LectureDef {
   /** false: the slides for it haven't been uploaded or processed yet */
   hasSlides: boolean;
   /** an uploaded course's lecture: where its slides are (plan/slide-uploads-plan.md U14); absent in the demo */
-  state?: "waiting" | "analyzing" | "ready" | "failed";
+  state?: "analyzing" | "ready" | "failed";
   /** bottom-to-top on the lecture roadmap */
   sections: LectureSectionDef[];
 }

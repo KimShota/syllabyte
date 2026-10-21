@@ -5,7 +5,7 @@ import { Redirect, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { PlayerPage } from "@/components/player/PlayerPage";
 import { precheckHref } from "@/components/TaskCards";
 import { api } from "@syllabyte/core/api/client";
-import { KUS, useCourseVersion } from "@/data/course";
+import { KUS, useCourseVersion, lectureNumber } from "@/data/course";
 import { findLecture, lectureFeed } from "@/data/selectors";
 import { usePrefs, useQuery, type Speed } from "@/state/app";
 import { usePrecheck } from "@/state/progress";
@@ -86,7 +86,7 @@ export default function Player() {
           renderItem={({ item, index }) => (
             <PlayerPage
               ku={item}
-              eyebrow={`Lecture ${lecture.n} · ${sectionTitle(item.id)}`}
+              eyebrow={`Lecture ${lectureNumber(lecture.n)} · ${sectionTitle(item.id)}`}
               height={height}
               active={index === activeIndex}
               speed={speed}

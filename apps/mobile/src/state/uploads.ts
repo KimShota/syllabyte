@@ -51,7 +51,7 @@ export async function pickAndAddSlides(courseId: string): Promise<UploadView[] |
 }
 
 /**
- * The course is ready and its lecture list settled: the first run is over. Slides picked on the welcome screen go up
+ * The course is ready: the first run is over. Slides picked on the welcome screen go up
  * now and the student places them on the review screen; otherwise Home.
  */
 export async function finishSetup(courseId: string): Promise<{ pathname: "/course/[courseId]/review"; params: { courseId: string } } | "/"> {
