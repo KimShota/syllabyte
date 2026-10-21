@@ -73,6 +73,8 @@ Where the build differs from the text above:
   before an advanced question exists.
 - **The likely next question** assumes the likelier answer at the lecture's ability; a second worker started with
   `--kinds question` keeps checks moving during a long deck job.
+- **One worker can run several jobs at once** (`--concurrency N`, threads): reads, placement and questions run side
+  by side; deck jobs stay in lecture order because the server hands out a deck only after the earlier ones.
 - **The researcher's tools:** `move-lecture <course> <n> <after>` replaces `add-lecture` and `move-deck`.
 - **Caps are configurable** by `SYLLABYTE_DECKS_PER_COURSE`, `SYLLABYTE_MAX_FILE_MB`, `SYLLABYTE_NEW_DECKS_PER_DAY`.
 - **The trial course** (`runs/ml-trial`) was migrated: its 20 empty syllabus lectures removed, the syllabus's
