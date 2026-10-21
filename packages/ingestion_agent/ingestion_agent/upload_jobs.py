@@ -118,16 +118,15 @@ def run_deck_job(
         lecture_title=payload["lecture_title"], deck=deck, earlier=earlier, taken_ids=set(payload.get("taken_ids", [])),
         model=model, manifest=manifest,
     )
-    if not kus:
-        raise RuntimeError("no knowledge units were found in this deck")
+    # a deck with nothing to teach (a review session's announcement) is a lecture without KUs, so without a check
     items: list[Item] = []
     flags: list[dict] = []
-    if payload.get("bank"):
+    if kus and payload.get("bank"):
         titles = {k.id: k.title for k in earlier} | {k.id: k.short_title for k in kus}
         log(f"deck {payload['deck_id']}: {len(kus)} KUs; writing the item bank")
         items, flags = deck_bank(kus, deck, titles, model=model, critic_model=critic_model or model, manifest=manifest, log=log)
     else:
-        log(f"deck {payload['deck_id']}: {len(kus)} KUs")
+        log(f"deck {payload['deck_id']}: {len(kus)} KUs" if kus else f"deck {payload['deck_id']}: nothing to teach, no KUs")
     return {
         "kus": [k.model_dump(mode="json") | {"tier_difficulty": tier_difficulties(k.difficulty)} for k in kus],
         "items": [i.model_dump(mode="json") for i in items],

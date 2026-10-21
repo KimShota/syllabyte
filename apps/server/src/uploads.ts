@@ -688,7 +688,8 @@ export class Uploads {
   }
 
   private deckResult(j: JobRow, r: DeckResult): void {
-    if (!Array.isArray(r.kus) || r.kus.length === 0) throw new UploadError("a deck result needs kus");
+    // no KUs is allowed: a deck with nothing to teach is a lecture with no check
+    if (!Array.isArray(r.kus)) throw new UploadError("a deck result needs kus");
     const result: DeckResult = { kus: r.kus, items: Array.isArray(r.items) ? r.items : [] };
     this.courses.setDeckResult(j.target_id, result);
     const deck = this.courses.deck(j.target_id)!;

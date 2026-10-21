@@ -275,6 +275,17 @@ describe("slides, all at once or one at a time (V1, V2)", () => {
     expect(order.map((e: any) => ("lecture_n" in e ? "lecture" : "new"))).toEqual(["lecture", "new", "new"]);
   });
 
+  it("makes a deck with nothing to teach a lecture with no check", async () => {
+    const s = makeServer();
+    const { ann, courseId } = await courseWithAnn(s);
+    await uploadAndConfirm(s, ann, courseId, [{ name: "review.pdf", text: "Midterm review\norder 1" }]);
+    const { job } = (await (await s.worker.post("/api/worker/claim", {})).json()) as { job: Job };
+    expect((await s.worker.post(`/api/worker/jobs/${job.id}/result`, { result: { kus: [], items: [] } })).status).toBe(200);
+    const mine = await ann.json("/api/courses/mine");
+    expect(mine.course.lectures.map((l: any) => [l.title, l.state])).toEqual([["Midterm review", "ready"]]);
+    expect((await ann.rpc<{ precheck: unknown }>("getPlaylist")).precheck).toBeNull();
+  });
+
   it("refuses Keynote and other files with a message", async () => {
     const s = makeServer();
     const { ann, courseId } = await courseWithAnn(s);

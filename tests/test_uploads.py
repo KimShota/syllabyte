@@ -339,3 +339,12 @@ def test_one_deck_in_an_empty_course_needs_no_placement_call(monkeypatch):
     monkeypatch.setattr(placement, "structured", lambda **kw: pytest.fail("no call expected"))
     out = upload_jobs.run_placement_job({"course_name": "C", "new": [{"id": "d1", "title": "T", "summary": ""}]})
     assert out == {"order": ["d1"], "unsure": []}
+
+
+def test_a_deck_with_nothing_to_teach_gives_no_kus_instead_of_failing(tmp_path, monkeypatch):
+    stub_llm(monkeypatch)
+    STUB_PAGES["d3"] = []
+    monkeypatch.setattr(deck_kus, "structured", lambda **kw: UploadKUList(knowledge_units=[]))
+    pdf = make_pdf(tmp_path / "review.pdf", ["Midterm review in class"])
+    out = upload_jobs.run_deck_job(deck_payload(deck_id="d3"), pdf, tmp_path / "work", log=lambda m: None)
+    assert out["kus"] == [] and out["items"] == []
