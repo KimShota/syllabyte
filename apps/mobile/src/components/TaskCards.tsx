@@ -11,20 +11,15 @@ import { useQuery } from "@/state/app";
 import { colors, fonts, radius, shadow } from "@/theme/tokens";
 import { lectureNumber } from "@/data/course";
 
-/** What's waiting for the student, above the course list on Home: a lecture check, questionnaires. (The baseline isn't a card: it can't be put off, see BaselineGate.) */
+/** What's waiting for the student, above the course list on Home: questionnaires. (The lecture check isn't here: it is reached from its lecture, see PrecheckCard. The baseline isn't a card either: it can't be put off, see BaselineGate.) */
 export function TaskCards() {
-  const playlist = useQuery(() => api.getPlaylist());
   const tasks = useQuery(() => api.getStudyTasks());
   const shownIds = (tasks ?? []).map((t) => t.battery_id).join(",");
   useEffect(() => {
     for (const id of shownIds ? shownIds.split(",") : []) track("study_shown", { type: "battery", id });
   }, [shownIds]);
 
-  // keys are namespaced so a battery id can never collide with a card (the "About you" battery's id is "baseline")
-  const cards = [
-    playlist?.precheck ? <PrecheckCard key="sitting:precheck" check={playlist.precheck} /> : null,
-    ...(tasks ?? []).map((t) => <StudyTaskCard key={`battery:${t.battery_id}`} task={t} />),
-  ].filter(Boolean);
+  const cards = (tasks ?? []).map((t) => <StudyTaskCard key={`battery:${t.battery_id}`} task={t} />);
   if (!cards.length) return null;
   return <View style={styles.list}>{cards}</View>;
 }
@@ -42,14 +37,13 @@ export function precheckHref(check: PrecheckView): Href {
  */
 export function PrecheckCard({ check }: { check: PrecheckView }) {
   const started = check.answered > 0;
-  const minutes = Math.max(1, Math.round(check.total / 3));
   return (
     <TaskCard
       icon="fact-check"
       tone="secondary"
       eyebrow={`Before Lecture ${lectureNumber(check.lecture_n)}`}
-      title={started ? "Finish the lecture check" : "Take the check before this lecture"}
-      body={`${check.total} questions, about ${minutes} ${minutes === 1 ? "minute" : "minutes"}. Its videos open once you finish. It tunes “${check.title}” to what you know now. Not graded.`}
+      title={started ? "Finish your quick test" : "Take a quick test to get started"}
+      body="We'll use your answers to personalize your videos."
       action={started ? "Continue" : "Start"}
       onPress={() => router.push(precheckHref(check))}
     />

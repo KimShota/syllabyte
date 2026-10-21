@@ -173,7 +173,7 @@ function Path({ lectures }: { lectures: LectureNodeView[] }) {
       const nodeRight = lectureNumber(view.lecture.n) % 2 === 1;
       return {
         key: `l${view.lecture.n}`,
-        height: view.status === "active" ? 170 : 150,
+        height: view.status === "active" ? 150 : 124,
         nodeX: nodeRight ? RIGHT : LEFT,
         render: (width: number) => <LectureRow view={view} nodeRight={nodeRight} width={width} />,
       };
@@ -190,7 +190,7 @@ function Path({ lectures }: { lectures: LectureNodeView[] }) {
 
 function LectureRow({ view, nodeRight, width }: { view: LectureNodeView; nodeRight: boolean; width: number }) {
   const { lecture, status, progress } = view;
-  const cardWidth = Math.min(230, width * 0.62);
+  const cardWidth = Math.min(196, width * 0.56);
   const openLecture = () => router.push({ pathname: "/course/[courseId]/lecture/[n]", params: { courseId: COURSE.id, n: String(lecture.n) } });
   const label = `Lecture ${lectureNumber(lecture.n)}: ${lecture.title}`;
 
@@ -273,12 +273,12 @@ function CardBody({ view, alignRight }: { view: LectureNodeView; alignRight: boo
   return (
     <View style={{ alignItems: alignRight ? "flex-end" : "flex-start" }}>
       <View style={styles.eyebrowRow}>
-        <T variant="codeSm" color={eyebrowColor} style={[styles.eyebrow, status === "active" && { fontFamily: fonts.monoSemibold }]}>
+        <T variant="codeSm" numberOfLines={1} color={eyebrowColor} style={[styles.eyebrow, status === "active" && { fontFamily: fonts.monoSemibold }]}>
           Lecture {lecture.n}
           {eyebrowRight ? ` · ${eyebrowRight}` : ""}
         </T>
       </View>
-      <T variant="bodySemibold" style={[{ marginTop: 4 }, align]}>
+      <T variant="bodySemibold" numberOfLines={2} style={[styles.title, align]}>
         {lecture.title}
       </T>
 
@@ -366,13 +366,14 @@ const styles = StyleSheet.create({
   nodeActive: { backgroundColor: colors.primary, ...shadow.glow },
   nodeOpen: { backgroundColor: colors.surfaceContainerLowest, ...shadow.raised },
   nodeAwaiting: { backgroundColor: colors.surfaceContainerLow },
-  card: { backgroundColor: colors.surfaceContainerLowest, borderRadius: radius.lg, padding: 14, ...shadow.card },
-  cardActive: { padding: 16, ...shadow.raised },
+  card: { backgroundColor: colors.surfaceContainerLowest, borderRadius: radius.lg, padding: 12, ...shadow.card },
+  cardActive: { padding: 14, ...shadow.raised },
   cardAwaiting: { opacity: 0.75 },
   eyebrowRow: { flexDirection: "row", alignItems: "center", alignSelf: "stretch" },
+  title: { marginTop: 3, fontSize: 14, lineHeight: 19 },
   eyebrow: { textTransform: "uppercase", letterSpacing: 0.8 },
-  chip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.full, marginTop: 10 },
+  chip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 8, paddingVertical: 2, borderRadius: radius.full, marginTop: 8 },
   chipDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.outline },
-  next: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 10 },
-  progressRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10 },
+  next: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 6 },
+  progressRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 },
 });
