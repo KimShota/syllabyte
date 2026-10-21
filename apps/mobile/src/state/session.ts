@@ -17,8 +17,18 @@ import { touch } from "@syllabyte/core/store";
 import { BACKEND_BASE, REMOTE } from "@/data/backend";
 
 const TOKEN_KEY = "syllabyte.session.token";
-/** one per launch of the app: the next-session cap counts per visit */
-export const VISIT = Math.random().toString(36).slice(2);
+const newVisitId = () => Math.random().toString(36).slice(2);
+let visit = newVisitId();
+/**
+ * One per time the student opens the app (a launch, or a return from the background): the next-session cap counts per
+ * visit, and a questionnaire put off with "Not now" comes back on the next one.
+ */
+export const currentVisit = (): string => visit;
+/** The app was opened again: a new visit. Returns its id. */
+export function startNewVisit(): string {
+  visit = newVisitId();
+  return visit;
+}
 
 export interface Session {
   /** `loading` until the saved token has been checked */
@@ -61,7 +71,7 @@ const backend = BACKEND_BASE
   ? createBackend({
       base: BACKEND_BASE,
       token: () => token,
-      visit: () => VISIT,
+      visit: currentVisit,
       onUnauthorized: () => void endSession(),
       onChanged: touch,
       onConnection: (ok) => {

@@ -76,13 +76,14 @@ describe.skipIf(!haveFixtures)("study questionnaires through the mock API", () =
     expect(submitted?.result).toMatchObject({ asked: 8, skipped: 6 });
   });
 
-  it("hides a battery put off with “Not now” until the next visit", async () => {
+  it("hides a battery put off with “Not now” until the app is opened again, and keeps it reachable meanwhile", async () => {
     await api.postConsent(true);
     await api.snoozeBattery("baseline");
     expect(await tasks()).toEqual([]);
-    store.mutate((s) => {
-      s.visit = { id: "a-new-visit", handled: 0 };
-    });
+    // the profile still opens it
+    expect((await api.getBattery("baseline")).submitted).toBe(false);
+    store.startVisit("a-new-visit");
+    expect(store.getState().visit).toEqual({ id: "a-new-visit", handled: 0 });
     expect(await tasks()).toEqual(["baseline"]);
   });
 

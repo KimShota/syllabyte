@@ -14,9 +14,9 @@ import { AppState, Dimensions } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { api } from "@syllabyte/core/api/client";
 import { setEventEnv } from "@syllabyte/core/events";
-import { flush, getState, getVersion, hydrate, isHydrated, resetState, subscribe, type StorageAdapter } from "@syllabyte/core/store";
+import { flush, getState, getVersion, hydrate, isHydrated, resetState, startVisit, subscribe, touch, type StorageAdapter } from "@syllabyte/core/store";
 import { REMOTE } from "@/data/backend";
-import { VISIT, endBackendSession, flushEvents, loadSession, useSession } from "./session";
+import { currentVisit, endBackendSession, flushEvents, loadSession, startNewVisit, useSession } from "./session";
 
 const STATE_KEY = "syllabyte.demo.v2";
 const PREFS_KEY = "syllabyte.mobile.prefs.v1";
@@ -39,7 +39,7 @@ setEventEnv({
 const phoneStorage: StorageAdapter = {
   load: () => AsyncStorage.getItem(STATE_KEY),
   save: (raw) => AsyncStorage.setItem(STATE_KEY, raw),
-  visitId: () => VISIT,
+  visitId: currentVisit,
 };
 
 // ------------------------------------------------------------------ prefs
@@ -139,12 +139,23 @@ export function startApp(): Promise<void> {
       ready = true;
       emitPrefs();
     });
-    // write a pending change before the app is suspended
+    // write a pending change before the app is suspended; coming back from the background is a new visit, so what was
+    // put off with "Not now" is offered again ("inactive" is a system sheet over the app, such as the file picker: not
+    // leaving it)
+    let away = false;
     AppState.addEventListener("change", (s) => {
       if (s !== "active") {
+        if (s === "background") away = true;
         flush();
         flushEvents();
+        return;
       }
+      if (!away) return;
+      away = false;
+      const id = startNewVisit();
+      // offline the visit lives in the phone's store; with a backend it rides on each request, so just ask again
+      if (REMOTE) touch();
+      else startVisit(id);
     });
   }
   return starting;

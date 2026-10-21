@@ -113,6 +113,14 @@ export function mutate(fn: (s: DemoState) => void): void {
 }
 
 /** The data changed somewhere else (the server answered a write): wake every screen that reads through the API. */
+/** The app was opened again: a new visit, so the next-session cap starts over and "Not now" expires (Q13). */
+export function startVisit(id: string): void {
+  if (state.visit.id === id) return;
+  state = { ...state, visit: { id, handled: 0 } };
+  persist();
+  notify();
+}
+
 export function touch(): void {
   notify();
 }

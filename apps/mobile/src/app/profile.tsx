@@ -15,6 +15,9 @@ import { useSession } from "@/state/session";
 import { pickProfilePhoto, removeProfilePhoto, type PhotoSource } from "@/state/photo";
 import { colors, fonts, radius, shadow, space } from "@/theme/tokens";
 
+/** The study's first questionnaire (plan/study-instruments-plan.md). */
+const ABOUT_YOU = "baseline";
+
 /** The student the demo shows when there is no backend to sign in to. */
 const DEMO_STUDENT = { name: "Alex Rivera" };
 
@@ -23,6 +26,9 @@ export default function Profile() {
   const insets = useSafeAreaInsets();
   const { speed, photoUri } = usePrefs();
   const captions = useQuery(() => api.getMe())?.settings.captions ?? true;
+  // the study's "About you" questionnaire, for research participants: always here, whatever was put off on Home
+  const aboutYou = useQuery(() => api.getBattery(ABOUT_YOU));
+  const aboutYouStatus = !aboutYou ? null : aboutYou.submitted ? "Done" : Object.keys(aboutYou.answers).length ? "In progress" : "Not started";
   const { email } = useSession();
   // with a backend the student is who signed in; without one, the demo student
   const name = REMOTE ? (email ?? "Signed in") : DEMO_STUDENT.name;
@@ -99,10 +105,20 @@ export default function Profile() {
               </Pressable>
             </Row>
             <Row
-              icon="calendar-month"
-              label="Syllabus & lecture schedule"
-              onPress={() => router.push({ pathname: "/course/[courseId]", params: { courseId: COURSE.id } })}
+              icon="folder-open"
+              label="Syllabus & Course Slides"
+              chevron
+              onPress={() => router.push({ pathname: "/course/[courseId]/files", params: { courseId: COURSE.id } })}
             />
+            {aboutYou && aboutYouStatus ? (
+              <Row icon="assignment" label={aboutYou.title} chevron onPress={() => router.push({ pathname: "/study/[id]", params: { id: ABOUT_YOU } })}>
+                <View style={[styles.statusChip, aboutYou.submitted && { backgroundColor: colors.secondaryContainer }]}>
+                  <T variant="codeSm" color={aboutYou.submitted ? colors.onSecondaryContainer : colors.primaryDeep} style={{ fontFamily: fonts.monoSemibold }}>
+                    {aboutYouStatus}
+                  </T>
+                </View>
+              </Row>
+            ) : null}
             <Pressable
               accessibilityRole="button"
               onPress={() => {
@@ -225,6 +241,7 @@ const styles = StyleSheet.create({
   row: { minHeight: 48, paddingHorizontal: 12, borderRadius: radius.lg, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   rowLeft: { flexDirection: "row", alignItems: "center", gap: 12, flex: 1 },
   rowIcon: { width: 32, height: 32, borderRadius: radius.md, backgroundColor: colors.surfaceContainer, alignItems: "center", justifyContent: "center" },
+  statusChip: { height: 28, paddingHorizontal: 10, marginRight: 4, borderRadius: radius.full, backgroundColor: colors.primaryTint, alignItems: "center", justifyContent: "center" },
   speedChip: { minWidth: 48, height: 32, paddingHorizontal: 12, borderRadius: radius.full, backgroundColor: colors.surfaceContainer, alignItems: "center", justifyContent: "center" },
   toggle: { width: 48, height: 28, borderRadius: 14, padding: 4, justifyContent: "center" },
   thumb: { width: 20, height: 20, borderRadius: 10, backgroundColor: colors.surfaceContainerLowest, ...shadow.card },
