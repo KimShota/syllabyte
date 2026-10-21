@@ -10,6 +10,7 @@ import { Serpentine, type SerpentineRow, type SpineSegment } from "@/components/
 import { T } from "@/components/T";
 import { NodePreviewSheet } from "@/components/NodePreviewSheet";
 import { PrecheckCard } from "@/components/TaskCards";
+import { useScrollToFocus } from "@/components/useScrollToFocus";
 import { api } from "@syllabyte/core/api/client";
 import { COURSE, KUS, useCourseVersion } from "@/data/course";
 import { findLecture, kuMinutes, kuStatuses, lectureProgress, sectionSegments } from "@/data/selectors";
@@ -33,67 +34,75 @@ export default function LectureRoadmap() {
   const [preview, setPreview] = useState<Ku | null>(null);
 
   const lecture = findLecture(Number(n));
+  const statuses = lecture ? kuStatuses(lecture, p) : {};
+  const checkDue = Boolean(lecture && check && check.lecture_n === lecture.n);
+  // open where the student is: the KU up next, else the first not watched; while the lecture's check is due, that card
+  // at the top is where they are
+  const order = lecture ? lecture.sections.flatMap((s) => s.kuIds) : [];
+  const focusKey = checkDue ? null : (order.find((id) => statuses[id] === "next") ?? order.find((id) => statuses[id] !== "watched") ?? null);
+  const { scrollRef, contentRef, focusRef, onScrollLayout, onScrollBeginDrag, onFocusLayout } = useScrollToFocus(focusKey);
   if (!lecture) return null;
-  const statuses = kuStatuses(lecture, p);
   const progress = lectureProgress(lecture, p);
   const pct = progress.total ? progress.done / progress.total : 0;
 
   return (
     <View style={styles.screen}>
       <Header left={<BackButton />} right={<ProfileButton />} />
-      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 40 }]}>
-        <View style={styles.overview}>
-          <T variant="codeSm" color={colors.primary} style={{ fontFamily: fonts.monoSemibold, textTransform: "uppercase", letterSpacing: 1 }}>
-            {COURSE.roadmapEyebrow}
-          </T>
-          <T variant="cardTitle" style={{ marginTop: 2, letterSpacing: -0.2 }} accessibilityRole="header">
-            Lecture {lecture.n}: {lecture.title}
-          </T>
-          <View style={styles.pace}>
-            <View style={{ flex: 1 }}>
-              <T variant="codeSm" color={colors.onSurfaceVariant} style={{ fontFamily: fonts.monoMedium }}>
-                TOTAL PACE
-              </T>
-              <T variant="bodySemibold">
-                {progress.done} of {progress.total} topics watched ({Math.round(pct * 100)}%)
-              </T>
+      <ScrollView ref={scrollRef} onLayout={onScrollLayout} onScrollBeginDrag={onScrollBeginDrag} contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 40 }]}>
+        <View ref={contentRef}>
+          <View style={styles.overview}>
+            <T variant="codeSm" color={colors.primary} style={{ fontFamily: fonts.monoSemibold, textTransform: "uppercase", letterSpacing: 1 }}>
+              {COURSE.roadmapEyebrow}
+            </T>
+            <T variant="cardTitle" style={{ marginTop: 2, letterSpacing: -0.2 }} accessibilityRole="header">
+              Lecture {lecture.n}: {lecture.title}
+            </T>
+            <View style={styles.pace}>
+              <View style={{ flex: 1 }}>
+                <T variant="codeSm" color={colors.onSurfaceVariant} style={{ fontFamily: fonts.monoMedium }}>
+                  TOTAL PACE
+                </T>
+                <T variant="bodySemibold">
+                  {progress.done} of {progress.total} topics watched ({Math.round(pct * 100)}%)
+                </T>
+              </View>
+              <ProgressBar value={pct} height={8} color={colors.secondary} track={colors.outlineVariant} style={{ width: 64 }} />
             </View>
-            <ProgressBar value={pct} height={8} color={colors.secondary} track={colors.outlineVariant} style={{ width: 64 }} />
           </View>
-        </View>
 
-        {check && check.lecture_n === lecture.n ? (
-          <View style={{ marginBottom: 16 }}>
-            <PrecheckCard check={check} />
-          </View>
-        ) : null}
+          {checkDue && check ? (
+            <View style={{ marginBottom: 16 }}>
+              <PrecheckCard check={check} />
+            </View>
+          ) : null}
 
-        {[...lecture.sections].reverse().map((section) => {
-          const segs = sectionSegments(section.kuIds, statuses);
-          const complete = segs.every((s) => s === "done");
-          const started = section.kuIds.some((id) => statuses[id] === "watched" || statuses[id] === "next");
-          const rows = buildRows(section.kuIds, statuses, setPreview);
-          const segments: SpineSegment[] = rows.slice(0, -1).map((_, i) => {
-            const upper = statuses[rows[i].key];
-            const lower = statuses[rows[i + 1].key];
-            const done = upper === "watched" && lower === "watched";
-            return { color: done ? colors.secondary : colors.outlineVariant, dashed: true, width: 4 };
-          });
-          return (
-            <View key={section.id} style={styles.section}>
-              <View style={styles.sectionHead}>
-                <View style={styles.sectionTitle}>
-                  <View style={[styles.sectionDot, { backgroundColor: complete ? colors.secondary : started ? colors.primary : colors.outline }]} />
-                  <T variant="bodySemibold">{section.title}</T>
+          {[...lecture.sections].reverse().map((section) => {
+            const segs = sectionSegments(section.kuIds, statuses);
+            const complete = segs.every((s) => s === "done");
+            const started = section.kuIds.some((id) => statuses[id] === "watched" || statuses[id] === "next");
+            const rows = buildRows(section.kuIds, statuses, setPreview);
+            const segments: SpineSegment[] = rows.slice(0, -1).map((_, i) => {
+              const upper = statuses[rows[i].key];
+              const lower = statuses[rows[i + 1].key];
+              const done = upper === "watched" && lower === "watched";
+              return { color: done ? colors.secondary : colors.outlineVariant, dashed: true, width: 4 };
+            });
+            return (
+              <View key={section.id} style={styles.section}>
+                <View style={styles.sectionHead}>
+                  <View style={styles.sectionTitle}>
+                    <View style={[styles.sectionDot, { backgroundColor: complete ? colors.secondary : started ? colors.primary : colors.outline }]} />
+                    <T variant="bodySemibold">{section.title}</T>
+                  </View>
+                  <SegmentBar segments={segs} tone={complete ? "secondary" : "primary"} />
                 </View>
-                <SegmentBar segments={segs} tone={complete ? "secondary" : "primary"} />
+                <View style={{ paddingVertical: 16 }}>
+                  <Serpentine rows={rows} segments={segments} focusKey={focusKey} focusRef={focusRef} onFocusLayout={onFocusLayout} />
+                </View>
               </View>
-              <View style={{ paddingVertical: 16 }}>
-                <Serpentine rows={rows} segments={segments} />
-              </View>
-            </View>
-          );
-        })}
+            );
+          })}
+        </View>
       </ScrollView>
 
       <NodePreviewSheet ku={preview} status={preview ? statuses[preview.id] : null} check={check} onClose={() => setPreview(null)} />

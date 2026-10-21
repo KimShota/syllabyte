@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { useState, type Ref } from "react";
+import { Pressable, ScrollView, StyleSheet, View, type HostInstance } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/Button";
@@ -10,6 +10,7 @@ import { PulseAura } from "@/components/Motion";
 import { ProgressBar } from "@/components/ProgressBar";
 import { Serpentine, type SerpentineRow, type SpineSegment } from "@/components/Serpentine";
 import { T } from "@/components/T";
+import { useScrollToFocus } from "@/components/useScrollToFocus";
 import { REMOTE } from "@/data/backend";
 import { COURSE, OTHER_COURSES, useCourseVersion, lectureNumber } from "@/data/course";
 import { courseLectures, type LectureNodeView } from "@/data/selectors";
@@ -34,6 +35,10 @@ export default function CourseRoadmap() {
 
   const stub = OTHER_COURSES.find((c) => c.id === courseId);
   const lectures = courseLectures(COURSE, progress);
+  // open where the student is: the lecture in progress, else the first one not completed
+  const current = lectures.find((l) => l.status === "active") ?? lectures.find((l) => l.status !== "completed");
+  const focusKey = !stub && current ? rowKey(current.lecture.n) : null;
+  const { scrollRef, contentRef, focusRef, onScrollLayout, onScrollBeginDrag, onFocusLayout } = useScrollToFocus(focusKey);
 
   return (
     <View style={styles.screen}>
@@ -56,83 +61,85 @@ export default function CourseRoadmap() {
         right={<ProfileButton />}
       />
 
-      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 48 }]}>
-        <T variant="codeSm" color={colors.onSurfaceVariant} style={{ textTransform: "uppercase", letterSpacing: 1.2 }}>
-          Course Overview
-        </T>
-        <T variant="titleMobile" style={{ marginTop: 10 }} accessibilityRole="header">
-          {stub ? stub.name : COURSE.name}
-        </T>
-        <View style={styles.meta}>
-          {stub || !COURSE.professor ? null : (
-            <>
-              <T variant="caption" color={colors.onSurfaceVariant}>
-                {COURSE.professor}
-              </T>
-              <View style={styles.dot} />
-            </>
-          )}
-          <T variant="codeSm" color={colors.onSurfaceVariant}>
-            {stub ? `${stub.code} · ${stub.term}` : [COURSE.code, COURSE.term].filter(Boolean).join(" · ")}
+      <ScrollView ref={scrollRef} onLayout={onScrollLayout} onScrollBeginDrag={onScrollBeginDrag} contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 48 }]}>
+        <View ref={contentRef}>
+          <T variant="codeSm" color={colors.onSurfaceVariant} style={{ textTransform: "uppercase", letterSpacing: 1.2 }}>
+            Course Overview
           </T>
+          <T variant="titleMobile" style={{ marginTop: 10 }} accessibilityRole="header">
+            {stub ? stub.name : COURSE.name}
+          </T>
+          <View style={styles.meta}>
+            {stub || !COURSE.professor ? null : (
+              <>
+                <T variant="caption" color={colors.onSurfaceVariant}>
+                  {COURSE.professor}
+                </T>
+                <View style={styles.dot} />
+              </>
+            )}
+            <T variant="codeSm" color={colors.onSurfaceVariant}>
+              {stub ? `${stub.code} · ${stub.term}` : [COURSE.code, COURSE.term].filter(Boolean).join(" · ")}
+            </T>
+          </View>
+
+          {/* an uploaded course: slides are added here, all at once or a lecture at a time (plan/slide-uploads-plan.md) */}
+          {REMOTE && !stub ? (
+            <View style={styles.addSlides}>
+              <Button
+                label={adding ? "Uploading…" : "Add slides"}
+                icon="upload-file"
+                kind="secondary"
+                height={44}
+                disabled={adding}
+                onPress={async () => {
+                  setAddError(null);
+                  setAdding(true);
+                  try {
+                    const added = await pickAndAddSlides(COURSE.id);
+                    if (added) router.push({ pathname: "/course/[courseId]/review", params: { courseId: COURSE.id } });
+                  } catch (e) {
+                    setAddError(e instanceof Error ? e.message : "The files could not be uploaded.");
+                  } finally {
+                    setAdding(false);
+                  }
+                }}
+              />
+              <T variant="caption" color={addError ? colors.error : colors.onSurfaceVariant} style={{ textAlign: "center" }} accessibilityLiveRegion="polite">
+                {addError ??
+                  `${COURSE.lectures.length ? `${COURSE.lectures.length} ${COURSE.lectures.length === 1 ? "lecture" : "lectures"} so far. ` : ""}PDF or PowerPoint, one file per lecture. Add them all now or as the semester goes.`}
+              </T>
+            </View>
+          ) : null}
+
+          {stub ? (
+            <View style={styles.stub}>
+              <Icon name="school" size={32} color={colors.primary} />
+              <T variant="cardTitle" style={{ textAlign: "center" }}>
+                No lectures in this demo
+              </T>
+              <T variant="body" color={colors.onSurfaceVariant} style={{ textAlign: "center" }}>
+                Only Computational Social Science has slides and videos in this build.
+              </T>
+              <Button label="Open Computational Social Science" kind="secondary" onPress={() => router.setParams({ courseId: COURSE.id })} />
+            </View>
+          ) : REMOTE && lectures.length === 0 ? (
+            // an uploaded course has lectures only once their slides are in (plan/slide-uploads-plan.md V3)
+            <View style={styles.stub}>
+              <Icon name="upload-file" size={32} color={colors.primary} />
+              <T variant="cardTitle" style={{ textAlign: "center" }}>
+                Add your first lecture{"'"}s slides
+              </T>
+              <T variant="body" color={colors.onSurfaceVariant} style={{ textAlign: "center" }}>
+                Each slide file becomes a lecture. We read what it teaches and put it in order, so file names don{"'"}t matter.
+              </T>
+            </View>
+          ) : (
+            <View style={{ marginTop: 24 }}>
+              <Path lectures={lectures} focusKey={focusKey} focusRef={focusRef} onFocusLayout={onFocusLayout} />
+            </View>
+          )}
         </View>
-
-        {/* an uploaded course: slides are added here, all at once or a lecture at a time (plan/slide-uploads-plan.md) */}
-        {REMOTE && !stub ? (
-          <View style={styles.addSlides}>
-            <Button
-              label={adding ? "Uploading…" : "Add slides"}
-              icon="upload-file"
-              kind="secondary"
-              height={44}
-              disabled={adding}
-              onPress={async () => {
-                setAddError(null);
-                setAdding(true);
-                try {
-                  const added = await pickAndAddSlides(COURSE.id);
-                  if (added) router.push({ pathname: "/course/[courseId]/review", params: { courseId: COURSE.id } });
-                } catch (e) {
-                  setAddError(e instanceof Error ? e.message : "The files could not be uploaded.");
-                } finally {
-                  setAdding(false);
-                }
-              }}
-            />
-            <T variant="caption" color={addError ? colors.error : colors.onSurfaceVariant} style={{ textAlign: "center" }} accessibilityLiveRegion="polite">
-              {addError ??
-                `${COURSE.lectures.length ? `${COURSE.lectures.length} ${COURSE.lectures.length === 1 ? "lecture" : "lectures"} so far. ` : ""}PDF or PowerPoint, one file per lecture. Add them all now or as the semester goes.`}
-            </T>
-          </View>
-        ) : null}
-
-        {stub ? (
-          <View style={styles.stub}>
-            <Icon name="school" size={32} color={colors.primary} />
-            <T variant="cardTitle" style={{ textAlign: "center" }}>
-              No lectures in this demo
-            </T>
-            <T variant="body" color={colors.onSurfaceVariant} style={{ textAlign: "center" }}>
-              Only Computational Social Science has slides and videos in this build.
-            </T>
-            <Button label="Open Computational Social Science" kind="secondary" onPress={() => router.setParams({ courseId: COURSE.id })} />
-          </View>
-        ) : REMOTE && lectures.length === 0 ? (
-          // an uploaded course has lectures only once their slides are in (plan/slide-uploads-plan.md V3)
-          <View style={styles.stub}>
-            <Icon name="upload-file" size={32} color={colors.primary} />
-            <T variant="cardTitle" style={{ textAlign: "center" }}>
-              Add your first lecture{"'"}s slides
-            </T>
-            <T variant="body" color={colors.onSurfaceVariant} style={{ textAlign: "center" }}>
-              Each slide file becomes a lecture. We read what it teaches and put it in order, so file names don{"'"}t matter.
-            </T>
-          </View>
-        ) : (
-          <View style={{ marginTop: 24 }}>
-            <Path lectures={lectures} />
-          </View>
-        )}
       </ScrollView>
 
       <CoursesDrawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} currentId={courseId} />
@@ -146,7 +153,19 @@ function segmentFor(upper: LectureStatus, lower: LectureStatus): SpineSegment {
   return { color: colors.outlineVariant, dashed: true, width: 2.5 };
 }
 
-function Path({ lectures }: { lectures: LectureNodeView[] }) {
+const rowKey = (n: number) => `l${n}`;
+
+function Path({
+  lectures,
+  focusKey,
+  focusRef,
+  onFocusLayout,
+}: {
+  lectures: LectureNodeView[];
+  focusKey: string | null;
+  focusRef: Ref<HostInstance>;
+  onFocusLayout: () => void;
+}) {
   const top = [...lectures].reverse();
   const exam = COURSE.finalExam;
   const rows: SerpentineRow[] = [
@@ -172,7 +191,7 @@ function Path({ lectures }: { lectures: LectureNodeView[] }) {
     ...top.map((view) => {
       const nodeRight = lectureNumber(view.lecture.n) % 2 === 1;
       return {
-        key: `l${view.lecture.n}`,
+        key: rowKey(view.lecture.n),
         height: view.status === "active" ? 150 : 124,
         nodeX: nodeRight ? RIGHT : LEFT,
         render: (width: number) => <LectureRow view={view} nodeRight={nodeRight} width={width} />,
@@ -185,7 +204,7 @@ function Path({ lectures }: { lectures: LectureNodeView[] }) {
     const upper = i - offset < 0 ? "awaiting" : top[i - offset].status;
     return segmentFor(upper, top[i + 1 - offset].status);
   });
-  return <Serpentine rows={rows} segments={segments} />;
+  return <Serpentine rows={rows} segments={segments} focusKey={focusKey} focusRef={focusRef} onFocusLayout={onFocusLayout} />;
 }
 
 function LectureRow({ view, nodeRight, width }: { view: LectureNodeView; nodeRight: boolean; width: number }) {

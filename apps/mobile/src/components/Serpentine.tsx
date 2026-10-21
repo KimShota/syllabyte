@@ -1,5 +1,5 @@
-import { useState, type ReactNode } from "react";
-import { StyleSheet, View } from "react-native";
+import { useState, type ReactNode, type Ref } from "react";
+import { StyleSheet, View, type HostInstance } from "react-native";
 import Svg, { Path } from "react-native-svg";
 
 export interface SpineSegment {
@@ -22,7 +22,20 @@ export interface SerpentineRow {
  * Rows stacked top to bottom with a curved spine drawn behind them, through each row's node centre.
  * `segments[i]` styles the curve between row i and row i + 1.
  */
-export function Serpentine({ rows, segments }: { rows: SerpentineRow[]; segments: SpineSegment[] }) {
+export function Serpentine({
+  rows,
+  segments,
+  focusKey,
+  focusRef,
+  onFocusLayout,
+}: {
+  rows: SerpentineRow[];
+  segments: SpineSegment[];
+  /** the row a screen opens on (see useScrollToFocus): it gets `focusRef` and reports its layout */
+  focusKey?: string | null;
+  focusRef?: Ref<HostInstance>;
+  onFocusLayout?: () => void;
+}) {
   const [width, setWidth] = useState(0);
   const centers: { x: number; y: number }[] = [];
   let y = 0;
@@ -56,11 +69,14 @@ export function Serpentine({ rows, segments }: { rows: SerpentineRow[]; segments
         </Svg>
       ) : null}
       {width > 0
-        ? rows.map((row) => (
-            <View key={row.key} style={{ height: row.height }}>
-              {row.render(width)}
-            </View>
-          ))
+        ? rows.map((row) => {
+            const focus = row.key === focusKey;
+            return (
+              <View key={row.key} style={{ height: row.height }} ref={focus ? focusRef : undefined} onLayout={focus ? onFocusLayout : undefined}>
+                {row.render(width)}
+              </View>
+            );
+          })
         : null}
     </View>
   );
