@@ -102,3 +102,51 @@ def _save(tmp_path: Path, name: str, data: bytes) -> Path:
     p = tmp_path / name
     p.write_bytes(data)
     return p
+
+
+def test_runs_jobs_side_by_side_with_concurrency(tmp_path, monkeypatch):
+    import threading
+    import time
+
+    from ingestion_agent import worker as worker_mod
+
+    running, most = [0], [0]
+    lock = threading.Lock()
+
+    def slow_read(path, work, name, **kw):
+        with lock:
+            running[0] += 1
+            most[0] = max(most[0], running[0])
+        time.sleep(0.2)
+        with lock:
+            running[0] -= 1
+        return {"deck_name": name}
+
+    monkeypatch.setattr(worker_mod, "run_deck_read_job", slow_read)
+    jobs = [{"id": f"j{i}", "kind": "deck_read", "payload": {"deck_name": f"d{i}"}, "file_name": "x.pdf"} for i in range(3)]
+    server = FakeServer(jobs, {f"j{i}": b"%PDF" for i in range(3)})
+    started = time.monotonic()
+    worker(server, tmp_path).serve(concurrency=3, once=True)
+    assert most[0] == 3 and time.monotonic() - started < 0.5
+    assert sorted(b["result"]["deck_name"] for b in server.posted("/result")) == ["d0", "d1", "d2"]
+
+
+def test_two_questions_on_one_deck_render_it_once(tmp_path, monkeypatch):
+    import threading
+
+    from ingestion_agent import worker as worker_mod
+
+    renders = []
+
+    def fake_read(path, work_dir, name):
+        renders.append(name)
+        return None, f"deck {name}"
+
+    monkeypatch.setattr(worker_mod, "read_deck", fake_read)
+    w = worker(FakeServer([], {}), tmp_path)
+    threads = [threading.Thread(target=lambda: w._deck("d1", tmp_path / "d1.pdf")) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert renders == ["d1"]

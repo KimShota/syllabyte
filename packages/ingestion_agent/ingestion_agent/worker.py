@@ -12,6 +12,10 @@ server has queued. A long deck job still holds a lone worker, so a second worker
 checks moving:
 
     uv run python -m ingestion_agent.worker --kinds question
+
+`--concurrency N` runs N jobs at once in one worker (threads; the work is waiting on the model). Deck jobs still go one
+after another: the server hands out a deck only once every earlier lecture's deck is done, so each sees their KUs.
+Reading files, placing them and writing questions run side by side.
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import threading
 import time
 import traceback
 from pathlib import Path
@@ -53,6 +58,8 @@ class Worker:
         self.spent_usd = 0.0
         # decks rendered for question jobs, kept between jobs so a check's next question does not render it again
         self.decks: dict[str, SlideDeck] = {}
+        self._lock = threading.Lock()
+        self._deck_locks: dict[str, threading.Lock] = {}
 
     def _post(self, path: str, body: dict) -> dict:
         r = self.client.post(path, json=body)
@@ -80,8 +87,10 @@ class Worker:
             if result is not None:
                 self._post(f"/api/worker/jobs/{job_id}/result", {"result": result})
             cost = manifest.total_cost_usd(PRICE_PER_MTOK)
-            self.spent_usd += cost
-            log(f"{kind} {job_id}: done ({len(manifest.llm_calls)} LLM calls, ${cost:.3f}; ${self.spent_usd:.2f} this session)")
+            with self._lock:
+                self.spent_usd += cost
+                total = self.spent_usd
+            log(f"{kind} {job_id}: done ({len(manifest.llm_calls)} LLM calls, ${cost:.3f}; ${total:.2f} this session)")
         except UploadError as e:
             log(f"{kind} {job_id}: the file can't be used: {e}")
             self._post(f"/api/worker/jobs/{job_id}/fail", {"error": str(e), "user_message": str(e)})
@@ -118,11 +127,38 @@ class Worker:
 
 
     def _deck(self, deck_id: str, path: Path | None) -> SlideDeck:
-        if deck_id not in self.decks:
-            assert path is not None, "the server sends a question job's deck"
-            _, deck = read_deck(path, self.work_dir / "decks" / deck_id, deck_id)
-            self.decks[deck_id] = deck
-        return self.decks[deck_id]
+        with self._lock:
+            lock = self._deck_locks.setdefault(deck_id, threading.Lock())
+        # two questions on one deck at once: the second waits for the first to render it
+        with lock:
+            if deck_id not in self.decks:
+                if path is None:
+                    raise RuntimeError("a question job's deck was not sent")
+                _, deck = read_deck(path, self.work_dir / "decks" / deck_id, deck_id)
+                self.decks[deck_id] = deck
+            return self.decks[deck_id]
+
+    def serve(self, *, concurrency: int = 1, poll: float = 5.0, once: bool = False) -> None:
+        """Runs jobs on `concurrency` threads until stopped; with `once`, until a thread finds the queue empty and every
+        other thread has finished its job (a job can queue the next, e.g. placement after the last read)."""
+
+        def loop() -> None:
+            while True:
+                try:
+                    did = self.run_once()
+                except httpx.HTTPError as e:
+                    log(f"server unreachable: {e!r}")
+                    did = False
+                if not did:
+                    if once:
+                        return
+                    time.sleep(poll)
+
+        threads = [threading.Thread(target=loop, name=f"worker-{i}", daemon=True) for i in range(concurrency)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
 
 
 def main() -> None:
@@ -135,6 +171,7 @@ def main() -> None:
     parser.add_argument("--poll", type=float, default=5.0, help="seconds between checks when there is nothing to do")
     parser.add_argument("--once", action="store_true", help="run the queued jobs, then stop")
     parser.add_argument("--kinds", default=None, help=f"only these job kinds, comma-separated ({', '.join(KINDS)})")
+    parser.add_argument("--concurrency", type=int, default=1, help="jobs at once (deck jobs still run in lecture order)")
     args = parser.parse_args()
     if not args.token:
         parser.error("set --token or SYLLABYTE_WORKER_TOKEN")
@@ -144,17 +181,8 @@ def main() -> None:
         if kinds and set(kinds) - set(KINDS):
             parser.error(f"unknown kinds: {', '.join(sorted(set(kinds) - set(KINDS)))}")
         worker = Worker(client, args.work_dir, model=args.model, critic_model=args.critic_model, kinds=kinds)
-        log(f"polling {args.server}")
-        while True:
-            try:
-                did = worker.run_once()
-            except httpx.HTTPError as e:
-                log(f"server unreachable: {e!r}")
-                did = False
-            if not did:
-                if args.once:
-                    return
-                time.sleep(args.poll)
+        log(f"polling {args.server}" + (f" with {args.concurrency} jobs at once" if args.concurrency > 1 else ""))
+        worker.serve(concurrency=max(1, args.concurrency), poll=args.poll, once=args.once)
 
 
 if __name__ == "__main__":
