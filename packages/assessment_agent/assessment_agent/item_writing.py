@@ -57,13 +57,16 @@ def slides_material(slides: list[Slide]) -> tuple[str, list[dict]]:
     return "\n\n".join(parts), images
 
 
-def critic_pass(items_text: str, material_text: str, images: list[dict], ids: list[str], *, stage: str, model: str, manifest: RunManifest) -> list[Verdict]:
+def critic_pass(
+    items_text: str, material_text: str, images: list[dict], ids: list[str], *, stage: str, model: str, manifest: RunManifest, checks: str = "",
+) -> list[Verdict]:
+    """`checks`: more for the critic to verify on these items, after its usual ones."""
     prompt = (
         f"Course material (slides):\n{material_text}\n\nItems and claims to check "
         f"(ids: {', '.join(ids)}):\n{items_text}"
     )
     result = structured(
-        schema=Verdicts, content=[text_block(prompt), *images], system=CRITIC_SYSTEM,
+        schema=Verdicts, content=[text_block(prompt), *images], system=CRITIC_SYSTEM + (f"\n{checks}" if checks else ""),
         stage=stage, model=model, max_tokens=4000, manifest=manifest,
     )
     return result.verdicts
@@ -71,22 +74,23 @@ def critic_pass(items_text: str, material_text: str, images: list[dict], ids: li
 
 def mcq_text(id_: str, m: MCQ) -> str:
     opts = "\n".join(f"   {'ABC'[i]}. {o}{'  <-- keyed' if i == m.correct_index else ''}" for i, o in enumerate(m.options))
-    return f"[{id_}] {m.stem}\n{opts}\n   explanation: {m.explanation}"
+    hint = getattr(m, "hint", None)
+    return f"[{id_}] {m.stem}\n{opts}\n   explanation: {m.explanation}" + (f"\n   hint: {hint}" if hint else "")
 
 
 def generate_with_critic(
     *, make, describe, ids_of, material: tuple[str, list[dict]], stage: str, model: str, manifest: RunManifest,
-    log: Callable[[str], None] = print,
+    log: Callable[[str], None] = print, critic_checks: str = "",
 ):
-    """make(extra) -> generated; describe(gen) -> text for the critic; ids_of(gen) -> ids.
-    Returns (gen, remaining_flags)."""
+    """make(extra) -> generated; describe(gen) -> text for the critic; ids_of(gen) -> ids; critic_checks: see
+    `critic_pass`. Returns (gen, remaining_flags)."""
     gen = make("")
-    verdicts = critic_pass(describe(gen), material[0], material[1], ids_of(gen), stage=f"{stage}_critic", model=model, manifest=manifest)
+    verdicts = critic_pass(describe(gen), material[0], material[1], ids_of(gen), stage=f"{stage}_critic", model=model, manifest=manifest, checks=critic_checks)
     bad = [v for v in verdicts if not v.ok]
     if bad:
         log(f"  {stage}: critic objected to {[v.id for v in bad]} — regenerating once")
         feedback = "\n\nA reviewer found problems in your previous attempt. Fix them:\n" + "\n".join(f"- {v.id}: {v.issue}" for v in bad)
         gen = make(feedback)
-        verdicts = critic_pass(describe(gen), material[0], material[1], ids_of(gen), stage=f"{stage}_critic2", model=model, manifest=manifest)
+        verdicts = critic_pass(describe(gen), material[0], material[1], ids_of(gen), stage=f"{stage}_critic2", model=model, manifest=manifest, checks=critic_checks)
         bad = [v for v in verdicts if not v.ok]
     return gen, [{"id": v.id, "issue": v.issue} for v in bad]

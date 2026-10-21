@@ -110,8 +110,15 @@ class TestPrompt:
     def test_keeps_the_questions_inside_the_slides_and_the_distractors_honest(self):
         p = script.bank_prompt(KUS[0], [], "x")
         for needle in (
-            "answerable from the slides below alone",
-            "never bring in an analogy",
+            "has never seen these slides",
+            "Never refer to a slide, diagram, figure",
+            "describe it fully in the stem",
+            "nothing from another domain",
+            "about the same length and equally specific",
+            "Do not give the wrong options away with absolute",
+            "Test one idea per question",
+            "no specialist notation anywhere",
+            "with nothing after it",
             "Never make a wrong option restate the claim",
             "must not be the same lookup",
             "do not always open with",
@@ -119,10 +126,11 @@ class TestPrompt:
             assert needle in p
 
     def test_lets_a_stem_carry_a_setup_but_always_ends_in_a_question(self):
-        assert "under 40 words" in script.BANK_SYSTEM and "under 28 words" not in script.BANK_SYSTEM
+        assert "at most 30 words" in script.BANK_SYSTEM and "under 28 words" not in script.BANK_SYSTEM
         assert "always ends with a question mark" in script.BANK_SYSTEM
 
     def test_does_not_ask_for_per_item_difficulty(self):
         assert "difficulty_prior" not in script.BANK_SYSTEM
+        assert "Write math" not in script.BANK_SYSTEM  # a pre-check has no notation to write
         assert "difficulty_prior" not in script.bank_prompt(KUS[0], [], "x")
         assert "Never use" in script.BANK_SYSTEM  # the rest of the item-writing rules are kept

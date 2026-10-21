@@ -14,8 +14,16 @@ from syllabyte_common.learner import Item, ItemTier
 from syllabyte_common.llm import structured, text_block
 from syllabyte_common.models import KnowledgeUnit, RunManifest, SlideRef
 
-from assessment_agent.bank import TIER_BLOOM, TIERS, BankMCQ
-from assessment_agent.bank_writing import BANK_SYSTEM, STAY_IN_SLIDES, TIER_TASKS, WRONG_OPTIONS
+from assessment_agent.bank import TIER_BLOOM, TIERS, BankMCQ, mcq_problems
+from assessment_agent.bank_writing import (
+    BANK_SYSTEM,
+    EXPLANATION_AND_HINT,
+    PRECHECK_CRITIC_CHECKS,
+    SAME_LENGTH_OPTIONS,
+    STAY_IN_SLIDES,
+    TIER_TASKS,
+    WRONG_OPTIONS,
+)
 from assessment_agent.item_writing import generate_with_critic, mcq_text
 
 
@@ -41,6 +49,10 @@ Questions already written on this unit (at any tier). Yours must ask about somet
 {STAY_IN_SLIDES}
 
 {WRONG_OPTIONS}
+
+{SAME_LENGTH_OPTIONS}
+
+{EXPLANATION_AND_HINT}
 
 Set `slides` to the slide numbers that support the question.
 
@@ -71,17 +83,18 @@ def write_question(
 
     def make(extra: str) -> QuestionGen:
         g = ask(extra)
-        if not g.question.stem.strip().endswith("?"):
-            log(f"  {qid}: the stem is not a question — asking again once")
-            g = ask(extra + "\n\nYour previous attempt had a problem. Fix it:\n- the stem must end with a question that tells the student what to do")
+        problems = mcq_problems(g.question)
+        if problems:
+            log(f"  {qid}: {problems} — asking again once")
+            g = ask(extra + "\n\nYour previous attempt had problems. Fix them:\n" + "\n".join(f"- {p}" for p in problems))
         return g
 
     gen, flags = generate_with_critic(
         make=make, describe=lambda g: mcq_text(qid, g.question), ids_of=lambda g: [qid], material=material,
-        stage=f"question_{qid}", model=critic_model, manifest=manifest, log=log,
+        stage=f"question_{qid}", model=critic_model, manifest=manifest, log=log, critic_checks=PRECHECK_CRITIC_CHECKS,
     )
-    if not gen.question.stem.strip().endswith("?"):
-        flags.append({"id": qid, "issue": "the stem must end with a question that tells the student what to do"})
+    # anything the retries did not fix stays visible with the saved question
+    flags += [{"id": qid, "issue": p} for p in mcq_problems(gen.question)]
     return gen, flags
 
 

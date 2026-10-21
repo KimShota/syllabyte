@@ -191,7 +191,7 @@ def stub_llm(monkeypatch):
         return UploadKUList(knowledge_units=out)
 
     def mcq(i: int) -> BankMCQ:
-        return BankMCQ(stem=f"Which is right {i}?", options=["a", "b", "c"], correct_index=0, explanation="Because.")
+        return BankMCQ(stem=f"Which is right {i}?", options=["one", "two", "three"], correct_index=0, explanation="Because.")
 
     def bank(**kw):
         return KuBankGen(basic=mcq(1), applied=mcq(2), advanced=mcq(3), slides=[1], ku_difficulty=0.5)
@@ -298,6 +298,33 @@ def test_a_question_job_writes_one_checked_question_at_the_tier(tmp_path, monkey
     assert [(r["deck_name"], r["slide_number"]) for r in item["source_refs"]] == [("d7", 2)]
     assert "What is alpha?" in seen["prompt"] and "at the applied tier" in seen["prompt"]
     assert out["flags"] == []
+
+
+def test_a_question_job_sends_back_a_question_a_student_could_not_take_before_the_lecture(tmp_path, monkeypatch):
+    from assessment_agent import question_writing
+
+    prompts, critic_systems = [], []
+    bad = BankMCQ(stem="The diagram nests boxes; which sit inside machine learning?", options=["one", "two", "three"], correct_index=0, explanation="E.")
+    good = BankMCQ(stem="Which three paradigms make up machine learning?", options=["one", "two", "three"], correct_index=0, explanation="E.")
+
+    def write(**kw):
+        prompts.append(kw["content"][0]["text"])
+        return question_writing.QuestionGen(question=bad if len(prompts) == 1 else good, slides=[1])
+
+    def critic(**kw):
+        critic_systems.append(kw["system"])
+        return item_writing.Verdicts(verdicts=[])
+
+    monkeypatch.setattr(question_writing, "structured", write)
+    monkeypatch.setattr(item_writing, "structured", critic)
+    _, deck = read_deck(make_pdf(tmp_path / "d.pdf", ["Alpha page"]), tmp_path / "w", "d8")
+    payload = {"item_id": "as-ku-a-basic-1", "ku": uku("ku-a", slides=[1]).model_dump(mode="json"), "prereq_titles": [], "tier": "basic", "beta": -1.0}
+    out = upload_jobs.run_question_job(payload, deck, log=lambda m: None)
+    assert len(prompts) == 2 and "material the student has not seen ('The diagram')" in prompts[1]
+    assert "has never seen these slides" in prompts[0]
+    assert out["item"]["stem"] == good.stem and out["flags"] == []
+    assert all("pre-lecture questions" in s for s in critic_systems)
+    assert all("the key does not bundle two" in s and "no stray" in s for s in critic_systems)
 
 
 def test_identical_pages_have_identical_keys(tmp_path):

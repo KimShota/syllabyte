@@ -11,22 +11,24 @@ from assessment_agent.bank import (
     bank_item_id,
     lecture_topic_id,
     order_tiers,
+    mcq_problems,
     stem_problems,
     tier_beta,
     validate_bank,
 )
 
 
-def mcq(correct: int = 1, tag: str = "x") -> BankMCQ:
+def mcq(correct: int = 1, tag: str = "item") -> BankMCQ:
+    # words, not single letters: a lone letter reads as notation to `mcq_problems`
     return BankMCQ(
-        stem=f"Stem {tag}?", options=[f"{tag}0", f"{tag}1", f"{tag}2"], correct_index=correct,
+        stem=f"Stem {tag}?", options=[f"{tag} zero", f"{tag} one", f"{tag} two"], correct_index=correct,
         explanation=f"Because {tag}.", hint=None,
     )
 
 
 def gen(ku_difficulty=0.0, correct=(1, 1, 1)) -> KuBankGen:
     return KuBankGen(
-        basic=mcq(correct[0], "b"), applied=mcq(correct[1], "a"), advanced=mcq(correct[2], "v"),
+        basic=mcq(correct[0], "basic"), applied=mcq(correct[1], "applied"), advanced=mcq(correct[2], "advanced"),
         slides=[3, 4], ku_difficulty=ku_difficulty,
     )
 
@@ -129,11 +131,84 @@ class TestValidation:
 class TestStems:
     def test_flags_a_stem_that_never_asks_anything(self):
         g = gen()
-        g.advanced.stem = "A colleague claims the chart proves causation."
+        g.advanced.stem = "A colleague claims a correlation proves causation."
         g.basic.stem = "What is a chart?  "
         assert stem_problems(g) == ["advanced: the stem must end with a question that tells the student what to do"]
 
     def test_a_question_after_a_claim_is_fine(self):
         g = gen()
-        g.applied.stem = "A colleague claims the chart proves causation; what is wrong with that?"
+        g.applied.stem = "A colleague claims a correlation proves causation; what is wrong with that?"
         assert stem_problems(g) == []
+
+
+class TestPrecheckQuestions:
+    """The check comes before the lecture, on a phone (2026-10-21 review of the ML trial's lecture 1 check)."""
+
+    def test_a_long_stem_is_sent_back(self):
+        m = mcq()
+        m.stem = " ".join(["word"] * 31) + "?"
+        assert mcq_problems(m) == ["the stem has 31 words; keep it to 30 or fewer"]
+        m.stem = " ".join(["word"] * 29) + "?"
+        assert mcq_problems(m) == []
+
+    def test_a_question_about_slides_the_student_has_not_seen_is_sent_back(self):
+        for stem in (
+            "The diagram nests boxes inside one another; which sit inside machine learning?",
+            "In the upper panel of the supervised learning figure, what does the symbol mean?",
+            "The house example outputs $340k; what changes if it also outputs rent?",
+        ):
+            m = mcq()
+            m.stem = stem
+            assert any("material the student has not seen" in p for p in mcq_problems(m)), stem
+
+    def test_a_case_described_in_the_stem_is_fine(self):
+        m = mcq()
+        m.stem = "A bank collects user profiles with the credit decision for each; what does supervised learning do?"
+        m.options = ["Hand-code the rules for each profile", "Learn the mapping from the examples", "Cluster the profiles"]
+        assert mcq_problems(m) == []
+
+    def test_a_right_option_that_gives_itself_away_by_length_is_sent_back(self):
+        m = mcq(correct=1)
+        m.options = ["Deductive reasoning", "Inductive: not logically forced, but simplicity makes it reasonable", "Unbiased"]
+        assert mcq_problems(m) == ["the right option is clearly the longest; make the three options about the same length and detail"]
+        m.options = ["Deductive: the observations prove it", "Inductive: likely, though not certain", "Unbiased: no assumption at all"]
+        assert mcq_problems(m) == []
+
+    def test_wrong_options_marked_out_by_absolute_words_are_sent_back(self):
+        m = mcq(correct=1)
+        m.options = ["Neural networks always need labels", "Clustering done with deep learning", "Deep learning is its own paradigm"]
+        assert mcq_problems(m) == [
+            "the wrong options use absolute words ('always') that the right one avoids; word all three in the same measured way"
+        ]
+        # an absolute word in the right option too is not a giveaway
+        m.options = ["Neural networks always need labels", "It cannot tell the groups apart alone", "Deep learning is its own paradigm"]
+        assert mcq_problems(m) == []
+
+    def test_specialist_notation_is_sent_back(self):
+        for stem, options in (
+            ("Under Mitchell's definition, which part is the experience E?", None),
+            ("What does supervised learning do with input-output pairs?", ["Hand-code the rules f", "Learn the mapping", "Cluster them"]),
+            ("Is the effect Y1 - Y0 observed for one person?", None),
+            ("What happens to θ after a right answer?", None),
+        ):
+            m = mcq()
+            m.stem = stem
+            if options:
+                m.options = options
+            assert any("specialist notation" in p for p in mcq_problems(m)), stem
+
+    def test_plain_words_numbers_and_articles_are_not_notation(self):
+        m = mcq()
+        m.stem = "A robot gets -50 points for a wall and a $340k house costs more; is Feature 1 enough, or do I need a model?"
+        m.options = ["A penalty steers it away", "It's the robot's choice", "Plan the route first"]
+        assert mcq_problems(m) == []
+
+    def test_an_explanation_or_hint_with_stray_characters_is_sent_back(self):
+        # seen in the ML trial: "…across categories.ics", "…can and cannot supply..", "…the molecule example.anything"
+        for hint in ("Think about the categories.ics", "Ask what the records can supply..", "Compare it with the example.anything"):
+            m = mcq()
+            m.hint = hint
+            assert mcq_problems(m) == ["the hint must be complete sentences ending in one full stop or question mark, with nothing after it"], hint
+        m = mcq()
+        m.hint, m.explanation = "Ask what kind of answer each model gives?", 'It is called "supervised."'
+        assert mcq_problems(m) == []
