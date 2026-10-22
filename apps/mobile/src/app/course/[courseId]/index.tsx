@@ -13,9 +13,9 @@ import { T } from "@/components/T";
 import { useScrollToFocus } from "@/components/useScrollToFocus";
 import { REMOTE } from "@/data/backend";
 import { COURSE, OTHER_COURSES, useCourseVersion, lectureNumber } from "@/data/course";
-import { courseLectures, type LectureNodeView } from "@/data/selectors";
+import { courseFeed, courseLectures, type LectureNodeView } from "@/data/selectors";
 import type { LectureStatus } from "@/data/types";
-import { useProgress } from "@/state/progress";
+import { usePrecheck, useProgress } from "@/state/progress";
 import { pickAndAddSlides } from "@/state/uploads";
 import { colors, fonts, radius, shadow, space } from "@/theme/tokens";
 
@@ -38,6 +38,9 @@ export default function CourseRoadmap() {
   // open where the student is: the lecture in progress, else the first one not completed
   const current = lectures.find((l) => l.status === "active") ?? lectures.find((l) => l.status !== "completed");
   const focusKey = !stub && current ? rowKey(current.lecture.n) : null;
+  // unknown until the check due (if any) loads, since the feed stops there
+  const check = usePrecheck();
+  const feedCount = check === undefined ? 0 : courseFeed(COURSE, check?.lecture_n ?? null).kus.length;
   const { scrollRef, contentRef, focusRef, onScrollLayout, onScrollBeginDrag, onFocusLayout } = useScrollToFocus(focusKey);
 
   return (
@@ -83,6 +86,18 @@ export default function CourseRoadmap() {
             </T>
           </View>
 
+          {/* every video so far as one swipe feed, up to the lecture whose check is due */}
+          {!stub && feedCount > 0 ? (
+            <Button
+              label={`Watch all · ${feedCount} ${feedCount === 1 ? "video" : "videos"}`}
+              icon="smart-display"
+              height={44}
+              accessibilityHint="Swipe through every video so far, in lecture order"
+              onPress={() => router.push({ pathname: "/course/[courseId]/feed", params: { courseId: COURSE.id } })}
+              style={{ marginTop: 16 }}
+            />
+          ) : null}
+
           {/* an uploaded course: slides are added here, all at once or a lecture at a time (plan/slide-uploads-plan.md) */}
           {REMOTE && !stub ? (
             <View style={styles.addSlides}>
@@ -105,10 +120,11 @@ export default function CourseRoadmap() {
                   }
                 }}
               />
-              <T variant="caption" color={addError ? colors.error : colors.onSurfaceVariant} style={{ textAlign: "center" }} accessibilityLiveRegion="polite">
-                {addError ??
-                  `${COURSE.lectures.length ? `${COURSE.lectures.length} ${COURSE.lectures.length === 1 ? "lecture" : "lectures"} so far. ` : ""}PDF or PowerPoint, one file per lecture. Add them all now or as the semester goes.`}
-              </T>
+              {addError ? (
+                <T variant="caption" color={colors.error} style={{ textAlign: "center" }} accessibilityLiveRegion="polite">
+                  {addError}
+                </T>
+              ) : null}
             </View>
           ) : null}
 

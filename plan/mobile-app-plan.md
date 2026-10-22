@@ -75,6 +75,14 @@ the study flows are on branch `study-flows` (2026-10-18). Real video files and A
   check before a lecture still has a close button, but its videos stay locked until it is done.
 - **The questionnaires** appear as cards on Home with "Not now", which hides one until the next launch. The check
   before a lecture is also a card on Home and on its lecture's roadmap.
+- **"Watch all": one swipe feed for the whole course** (2026-10-22, branch `course-feed`). A button on the course
+  roadmap opens `/course/[courseId]/feed`: every video so far, lecture by lecture in teaching order (no shuffle: KUs
+  build on each other), opening on the one up next; swiping down goes back to earlier and watched ones. It stops at
+  the lecture whose check is due, and its last page leads to that check; otherwise the last page says that's every
+  video so far. Same player as the lecture feed (quick check, speed, captions). Its own route, so every event from
+  it carries `screen = /course/<id>/feed` and the analysis can tell feed watching from lecture watching. Needs
+  advisor sign-off: H2's watch-through and drop-off now come from two ways of watching, and free scrolling may
+  change them; report them for both and for each source.
 
 ## Open questions for the planning round (roughly in order)
 

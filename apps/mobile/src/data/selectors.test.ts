@@ -67,6 +67,36 @@ describe.skipIf(!haveFixtures)("roadmap selectors on the real course", () => {
     expect(S.lectureFeed(lecture(1)).map((k) => k.id)).toEqual(withVideo(1));
   });
 
+  it("feeds the whole course in lecture order when no check is due", () => {
+    const feed = S.courseFeed(C.COURSE, null);
+    expect(feed.kus.map((k) => k.id)).toEqual(C.COURSE.lectures.flatMap((l) => S.lectureFeed(l).map((k) => k.id)));
+    expect(feed.lockedAt).toBeNull();
+  });
+
+  it("stops the course feed at the lecture whose check is due", () => {
+    const feed = S.courseFeed(C.COURSE, 3);
+    expect(feed.kus.map((k) => k.id)).toEqual([...withVideo(1), ...withVideo(2)]);
+    expect(feed.lockedAt?.n).toBe(3);
+    expect(S.courseFeed(C.COURSE, 1).kus).toEqual([]);
+  });
+
+  it("opens the course feed on the video up next, else the first not watched", () => {
+    const { kus } = S.courseFeed(C.COURSE, null);
+    const up = kus[kus.length - 1].id;
+    expect(kus[S.feedStart(kus, { watched: [], upNext: up })].id).toBe(up);
+    expect(kus[S.feedStart(kus, { watched: withVideo(1), upNext: null })].id).toBe(withVideo(2)[0]);
+    // the up-next is past where the feed stops: the first one not watched
+    const short = S.courseFeed(C.COURSE, 3).kus;
+    expect(short[S.feedStart(short, { watched: [withVideo(1)[0]], upNext: withVideo(3)[0] })].id).toBe(withVideo(1)[1]);
+    expect(S.feedStart(short, { watched: short.map((k) => k.id), upNext: null })).toBe(0);
+  });
+
+  it("names a video's lecture and section above its title", () => {
+    const ku = C.KUS[withVideo(2)[0]];
+    const section = lecture(2).sections.find((s) => s.kuIds.includes(ku.id))!;
+    expect(S.kuEyebrow(ku)).toBe(`Lecture ${C.lectureNumber(2)} · ${section.title}`);
+  });
+
   it("puts every KU of a lecture in exactly one section", () => {
     for (const l of C.COURSE.lectures.filter((x) => x.hasSlides)) {
       const placed = l.sections.flatMap((s) => s.kuIds);

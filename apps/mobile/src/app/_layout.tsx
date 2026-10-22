@@ -113,6 +113,7 @@ export default function RootLayout() {
         <Stack.Screen name="quiz/checked" options={{ animation: "fade", gestureEnabled: false }} />
         <Stack.Screen name="study/[id]" options={{ animation: "slide_from_bottom" }} />
         <Stack.Screen name="player/[kuId]" options={{ animation: "slide_from_bottom", contentStyle: { backgroundColor: "#000" } }} />
+        <Stack.Screen name="course/[courseId]/feed" options={{ animation: "slide_from_bottom", contentStyle: { backgroundColor: "#000" } }} />
       </Stack>
       <ConnectionBanner pathname={pathname} />
     </SafeAreaProvider>

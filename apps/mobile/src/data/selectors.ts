@@ -3,7 +3,7 @@
  * reports it (state/progress.ts): which KUs are watched, and the playlist's "up next". A KU without a video is
  * "drafting" (its video is still being made from the slides).
  */
-import { COURSE, KUS } from "./course";
+import { COURSE, KUS, lectureNumber } from "./course";
 import type { CourseDef, Ku, KuStatus, LectureDef, LectureStatus } from "./types";
 
 export interface Progress {
@@ -109,6 +109,39 @@ export function lectureFeed(lecture: LectureDef): Ku[] {
   return lectureKuIds(lecture)
     .filter((id) => !isDrafting(id))
     .map((id) => KUS[id]);
+}
+
+export interface CourseFeed {
+  /** every KU with a video so far, lecture by lecture in teaching order */
+  kus: Ku[];
+  /** the lecture the feed stops at because its check isn't done; its videos and every later lecture's wait */
+  lockedAt: LectureDef | null;
+}
+
+/** The swipe feed for the whole course: every lecture's feed in turn, up to the lecture whose check is due. */
+export function courseFeed(course: CourseDef, checkLectureN: number | null): CourseFeed {
+  const kus: Ku[] = [];
+  for (const lecture of course.lectures) {
+    if (lecture.n === checkLectureN) return { kus, lockedAt: lecture };
+    kus.push(...lectureFeed(lecture));
+  }
+  return { kus, lockedAt: null };
+}
+
+/** Where a feed opens: the KU up next if it is in the feed, else the first one not watched, else the first. */
+export function feedStart(kus: readonly Ku[], p: Progress): number {
+  const next = firstUpNext(p);
+  const at = next ? kus.findIndex((k) => k.id === next.id) : -1;
+  if (at >= 0) return at;
+  return Math.max(0, kus.findIndex((k) => !p.watched.includes(k.id)));
+}
+
+/** The line above a video's title in the player: "Lecture 3 · <its section>". */
+export function kuEyebrow(ku: Ku): string {
+  const lecture = findLecture(ku.lectureN);
+  if (!lecture) return "";
+  const section = lecture.sections.find((s) => s.kuIds.includes(ku.id))?.title ?? lecture.title;
+  return `Lecture ${lectureNumber(lecture.n)} · ${section}`;
 }
 
 export function findLecture(n: number): LectureDef | undefined {
