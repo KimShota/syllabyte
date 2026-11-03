@@ -21,6 +21,23 @@ dependencies = [
     "boto3>=1.34.153",
     "openai>=3.21.0",
     "catsim>=0.21.0",
+    "manim-chemistry>=0.5.1",
+    "manim-circuit>=0.0.3",
+    "manim-eng>=0.1.0",
+    "manim-dsa>=0.4.0",
+    "manim-fa-physics>=0.2.0",
+    "manim-voiceover>=0.4.0",
+    "manim-neural-network>=0.1.0",
+    "manim-ml>=0.0.24",
+    "manim-3d>=0.1.1",
+    "manim-astronomy>=0.0.5",
+    "manim-cad-drawing-utils>=0.0.5",
+    "manim-compass>=0.1.3",
+    "manim-straightedge-compass>=0.1.1",
+    "manim-automata>=0.2.14",
+    "manim-sequence-diagram>=0.1.0",
+    "manim-derivative-plotter>=1.0.7",
+    "manim-extensions[algorithm,gearbox,physics]>=1.0.5",
 ]
 
 [project.optional-dependencies]

@@ -64,6 +64,7 @@ syllabyte/
 3. **Kokoro TTS** (local, offline, no API key):
    ```bash
    brew install espeak-ng
+   brew install sox   # used by the manim-voiceover plugin; without it every `import manim` warns
    ```
    `uv sync` already installs the `kokoro` Python package. macOS `say` works
    as a zero-install fallback (`--tts say`); ElevenLabs works if you set
