@@ -154,6 +154,13 @@ object storage). It is not required for the Week-1 file-based pipeline above.
 - `ingestion_agent/ingestion_agent/worker.py` is the **upload worker**: it claims
   jobs from `apps/server` (read a syllabus, read and place a deck, write questions)
   and posts the results; see `apps/server/README.md`. It does not make videos.
+- Generated scenes may use four Manim plugins: fields (`manim_fa_physics`),
+  chemistry (`manim_chemistry`, molecules via `animation_agent/molecules.py`),
+  circuits (`manim_circuit`) and data structures (`manim_dsa`). The codegen prompt
+  lists each one's classes, rules and a tested example (`animation_agent/plugins.py`,
+  `examples/plugins/`). Molecules are fetched from PubChem once, before rendering,
+  into `~/.cache/syllabyte/molecules` (`SYLLABYTE_MOLECULE_DIR`). To re-render the
+  examples: `SYLLABYTE_RENDER_TESTS=1 uv run pytest tests/test_plugins.py`.
 - `animation_agent/animation_agent/worker.py` is still a Celery stub. Videos are
   made as plain Python by `scripts/video_jobs.py` / `scripts/generate_shorts.py`
   (see "Making videos"), not through Celery/Docker.

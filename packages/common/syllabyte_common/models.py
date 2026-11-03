@@ -208,6 +208,10 @@ class RenderResult(BaseModel):
     # after any successful LLM-tier render — see animation_agent/visual_critic.py).
     visual_repair_applied: bool = False
     visual_issues_remaining: list[str] = Field(default_factory=list)
+    # Plugin names (`module.Name`, see animation_agent/plugins.py) the final scene imports, and
+    # every one any attempt imported: which plugins get used, and which keep failing.
+    plugins_used: list[str] = Field(default_factory=list)
+    plugins_tried: list[str] = Field(default_factory=list)
 
 
 # Thin list wrappers so scripts/generate_shorts.py can round-trip

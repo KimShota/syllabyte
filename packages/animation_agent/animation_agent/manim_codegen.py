@@ -31,6 +31,7 @@ from animation_agent.manim_prompt import (
     build_layout_repair_prompt,
     build_repair_prompt,
 )
+from animation_agent.plugins import FORBIDDEN_PLUGIN_NAMES, allowed_imports
 
 FORBIDDEN_NAMES = {
     "os", "sys", "subprocess", "shutil", "socket", "requests", "urllib",
@@ -81,6 +82,8 @@ def _static_check(code: str) -> None:
     the caller should treat it the same as any other render failure and let
     the repair ladder handle it."""
     tree = ast.parse(code)
+    plugin_imports = allowed_imports()
+    forbidden = FORBIDDEN_NAMES | FORBIDDEN_PLUGIN_NAMES
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -91,11 +94,22 @@ def _static_check(code: str) -> None:
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             root = module.split(".")[0]
-            if root != "manim" and module != "animation_agent.layout":
+            if module in plugin_imports:
+                # A plugin (or the molecule helper): only the names its card offers, by name.
+                offered = plugin_imports[module]
+                for alias in node.names:
+                    if alias.name == "*":
+                        raise UnsafeCodeError(f"import names from {module} one by one, not with *")
+                    if alias.name not in offered:
+                        raise UnsafeCodeError(
+                            f"{module}.{alias.name} is not one of the plugin names offered; "
+                            f"use one of: {', '.join(sorted(offered))}"
+                        )
+            elif root != "manim" and module != "animation_agent.layout":
                 raise UnsafeCodeError(f"forbidden import: {module}")
-        elif isinstance(node, ast.Name) and node.id in FORBIDDEN_NAMES:
+        elif isinstance(node, ast.Name) and node.id in forbidden:
             raise UnsafeCodeError(f"forbidden name used: {node.id}")
-        elif isinstance(node, ast.Attribute) and node.attr in FORBIDDEN_NAMES:
+        elif isinstance(node, ast.Attribute) and node.attr in forbidden:
             raise UnsafeCodeError(f"forbidden attribute access: .{node.attr}")
 
 

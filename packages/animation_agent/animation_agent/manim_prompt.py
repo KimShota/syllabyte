@@ -15,6 +15,8 @@ from pathlib import Path
 
 from syllabyte_common.models import Segment
 
+from animation_agent.plugins import plugin_cards, plugin_cards_for
+
 EXAMPLES_DIR = Path(__file__).parent / "examples"
 
 
@@ -67,14 +69,16 @@ GRID_DIAGRAM = """\
 """
 
 ALLOWED_API = """\
-Allowed imports: `from manim import *` and \
-`from animation_agent.layout import GridLayoutScene` — nothing else. No os, \
-sys, subprocess, requests, open(), eval(), exec(), or __import__.
+Allowed imports: `from manim import *`, \
+`from animation_agent.layout import GridLayoutScene`, and the plugin names \
+listed under Plugins below, imported by name — nothing else. No os, sys, \
+subprocess, requests, open(), eval(), exec(), or __import__.
 
 Allowed Mobjects: Text, MathTex, Tex, Axes, NumberPlane, NumberLine, Dot, \
 Line, DashedLine, Arrow, CurvedArrow, DoubleArrow, Rectangle, \
 RoundedRectangle, Square, Circle, Triangle, Polygon, Arc, VGroup, \
-BraceLabel, SurroundingRectangle, Brace.
+BraceLabel, SurroundingRectangle, Brace — plus the plugin classes listed \
+under Plugins below.
 
 Allowed animations: Write, FadeIn, FadeOut, Create, Uncreate, Transform, \
 ReplacementTransform, Indicate, Circumscribe, Flash, GrowArrow, \
@@ -88,10 +92,21 @@ self.remove(...), self.setup_grid(...), self.place_at_grid(...), \
 self.place_in_area(...), self.end_beat(...) (the last four come from \
 GridLayoutScene — see Layout and Timing below).
 
-Forbidden: any external file/network access, any Manim plugin, custom \
-LaTeX preambles, ImageMobject (no image assets are available), \
+Forbidden: any external file/network access, any Manim plugin or plugin \
+name not listed under Plugins, custom LaTeX preambles, ImageMobject (no image assets are available), \
 ThreeDScene / 3D mobjects (this is a 2D short-form format).\
 """
+
+PLUGINS_INTRO = """\
+Plugins: when a beat shows one of the things below (a magnetic or electric \
+field, a molecule or reaction, a circuit, an array/stack/graph/tree), draw it \
+with the plugin rather than building it from circles and lines — the plugin \
+draws it correctly. Each plugin lists every class you may import from it, \
+with its arguments and methods; import names one by one (never `import *`), \
+and place plugin objects with place_at_grid/place_in_area like any other. \
+Everything else in this prompt (grid, legibility, beats) still applies.\
+"""
+
 
 def _build_system_prompt(class_name: str) -> str:
     # Built directly as an f-string per call (rather than a stored template
@@ -165,6 +180,10 @@ fill.
 {GRID_DIAGRAM}
 {ALLOWED_API}
 
+{PLUGINS_INTRO}
+
+{plugin_cards()}
+
 Here are 2 example scenes showing the expected style, API usage, beat \
 structure, and frame-fitting discipline (their class names, beats, and \
 durations are just for illustration — use the ones you're given below):
@@ -203,13 +222,13 @@ before the sentence that talks about it.
 construct(): nothing may play or wait after it.
 
 Content fidelity (CRITICAL): render every beat's visual literally, using \
-only the allowed Mobjects — do not substitute a different concept (e.g. \
+only the allowed Mobjects and plugin classes — do not substitute a different concept (e.g. \
 do not draw a generic function plot/equation/graph unless a visual \
 explicitly describes one).
 
 Output format: `from manim import *` and \
-`from animation_agent.layout import GridLayoutScene`, then a single Python \
-class named `{class_name}(GridLayoutScene)` with a `construct(self)` \
+`from animation_agent.layout import GridLayoutScene` (plus any plugin imports \
+you use), then a single Python class named `{class_name}(GridLayoutScene)` with a `construct(self)` \
 method. No other top-level code.
 """
 
@@ -252,6 +271,16 @@ Class name: {class_name}
     return system, user
 
 
+def _plugin_reference(code: str) -> str:
+    cards = plugin_cards_for(code)
+    if not cards:
+        return ""
+    return (
+        "\nThe scene uses these plugins; use only the classes, arguments and methods listed for them "
+        "(and follow their rules):\n\n" + cards + "\n"
+    )
+
+
 def build_repair_prompt(
     code: str, traceback_text: str, segment: Segment, beat_durations: list[float], class_name: str,
 ) -> str:
@@ -270,7 +299,7 @@ ONLY the corrected Python source code, no explanation.
 
 The beats this scene must depict:
 {format_beats(segment, beat_durations)}
-
+{_plugin_reference(code)}
 --- CODE ---
 {code}
 
@@ -307,7 +336,7 @@ Output ONLY the corrected Python source code, no explanation.
 
 The beats this scene must depict:
 {format_beats(segment, beat_durations)}
-
+{_plugin_reference(code)}
 --- CODE ---
 {code}
 

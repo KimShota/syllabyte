@@ -58,6 +58,8 @@ from animation_agent.manim_codegen import (
     repair_scene,
 )
 from animation_agent.manim_config import write_manim_cfg
+from animation_agent.molecules import prefetch_molecules
+from animation_agent.plugins import plugin_names_used
 from animation_agent.templates import build_template_scene
 from animation_agent.visual_critic import apply_visual_repair, critique_render
 
@@ -99,6 +101,8 @@ def _try_render(
         problem = check_beat_structure(code, n_beats)
         if problem is None and check_formulas:
             problem = check_text_formulas(code)
+        if problem is None:
+            problem = prefetch_molecules(code)  # the render itself never touches the network
     except SyntaxError as e:
         problem = f"SyntaxError: {e}"
     if problem:
@@ -238,6 +242,13 @@ def render_segment(
     # next repair then fixes layout instead of a crash.
     last_layout: LayoutReport | None = None
     best: _Candidate | None = None
+    tried: list[str] = []
+
+    def note_plugins(code: str) -> None:
+        try:
+            tried.extend(n for n in plugin_names_used(code) if n not in tried)
+        except SyntaxError:
+            pass
 
     def finish(tier: RenderTier, code: str, mp4_path: Path, layout: LayoutReport) -> RenderResult:
         mp4_path, repaired, issues = _visual_critic_pass(
@@ -248,6 +259,7 @@ def render_segment(
             segment_index=segment_index, tier=tier, attempts=attempts,
             render_seconds=time.monotonic() - start, video_path=str(mp4_path),
             visual_repair_applied=repaired, visual_issues_remaining=issues,
+            plugins_used=plugin_names_used(code), plugins_tried=tried,
         )
 
     def attempt(code: str, tier: RenderTier) -> RenderResult | None:
@@ -255,6 +267,7 @@ def render_segment(
         passes the layout audit, else records why not and returns None."""
         nonlocal attempts, last_error, last_layout, best
         attempts += 1
+        note_plugins(code)
         ok, error, mp4_path, layout = _try_render(
             render_dir, code, class_name, quality, n_beats, duration,
         )
@@ -325,7 +338,7 @@ def render_segment(
         return RenderResult(
             segment_index=segment_index, tier="template_fallback", attempts=attempts,
             render_seconds=time.monotonic() - start, video_path=str(mp4_path),
-            error=f"LLM tiers failed; last LLM error: {last_error[:500]}",
+            error=f"LLM tiers failed; last LLM error: {last_error[:500]}", plugins_tried=tried,
         )
 
     # Even the template failed — this should only happen for an
@@ -334,5 +347,5 @@ def render_segment(
     return RenderResult(
         segment_index=segment_index, tier="template_fallback", attempts=attempts,
         render_seconds=time.monotonic() - start, video_path=None,
-        error=f"template fallback also failed: {template_error[:1000]}",
+        error=f"template fallback also failed: {template_error[:1000]}", plugins_tried=tried,
     )

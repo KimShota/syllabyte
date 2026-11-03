@@ -41,7 +41,7 @@ from syllabyte_common.models import CourseCorpus, KnowledgeUnit
 # Bump when a change should remake videos already in the cache (a new prompt,
 # model or effort); everything made under an older version is then made again
 # on its next request.
-PIPELINE_VERSION = "2026-11-03"  # the script critic now sees the slide images
+PIPELINE_VERSION = "2026-11-03"  # the script critic sees slide images; scenes may use Manim plugins
 
 # A failed video is retried on a later request until it has been tried this
 # many times; after that it stays failed and the app shows it as unavailable.

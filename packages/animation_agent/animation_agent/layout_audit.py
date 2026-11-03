@@ -29,7 +29,9 @@ beat, so it lives in layout.py.)
 
 Deliberately allowed: a label fully inside a box, a dot sitting on
 anything (dots are markers), arrows and lines touching or crossing shapes,
-and translucent or outline-only shapes overlapping (Venn diagrams).
+and translucent or outline-only shapes overlapping (Venn diagrams). Vector
+fields (a magnet's or charge's field, from manim or a plugin) are a
+background: they fill the frame by design, so they are not checked at all.
 """
 
 from __future__ import annotations
@@ -52,6 +54,7 @@ from manim import (
     Text,
     VDict,
     VGroup,
+    VectorField,
     VMobject,
 )
 
@@ -171,7 +174,7 @@ def collect_units(top_level: list[Mobject], names: dict[int, str]) -> list[_Unit
     ordered = sorted(enumerate(top_level), key=lambda p: (p[1].z_index, p[0]))
 
     def visit(mob: Mobject, context: str | None, top: str) -> None:
-        if id(mob) in seen:
+        if id(mob) in seen or isinstance(mob, VectorField):
             return
         seen.add(id(mob))
         name = names.get(id(mob))
