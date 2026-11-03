@@ -160,6 +160,26 @@ class TestWithCritique:
         write_script_with_critique(KU, CORPUS)
         assert c.calls[0]["system"] == CRITIQUE_SYSTEM_PROMPT and c.calls[0]["stage"] == "critique"
 
+    def test_the_critic_sees_the_slide_images_the_writer_saw(self, llm, tmp_path):
+        png = tmp_path / "slide1.png"
+        png.write_bytes(b"\x89PNG fake")
+        deck = SlideDeck(name="slides", source_path="p", slides=[Slide(deck_name="slides", slide_number=1, text="Slide text", image_path=str(png))])
+        corpus = CORPUS.model_copy(update={"decks": [deck]})
+        w = llm(script())
+        c = llm(GOOD, where=critic)
+        write_script_with_critique(KU, corpus, level=2)
+        writer_images = [b for b in w.calls[0]["content"] if b["type"] == "image"]
+        critic_content = c.calls[0]["content"]
+        assert len(writer_images) == 1 and [b for b in critic_content if b["type"] == "image"] == writer_images
+        assert "attached as images" in critic_content[0]["text"]
+
+    def test_without_slide_images_the_critic_is_not_told_of_any(self, llm):
+        llm(script())
+        c = llm(GOOD, where=critic)
+        write_script_with_critique(KU, CORPUS, level=2)
+        assert [b["type"] for b in c.calls[0]["content"]] == ["text"]
+        assert "attached as images" not in c.calls[0]["content"][0]["text"]
+
     def test_skipping_the_critic_makes_no_critic_call(self, llm):
         llm(script())
         llm(where=critic)  # an empty queue: any call would fail

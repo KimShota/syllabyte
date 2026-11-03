@@ -38,12 +38,14 @@ def critique(
     stage: str = "critique",
 ) -> CritiqueScore:
     """Scores `script` (or a BaseScript, which has the same shape) against the slides it cites."""
-    text_context, _ = gather_source_material(corpus, ku)
-    prompt = build_critique_prompt(script.model_dump_json(indent=2), text_context)
+    # The critic sees the same slides the writer saw: text and slide images. With text alone it
+    # marks anything shown only in a diagram as invented and forces a needless rewrite.
+    text_context, image_blocks = gather_source_material(corpus, ku)
+    prompt = build_critique_prompt(script.model_dump_json(indent=2), text_context, has_images=bool(image_blocks))
 
     return structured(
         schema=CritiqueScore,
-        content=[text_block(prompt)],
+        content=[text_block(prompt), *image_blocks],
         system=system,
         stage=stage,
         ku_id=ku.id,

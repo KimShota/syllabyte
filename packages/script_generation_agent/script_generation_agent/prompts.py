@@ -211,11 +211,16 @@ missing worked example).
 """
 
 
-def build_critique_prompt(script_json: str, source_material: str) -> str:
+def build_critique_prompt(script_json: str, source_material: str, *, has_images: bool = False) -> str:
+    images = (
+        "\nThe same slides are attached as images, in this order. Anything they show (diagrams, "
+        "figures, labels, numbers) is source material too, even when it is not in the text above.\n"
+        if has_images else ""
+    )
     return f"""\
 Source material the script must be grounded in:
 {source_material}
-
+{images}
 Script to critique (JSON):
 {script_json}
 
