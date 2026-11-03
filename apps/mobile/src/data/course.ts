@@ -181,6 +181,8 @@ export function useCourseVersion(): number {
   return useSyncExternalStore(subscribe, () => version, () => version);
 }
 
+const DEMO_VIDEO_KUS = new Set((process.env.EXPO_PUBLIC_VIDEO_KUS ?? "").split(",").filter(Boolean));
+
 /** The uploaded course as the screens draw it: its lectures in order, one section each, KUs without videos yet. */
 export function uploadedCourseDef(course: Course, lectures: LectureStateView[]): { course: CourseDef; kus: Record<string, Ku> } {
   const title = (n: number) => lectures.find((l) => l.n === n)?.title ?? `Lecture ${n}`;
@@ -188,7 +190,11 @@ export function uploadedCourseDef(course: Course, lectures: LectureStateView[]):
     course.kus.map((k): [string, Ku] => [
       k.id,
       {
-        id: k.id, title: k.title, shortTitle: k.short_title, lectureN: k.lecture_n, videoId: k.video_id, slides: [1, 1], durationS: STAND_IN_S,
+        id: k.id, title: k.title, shortTitle: k.short_title, lectureN: k.lecture_n,
+        // DEMO ONLY: EXPO_PUBLIC_VIDEO_KUS=ku-a,ku-b plays those KUs' generated videos from the media server
+        videoId: k.video_id ?? (DEMO_VIDEO_KUS.has(k.id) ? k.id : null),
+        videoUri: DEMO_VIDEO_KUS.has(k.id) ? mediaUrl(`/fixtures/${k.id}/video.mp4`) : undefined,
+        slides: [1, 1], durationS: STAND_IN_S,
         scene: statement(title(k.lecture_n), k.short_title, []), transcript: [],
       },
     ]),
