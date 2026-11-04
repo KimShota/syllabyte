@@ -98,10 +98,12 @@ ThreeDScene / 3D mobjects (this is a 2D short-form format).\
 """
 
 PLUGINS_INTRO = """\
-Plugins: when a beat shows one of the things below (a magnetic or electric \
-field, a molecule or reaction, a circuit, an array/stack/graph/tree), draw it \
-with the plugin rather than building it from circles and lines — the plugin \
-draws it correctly. Each plugin lists every class you may import from it, \
+Plugins: when a beat's visual names one of the things below (a magnetic or \
+electric field, a named molecule or reaction, a circuit, an array/stack/graph/tree), \
+you must draw it with the plugin, not build it from circles and lines — the \
+plugin draws it correctly. Plugin objects keep their own colours (atom colours, \
+a magnet's red N and blue S) even where the colour key names them; colour \
+everything else by the key. Each plugin lists every class you may import from it, \
 with its arguments and methods; import names one by one (never `import *`), \
 and place plugin objects with place_at_grid/place_in_area like any other. \
 Everything else in this prompt (grid, legibility, beats) still applies.\
@@ -242,7 +244,7 @@ def format_colour_key(segment: Segment) -> str:
     return (
         "Colour key for the whole video (the other segments use it too, so the viewer can follow these things "
         f"across segments): {pairs}. Draw each of these things in exactly its colour, in every beat, and draw "
-        "nothing else in these colours.\n\n"
+        "nothing else in these colours (plugin objects keep their own colours).\n\n"
     )
 
 

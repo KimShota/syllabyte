@@ -63,6 +63,13 @@ class TestPrompts:
         assert "The viewer's level" in p and f"Level {level}" in p
         assert "Never narrate the animation" in p and "Stay with what the slides state" in p
 
+    @pytest.mark.parametrize("level", [1, 2, 3])
+    def test_a_level_prompt_tells_the_writer_what_the_animator_draws_accurately(self, level):
+        p = level_system_prompt(level)
+        assert "draws accurately" in p and "by its compound name" in p and "field lines" in p and "circuit diagram" in p
+        assert "leave them out of the `colour_key`" in p
+        assert "using only simple shapes" not in p and "using only simple shapes" in SCRIPT_SYSTEM_PROMPT
+
     def test_the_level_shapes_language_objective_and_the_second_deliver_segment(self):
         l1, l2, l3 = (level_system_prompt(n, ["Earlier idea"]) for n in (1, 2, 3))
         assert "plain, everyday words" in l1 and "simple analogy" in l1 and "Remember/Understand" in l1 and "FULL, step-by-step worked example" in l1

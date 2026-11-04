@@ -79,11 +79,36 @@ what happens to them, e.g.:
       GOOD: "The 'reward' bar under arm 2 grows to twice the height of the others"
       BAD:  "Show the text 'Actions change the state'"  (a caption, not a visual)
       BAD:  "Illustrate the concept of delayed reward"  (not concrete)
+"""
+
+_ONLY_SIMPLE_SHAPES = """\
   - Each visual must directly depict this KU's specific content using only \
 simple shapes/lines/arrows/dots/short labels/equations — never a generic \
 stand-in (e.g. do not describe an unrelated function plot unless the KU is \
 literally about that function).
 """
+
+# The level prompts' version of the last rule: the animator can also draw these with Manim plugins
+# (animation_agent/plugins.py), but only when the visual names them, so the writer has to know they exist.
+_DRAWN_ACCURATELY = """\
+  - Each visual must directly depict this KU's specific content — never a generic stand-in (e.g. do not describe \
+an unrelated function plot unless the KU is literally about that function). Draw it with simple shapes/lines/\
+arrows/dots/short labels/equations, or with the things below, which the animator draws accurately. When the \
+content is one of them, name it in the visual:
+      - a molecule, by its compound name, drawn ball-and-stick with labelled atoms; its bonds can be highlighted, \
+broken or formed and its atoms moved ("a bromomethane molecule; its C–Br bond fades"). When the slides give only \
+a general structure such as R–X, use one real compound built from groups the slides name and keep the general \
+formula as a label. A lone ion (Br⁻) is a labelled circle.
+      - a bar magnet, point charges or a current-carrying wire with their field lines; lenses and light rays; \
+standing waves; pendulums.
+      - a circuit diagram: sources, resistors, capacitors, inductors, op-amps, ground and wires.
+      - an array, stack, graph or tree whose boxes or nodes can be highlighted, swapped, pushed or popped.
+    These keep their standard colours (atom colours, a magnet's red N and blue S), so leave them out of the \
+`colour_key`.
+"""
+
+_BEATS_AND_VISUALS += _ONLY_SIMPLE_SHAPES  # unchanged for the original prompt
+_LEVEL_BEATS_AND_VISUALS = _BEATS_AND_VISUALS.removesuffix(_ONLY_SIMPLE_SHAPES) + _DRAWN_ACCURATELY
 
 SCRIPT_SYSTEM_PROMPT = _INTRO + _STRUCTURE_FULL + _HARD_FULL + _BEATS_AND_VISUALS
 
@@ -165,7 +190,7 @@ def level_system_prompt(level: int, prereq_titles: list[str] | None = None) -> s
         else "This idea builds on nothing earlier in the course, so do not add a recap."
     )
     brief = LEVEL_BRIEF[level].format(prereq_line=prereq_line)
-    return _INTRO + _STRUCTURE_FULL + _HARD_FULL + "The viewer's level\n" + brief + "\n" + _LEVEL_RULES + _BEATS_AND_VISUALS
+    return _INTRO + _STRUCTURE_FULL + _HARD_FULL + "The viewer's level\n" + brief + "\n" + _LEVEL_RULES + _LEVEL_BEATS_AND_VISUALS
 
 
 CRITIQUE_SYSTEM_PROMPT = """\

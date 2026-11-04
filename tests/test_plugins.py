@@ -66,7 +66,7 @@ class TestCards:
     def test_the_prompt_no_longer_forbids_every_plugin(self):
         prompt = _build_system_prompt("Seg0")
         assert "any Manim plugin or plugin name not listed under Plugins" in prompt
-        assert "Plugins: when a beat shows" in prompt
+        assert "Plugins: when a beat's visual names" in prompt and "keep their own colours" in prompt
 
     @pytest.mark.parametrize("example", EXAMPLES, ids=lambda p: p.name)
     def test_each_example_is_in_its_card_and_passes_the_checks(self, example):
