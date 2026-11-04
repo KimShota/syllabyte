@@ -174,6 +174,11 @@ def _simulate(draws: list[list[str]], lines: list[str] | None) -> tuple[list[str
         if lines is not None and b <= len(lines):
             problems += _count_problems(b, lines[b - 1], live)
             problems += _echo_problems(b, lines[b - 1], calls)
+            if calls and all(_only_text(text) for text in calls):
+                problems.append(f"beat {b}: its calls only put text on screen (a note, a cleared highlight); the "
+                                "reviewer scores a text-only picture 4 of 10 at most. Show the line in the diagram "
+                                "itself (highlight, point, move, add, apply, grey out), or leave the beat [] to "
+                                "keep the picture")
     if lines is not None and used and all(o.template == "Note" for o in _created(draws)):
         problems.append("the segment shows only Notes: every segment shows a diagram (a list, a grid, a formula), "
                         "and a Note is a label or a question beside it")
@@ -203,6 +208,22 @@ def _count_problems(b: int, line: str, live: dict[str, _Live]) -> list[str]:
             out.append(f'beat {b}: the line says "{phrase}" but the list on screen has {shown} cells; draw '
                        f"{n} values so the picture matches the words")
     return out
+
+
+# Calls that change only text, or take something away, without drawing the idea.
+TEXT_ONLY_ACTIONS = {"note", "say", "clear", "unpoint", "counter", "clear_ghosts"}
+
+
+def _only_text(text: str) -> bool:
+    try:
+        tree = ast.parse(_as_raw_strings(text.strip()))
+        stmt = tree.body[0]
+    except (CallError, SyntaxError, IndexError):
+        return False
+    if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Call) and isinstance(stmt.value.func, ast.Name):
+        return stmt.value.func.id == "Note"
+    call = getattr(stmt, "value", None)
+    return isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr in TEXT_ONLY_ACTIONS
 
 
 def _words(text: str) -> list[str]:

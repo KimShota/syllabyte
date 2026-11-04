@@ -14,10 +14,9 @@ Responsibilities:
   - Accumulate token usage into a RunManifest so scripts/report.py can print
     a cost/time breakdown per run.
 
-Model default: claude-opus-5 (this project's default per its cost budget
-line item — "Anthropic Claude API ... relies on Claude Opus and Claude
-Sonnet"). Callers may pass model="claude-sonnet-5" for cheaper/faster calls
-(e.g. the critique sub-agent) if desired.
+Model default: claude-sonnet-5-5 for every stage (2026-11-05: chosen to make
+each video in under a minute; the project's budget line names "Claude Opus and
+Claude Sonnet"). Callers may still pass model="claude-opus-5" for a stage.
 """
 
 from __future__ import annotations
@@ -37,7 +36,20 @@ from syllabyte_common.models import LLMCallRecord, RunManifest
 
 load_dotenv()
 
-DEFAULT_MODEL = "claude-opus-5"
+DEFAULT_MODEL = "claude-sonnet-5-5"
+
+# Thinking effort for every Anthropic call that doesn't set one (low/medium/high/xhigh/max). The models default
+# to high, which on Sonnet 5.5 made the script writer think for 7-15k tokens per ~2k-token script (48-107 s a
+# call); low keeps each video near a minute (2026-11-05). Set LLM_EFFORT to change it, or "default" for the
+# model's own default.
+DEFAULT_EFFORT = "low"
+
+
+def _effort(model: str, effort: str | None) -> str | None:
+    if model.startswith("claude-haiku-4"):
+        return None  # no effort setting
+    chosen = effort or os.environ.get("LLM_EFFORT") or DEFAULT_EFFORT
+    return None if chosen == "default" else chosen
 
 # Anthropic first-party pricing, $ per million tokens (input, output).
 # Used by RunManifest.total_cost_usd() for the Week-1 cost report.
@@ -279,8 +291,8 @@ def structured(
         "messages": [{"role": "user", "content": content}],
         "output_config": {"format": {"type": "json_schema", "schema": transform_schema(TypeAdapter(schema).json_schema())}},
     }
-    if effort is not None:
-        kwargs["output_config"]["effort"] = effort
+    if (chosen := _effort(model, effort)) is not None:
+        kwargs["output_config"]["effort"] = chosen
     if system is not None:
         kwargs["system"] = system
 
@@ -335,8 +347,8 @@ def text(
     }
     if system is not None:
         kwargs["system"] = system
-    if effort is not None:
-        kwargs["output_config"] = {"effort": effort}
+    if (chosen := _effort(model, effort)) is not None:
+        kwargs["output_config"] = {"effort": chosen}
 
     # Streamed so callers can give thinking a large max_tokens: the SDK
     # refuses non-streaming requests big enough to risk an HTTP timeout.

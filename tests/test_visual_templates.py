@@ -169,7 +169,7 @@ def test_add_draws_fixes_a_bad_segment_at_once_then_falls_back_to_code(monkeypat
     out = script_writer.add_draws(script, ku_id="ku-eigen")
     assert sorted(calls).count("fix_draws") == 2  # one per bad segment, no second round
     assert out.segments[3].beats[1].draw == ["a.highlight(indices=[2])"]
-    assert out.segments[3].beats[1].visual == "Cell 2 (value 4) turns yellow."
+    assert out.segments[3].beats[1].visual == "The cell holding 4 turns yellow."
     assert all(b.draw == [] for b in out.segments[4].beats)  # still wrong: left to the animator
     assert out.segments[4].beats[0].visual == script.segments[4].beats[0].visual
 
@@ -179,8 +179,8 @@ def test_visual_sentences_are_computed_from_the_calls():
 
     said = describe_segment([[ARR], ["a.bisect_step(target=9)"], [], ["a.remove()"]])
     assert said[0] == "A row of 5 blue cells: 1, 3, 4, 7, 9 (bottom half)."
-    assert said[1] == ("Lo, mid, hi point at cells 0, 2, 4; the middle value 4 is compared with the target 9; "
-                       "4 < 9, so cells 0-2 grey out; cells 3-4 stay in play.")
+    assert said[1] == ("Lo, mid, hi point at the cells holding 1, 4, 9; the middle value 4 is compared with the "
+                       "target 9; 4 < 9, so the cells holding 1, 3, 4 grey out; the cells holding 7, 9 stay in play.")
     assert said[2] == "The picture stays as it is."
     assert said[3] == "The list fades out."
     grid = describe_segment([['g = LinearMap2D(matrix=[[2, 1], [1, 2]], vectors=[{"name": "v", "x": 1, "y": 1}])'],
@@ -209,6 +209,9 @@ def test_the_calls_are_checked_against_the_words():
     echo = check_segment([[ARR, 'a.note(text="does v leave its line?")']], ["Pause: does v leave its line?"])
     assert any("repeats the line's own words" in p for p in echo)
     assert check_segment([[ARR, 'a.note(text="mid = 4")']], ["Check the middle one."]) == []
+    text_only = check_segment([[ARR], ['a.note(text="mid = 4")', "a.unpoint(name=\"lo\")"], []], ["a", "b", "c"])
+    assert any("beat 2: its calls only put text on screen" in p for p in text_only)
+    assert not any("beat 3" in p for p in text_only)  # [] keeps the picture: fine
     on_top = check_segment([['g = LinearMap2D(matrix=[[2, 0], [0, 1]], vectors=[{"name": "v", "x": 1, "y": 0}])',
                              'g.ghost_vector(x=1, y=0)']])
     assert any("sits exactly on vector v" in p for p in on_top)
@@ -317,3 +320,17 @@ def test_early_voices_are_used_only_for_the_same_lines(tmp_path, monkeypatch):
     rewritten.segments[0].beats[0].narration = "New words."
     assert voices.take(rewritten) is None
     voices.close()
+
+
+def test_critic_issues_go_to_the_segments_they_name():
+    from script_generation_agent.critic import issues_by_segment
+    from test_dialogue import make_script
+
+    script = make_script()  # prepare, initiate, deliver, deliver, end
+    assert [seg.phase for seg in script.segments] == ["prepare", "initiate", "deliver", "deliver", "end"]
+    issues = ["deliver (second segment), beat 3: only a note", "end, beat 2: a caption", "pacing: too long",
+              "deliver, beat 1: vague", "visual_alignment - deliver (first segment), beat 6: text"]
+    out = issues_by_segment(script, issues)
+    assert out[3] == [issues[0], issues[3]] and out[4] == [issues[1]] and out[2] == [issues[3], issues[4]]
+    assert 0 not in out and 1 not in out
+    assert issues_by_segment(script, ["pacing: too long"]) == {i: ["pacing: too long"] for i in range(5)}

@@ -300,10 +300,10 @@ def write_script(
 # --------------------------------------------------------------------------
 
 
-# Writing the calls is filling in a form that code then checks (animation_agent.visuals.calls), so a faster model
-# does it; whatever it gets wrong the checker catches, and the segment gets one fix call straight away.
-DRAW_MODEL = "claude-sonnet-5-5"
-DRAW_EFFORT = "medium"
+# Writing the calls is filling in a form that code then checks (animation_agent.visuals.calls); whatever it gets
+# wrong the checker catches, and the segment gets one fix call straight away.
+DRAW_MODEL = DEFAULT_MODEL
+DRAW_EFFORT = None  # llm.DEFAULT_EFFORT (low)
 
 
 class _BeatDraw(BaseModel):

@@ -53,9 +53,18 @@ class _Stream:
         return M()
 
 
-@pytest.mark.parametrize("effort, expected", [(None, None), ("low", {"effort": "low"})])
-def test_text_sends_output_config_only_when_an_effort_is_given(monkeypatch, effort, expected):
+@pytest.mark.parametrize("effort, env, expected", [
+    (None, None, {"effort": "low"}),  # llm.DEFAULT_EFFORT
+    ("high", None, {"effort": "high"}),
+    (None, "medium", {"effort": "medium"}),
+    (None, "default", None),  # the model's own default
+])
+def test_text_sends_the_effort_low_unless_told_otherwise(monkeypatch, effort, env, expected):
     sent: dict = {}
+    if env:
+        monkeypatch.setenv("LLM_EFFORT", env)
+    else:
+        monkeypatch.delenv("LLM_EFFORT", raising=False)
 
     class Client:
         class messages:

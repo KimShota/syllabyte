@@ -265,15 +265,15 @@ def _describe_array(p: ArrayParams) -> str:
 
 
 def _cells(state: dict, indices) -> str:
+    """Cells by the values they hold, not by index: the narration counts cells from one ("cells one through
+    four") while the calls index from zero, so naming values can't contradict either."""
     indices = list(indices)
     values = ", ".join(_fmt(state["values"][i]) for i in indices)
-    if len(indices) == 1:
-        return f"cell {indices[0]} (value {values})"
-    return f"cells {', '.join(map(str, indices))} (values {values})"
+    return f"the cell holding {values}" if len(indices) == 1 else f"the cells holding {values}"
 
 
-def _span(first: int, last: int) -> str:
-    return f"cell {first}" if first == last else f"cells {first}-{last}"
+def _span(state: dict, first: int, last: int) -> str:
+    return _cells(state, range(first, last + 1))
 
 
 def _verb(indices, verb: str) -> str:
@@ -284,8 +284,9 @@ def _said_bisect_check(state: dict, a) -> str:
     b = state["bisect"]
     lo, hi = b["range"]
     mid = (lo + hi) // 2
-    return (f"lo, mid, hi point at cells {lo}, {mid}, {hi}; the middle value {_fmt(state['values'][mid])} is "
-            f"compared with the target {_fmt(b['target'])}")
+    v = state["values"]
+    return (f"lo, mid, hi point at the cells holding {_fmt(v[lo])}, {_fmt(v[mid])}, {_fmt(v[hi])}; the middle "
+            f"value {_fmt(v[mid])} is compared with the target {_fmt(b['target'])}")
 
 
 def _said_bisect_discard(state: dict, a) -> str:
@@ -293,14 +294,14 @@ def _said_bisect_discard(state: dict, a) -> str:
     mid, lo0, hi0, found = b["last"]
     value, target = state["values"][mid], b["target"]
     if found:
-        return f"{_fmt(value)} is the target: cell {mid} turns green, found"
+        return f"{_fmt(value)} is the target: its cell turns green, found"
     if value < target:
-        out = f"{_fmt(value)} < {_fmt(target)}, so {_span(lo0, mid)} grey out"
+        out = f"{_fmt(value)} < {_fmt(target)}, so {_span(state, lo0, mid)} grey out"
     else:
-        out = f"{_fmt(value)} > {_fmt(target)}, so {_span(mid, hi0)} grey out"
+        out = f"{_fmt(value)} > {_fmt(target)}, so {_span(state, mid, hi0)} grey out"
     if b["lo"] > b["hi"]:
         return out + "; nothing is left in play: the target isn't in the list"
-    return out + f"; {_span(b['lo'], b['hi'])} stay in play"
+    return out + f"; {_span(state, b['lo'], b['hi'])} stay in play"
 
 
 def _said_scan(state: dict, a) -> str:
@@ -411,7 +412,7 @@ ARRAY_BARS = TemplateSpec(
                             says=lambda s, a: "the list's highlights, ghosts and note clear"),
         "grey_out": ActionSpec("Grey out cells start..end: ruled out.", RangeArgs,
                                lambda s, a: _in_range(s, a.start, a.end),
-                               lambda s, a: f"{_span(a.start, a.end)} grey out: ruled out"),
+                               lambda s, a: f"{_span(s, a.start, a.end)} grey out: ruled out"),
         "restore": ActionSpec("Un-grey every cell.", says=lambda s, a: "every cell is back in play"),
         "point": ActionSpec("Show (or move) a named pointer under a cell.", PointArgs, _check_point,
                             lambda s, a: f'pointer "{a.name}" under {_cells(s, [a.index])}'),
@@ -421,10 +422,11 @@ ARRAY_BARS = TemplateSpec(
                               lambda s, a: _in_range(s, a.i, a.j),
                               lambda s, a: f"{_cells(s, [a.i, a.j])} light up and are compared"),
         "swap": ActionSpec("Swap two cells (they move past each other).", PairArgs, _check_swap,
-                           lambda s, a: f"cells {a.i} and {a.j} swap places; the row now reads "
+                           lambda s, a: f"{_cells(s, [a.j, a.i])} swap places; the row now reads "
                                         f"{', '.join(_fmt(v) for v in s['values'])}"),
         "set_value": ActionSpec("Change one cell's value.", SetValueArgs, _check_set_value,
-                                lambda s, a: f"cell {a.index} changes to {_fmt(a.value)}"),
+                                lambda s, a: f"a cell changes to {_fmt(a.value)}; the row now reads "
+                                             f"{', '.join(_fmt(v) for v in s['values'])}"),
         "note": ActionSpec("A short line of text above the list.", NoteArgs,
                            says=lambda s, a: f'note above the list: "{a.text}"'),
         "counter": ActionSpec('Show or update a counter, e.g. checks: 3.', CounterArgs,

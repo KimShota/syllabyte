@@ -50,6 +50,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from syllabyte_common.llm import DEFAULT_MODEL
 from syllabyte_common.models import RenderResult, RenderTier, RunManifest, Segment
 
 from animation_agent.assemble import ffprobe_duration
@@ -229,7 +230,7 @@ def render_segment(
     render_dir: Path,
     *,
     quality: str = "low",
-    model: str = "claude-opus-5",
+    model: str = DEFAULT_MODEL,
     manifest: RunManifest | None = None,
 ) -> RenderResult:
     n_beats = len(segment.beats)

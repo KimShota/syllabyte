@@ -66,6 +66,37 @@ def critique(
     )
 
 
+_ORDINALS = {"first": 0, "second": 1, "third": 2, "1": 0, "2": 1, "3": 2}
+
+
+def issues_by_segment(script: Script, issues: list[str]) -> dict[int, list[str]]:
+    """Segment index -> the critic's issues that name that segment's phase ("deliver (second segment), beat 3",
+    "end, beat 2"), so a redraw changes only the segments with problems and each drawer sees only its own. An
+    issue naming one of several segments of a phase without saying which goes to all of them; one naming no
+    phase (pacing, slang) is about the words and is left out. Every segment, with every issue, if none match."""
+    import re
+
+    phases = [seg.phase for seg in script.segments]
+    out: dict[int, list[str]] = {}
+    for issue in issues:
+        low = issue.lower()
+        hits = []
+        for phase in dict.fromkeys(phases):
+            if not re.search(rf"\b{phase}\b", low):
+                continue
+            same = [i for i, p in enumerate(phases) if p == phase]
+            which = re.search(rf"\b{phase}\b[^,;:]*?\b(first|second|third|segment \d|-\d)\b|"
+                              rf"\b(first|second|third)\s+{phase}\b", low)
+            if len(same) > 1 and which:
+                word = next(g for g in which.groups() if g).replace("segment ", "").lstrip("-")
+                k = _ORDINALS.get(word)
+                same = [same[k]] if k is not None and k < len(same) else same
+            hits += same
+        for i in dict.fromkeys(hits):
+            out.setdefault(i, []).append(issue)
+    return out or {i: list(issues) for i in range(len(phases))}
+
+
 def write_script_with_critique(
     ku: KnowledgeUnit,
     corpus: CourseCorpus,
@@ -102,7 +133,7 @@ def write_script_with_critique(
             # Template visuals: the lines passed and only the pictures scored low, so draw again with the
             # critic's issues (a few parallel calls) instead of rewriting the script (plan phase 3 finding).
             script = add_draws(script, ku_id=ku.id, manifest=manifest,
-                               feedback={i: redraw for i in range(len(script.segments))})
+                               feedback=issues_by_segment(script, redraw))
         else:
             script = write_script(
                 ku, corpus, model=model, manifest=manifest, extra_instruction=extra_instruction,
