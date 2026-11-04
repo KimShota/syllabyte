@@ -112,6 +112,7 @@ def make_ku_video(
     allow_fallback: bool = False,
     force_from: int = len(STAGES),
     style: str = "monologue",
+    visuals: str = "codegen",
 ) -> Path | None:
     """One KU's video: script (at `level` when given) -> tts -> animate ->
     assemble, under `ku_dir`, reusing whatever each stage already wrote there
@@ -128,7 +129,7 @@ def make_ku_video(
         log(f"[3/6] script: writing + critiquing script for {ku.id}")
         script, critique_result = write_script_with_critique(
             ku, corpus, manifest=manifest, skip_critic=skip_critic,
-            level=level, prereq_titles=prereq_titles, style=style,
+            level=level, prereq_titles=prereq_titles, style=style, visuals=visuals,
         )
         script_path.write_text(script.model_dump_json(indent=2))
         critique_path.write_text(critique_result.model_dump_json(indent=2))
@@ -296,7 +297,7 @@ def run(args: argparse.Namespace) -> None:
             save_manifest=lambda: run_dir.save_json(manifest_path, manifest),
             tts=args.tts, quality=args.quality, parallel_segments=args.parallel_segments,
             skip_critic=args.skip_critic, allow_fallback=args.allow_fallback, force_from=force_from,
-            level=args.level, style=args.style,
+            level=args.level, style=args.style, visuals=args.visuals,
         ) is None:
             failed_kus.append(ku.id)
 
@@ -320,6 +321,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--style", default="monologue", choices=["monologue", "dialogue"],
         help="dialogue: two characters talk the idea through (needs --level and media/characters/cast.json)",
+    )
+    parser.add_argument(
+        "--visuals", default="codegen", choices=["codegen", "templates"],
+        help="templates: draw lines with the visual template library (dialogue only)",
     )
     parser.add_argument("--from-stage", default=None, choices=STAGES, help="Force recomputation from this stage onward")
     parser.add_argument("--skip-critic", action="store_true", help="Skip the semantic critique round (faster iteration)")

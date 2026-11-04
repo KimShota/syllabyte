@@ -62,6 +62,7 @@ def make_video(job: VideoJob, work_dir: Path) -> Path:
         ku, corpus, work_dir, manifest=manifest,
         save_manifest=lambda: manifest_path.write_text(manifest.model_dump_json(indent=2)),
         level=job.level, prereq_titles=prereq_titles, style=job.style,
+        visuals=job.visuals,
     )
     manifest_path.write_text(manifest.model_dump_json(indent=2))
     log(f"{job.ku_id} at level {job.level}: {time.monotonic() - start:.0f}s")
@@ -72,7 +73,7 @@ def make_video(job: VideoJob, work_dir: Path) -> Path:
 
 def show(job: VideoJob) -> str:
     where = job.video_path if job.state == "ready" else (job.error or "")
-    style = " dialogue" if job.style == "dialogue" else ""
+    style = (" dialogue" if job.style == "dialogue" else "") + (" templates" if job.visuals == "templates" else "")
     return f"{job.state:7s} L{job.level}{style} p{job.priority:<3d} {job.ku_id:45s} {where}"
 
 
@@ -84,6 +85,8 @@ def main() -> None:
     req.add_argument("--course", required=True, help="directory with corpus.json and kus.json")
     req.add_argument("--want", nargs="+", required=True, metavar="KU:LEVEL")
     req.add_argument("--style", choices=["monologue", "dialogue"], default="monologue")
+    req.add_argument("--visuals", choices=["codegen", "templates"], default="codegen",
+                     help="templates: draw with the visual template library (dialogue only)")
     work = sub.add_parser("work", help="make queued videos")
     work.add_argument("--workers", type=int, default=1)
     work.add_argument("--keep-polling", action="store_true", help="wait for new requests instead of stopping when idle")
@@ -99,9 +102,10 @@ def main() -> None:
             if level not in ("1", "2", "3"):
                 raise SystemExit(f"{want}: expected KU:LEVEL with level 1, 2 or 3")
             ku, prereq_titles = find_ku(kus, ku_id)
-            key = video_key(corpus, ku, int(level), prereq_titles, style=args.style)
+            key = video_key(corpus, ku, int(level), prereq_titles, style=args.style, visuals=args.visuals)
             print(show(store.request(
                 key, ku_id=ku_id, level=int(level), course_dir=course.resolve(), priority=position, style=args.style,
+                visuals=args.visuals,
             )))
     elif args.command == "work":
         if missing := missing_latex_tools():

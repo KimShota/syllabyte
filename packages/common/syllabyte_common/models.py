@@ -185,12 +185,34 @@ class DialogueScript(Script):
     style: Literal["dialogue"]
 
 
+# A dialogue whose lines are drawn with the visual template library (plan/visual-template-library-plan.md):
+# each beat also lists the template calls that draw it (animation_agent/visuals). Subclasses again, so the
+# schema the writer fills in without templates is unchanged.
+
+
+class TemplatedDialogueBeat(DialogueBeat):
+    # Calls on the visual templates that draw this line, e.g. 'arr.bisect_check(target=9)'. [] keeps the
+    # picture as it is. A segment whose beats all have [] is drawn by LLM-written code from `visual`, as before.
+    draw: list[str]
+
+
+class TemplatedDialogueSegment(DialogueSegment):
+    beats: list[TemplatedDialogueBeat] = Field(min_length=1)
+
+
+class TemplatedDialogueScript(DialogueScript):
+    segments: list[TemplatedDialogueSegment]
+    visuals: Literal["templates"]
+
+
 def load_script(json_text: str) -> Script:
     """A script.json as the class it was written as: a DialogueScript when it says so, else a Script."""
     import json
 
     data = json.loads(json_text)
-    schema = DialogueScript if isinstance(data, dict) and data.get("style") == "dialogue" else Script
+    schema: type[Script] = Script
+    if isinstance(data, dict) and data.get("style") == "dialogue":
+        schema = TemplatedDialogueScript if data.get("visuals") == "templates" else DialogueScript
     return schema.model_validate(data)
 
 
@@ -198,10 +220,16 @@ def load_script(json_text: str) -> Script:
 FrameName = Literal["full", "dialogue"]
 
 
+class RenderBeat(Beat):
+    # A line's template calls (TemplatedDialogueBeat.draw), kept for the renderer; [] for scripts without them.
+    draw: list[str] = Field(default_factory=list)
+
+
 class RenderSegment(Segment):
     """A segment as the animation stage sees it: with the video's colour key, so every codegen and repair prompt
     carries it and a changed key invalidates the segment's render cache, and with the frame it is drawn in."""
 
+    beats: list[RenderBeat] = Field(min_length=1)
     colour_key: list[TermColour] = Field(default_factory=list)
     frame: FrameName = "full"
 
@@ -236,7 +264,8 @@ class CritiqueResult(BaseModel):
 # Stage 4/5 — TTS + Animation
 # --------------------------------------------------------------------------
 
-RenderTier = Literal["llm_first_try", "llm_repaired", "llm_regenerated", "template_fallback"]
+# spec_template: drawn from the script's template calls (animation_agent/visuals), no LLM code.
+RenderTier = Literal["spec_template", "llm_first_try", "llm_repaired", "llm_regenerated", "template_fallback"]
 
 
 class WordTiming(BaseModel):
@@ -273,6 +302,8 @@ class RenderResult(BaseModel):
     # every one any attempt imported: which plugins get used, and which keep failing.
     plugins_used: list[str] = Field(default_factory=list)
     plugins_tried: list[str] = Field(default_factory=list)
+    # Why a segment with template calls was drawn by LLM code instead (its calls failed to render).
+    spec_fallback_reason: str | None = None
 
 
 # Thin list wrappers so scripts/generate_shorts.py can round-trip

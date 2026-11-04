@@ -17,7 +17,14 @@ from script_generation_agent.prompts import (
     critique_system_prompt,
     dialogue_critique_system_prompt,
 )
-from script_generation_agent.script_writer import Style, gather_source_material, write_script
+from script_generation_agent.script_writer import (
+    Style,
+    Visuals,
+    add_draws,
+    fix_draws,
+    gather_source_material,
+    write_script,
+)
 from syllabyte_common.llm import DEFAULT_MODEL, structured, text_block
 from syllabyte_common.models import (
     CourseCorpus,
@@ -70,6 +77,7 @@ def write_script_with_critique(
     level: int | None = None,
     prereq_titles: list[str] | None = None,
     style: Style = "monologue",
+    visuals: Visuals = "codegen",
 ) -> tuple[Script, CritiqueResult]:
     """Writes a script, critiques it, and regenerates (up to MAX_ROUNDS-1
     additional times) if any critique score falls below threshold. With
@@ -87,11 +95,19 @@ def write_script_with_critique(
         system = dialogue_critique_system_prompt(level or 2, explainer=cast.explainer.name, peer=cast.peer.name)
         stage = f"critique_dialogue_l{level}"
 
+    redraw: list[str] = []  # the critic's issues, when only the pictures need another go
     for round_num in range(1, MAX_ROUNDS + 1):
-        script = write_script(
-            ku, corpus, model=model, manifest=manifest, extra_instruction=extra_instruction,
-            level=level, prereq_titles=prereq_titles, style=style,
-        )
+        if redraw and script is not None:
+            # Template visuals: the lines passed and only the pictures scored low, so draw again with the
+            # critic's issues (a few parallel calls) instead of rewriting the script (plan phase 3 finding).
+            script = add_draws(script, ku_id=ku.id, model=model, manifest=manifest,
+                               feedback={i: redraw for i in range(len(script.segments))})
+            fix_draws(script, ku_id=ku.id, model=model, manifest=manifest)
+        else:
+            script = write_script(
+                ku, corpus, model=model, manifest=manifest, extra_instruction=extra_instruction,
+                level=level, prereq_titles=prereq_titles, style=style, visuals=visuals,
+            )
 
         if skip_critic:
             result.passed = True
@@ -104,7 +120,10 @@ def write_script_with_critique(
             result.passed = True
             return script, result
 
-        if round_num < MAX_ROUNDS:
+        text_ok = min(score.pedagogical_coherence, score.conceptual_accuracy,
+                      score.learner_appropriateness) >= CRITIQUE_THRESHOLD
+        redraw = score.issues if visuals == "templates" and text_ok else []
+        if round_num < MAX_ROUNDS and not redraw:
             extra_instruction = (
                 "The previous script scored below threshold. Issues found:\n"
                 + "\n".join(f"- {issue}" for issue in score.issues)
@@ -132,6 +151,8 @@ if __name__ == "__main__":
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--level", type=int, choices=[1, 2, 3], default=None, help="write for one student's level on this KU")
     parser.add_argument("--style", choices=["monologue", "dialogue"], default="monologue", help="dialogue: two characters (needs --level)")
+    parser.add_argument("--visuals", choices=["codegen", "templates"], default="codegen",
+                        help="templates: draw lines with the visual template library (dialogue only)")
     args = parser.parse_args()
 
     corpus = _Corpus.model_validate_json(Path(args.corpus).read_text())
@@ -142,11 +163,13 @@ if __name__ == "__main__":
     prereqs = [k.title for k in kus.knowledge_units if k.id in ku.prerequisites]
     script, result = write_script_with_critique(
         ku, corpus, manifest=manifest, level=args.level, prereq_titles=prereqs, style=args.style,
+        visuals=args.visuals,
     )
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     suffix = (f".L{args.level}" if args.level else "") + (".dialogue" if args.style == "dialogue" else "")
+    suffix += ".templates" if args.visuals == "templates" else ""
     (out_dir / f"script{suffix}.json").write_text(script.model_dump_json(indent=2))
     (out_dir / f"critique{suffix}.json").write_text(result.model_dump_json(indent=2))
     (out_dir / f"manifest{suffix}.json").write_text(manifest.model_dump_json(indent=2))

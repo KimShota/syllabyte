@@ -430,3 +430,105 @@ whose first language is not English.
 
 def dialogue_critique_system_prompt(level: int, *, explainer: str, peer: str) -> str:
     return critique_system_prompt(level) + DIALOGUE_CRITIQUE_NOTE.format(explainer=explainer, peer=peer)
+
+
+# --------------------------------------------------------------------------
+# Drawing lines with the visual template library (plan/visual-template-library-plan.md)
+# --------------------------------------------------------------------------
+
+_TEMPLATES = """\
+
+Drawing each line with templates
+  Every beat also has `draw`: calls on the visual templates listed below, which draw that line's picture with \
+tested code (the numbers, halves and eigenvectors are computed, so they are always right). Draw with them \
+whenever one fits the idea. Keep `visual` too: one sentence saying what the calls show.
+  - Write each call as one line of Python with keyword arguments and plain values (numbers, strings, lists, \
+dicts, True/False/None):
+      name = Template(arg=value, ...)     puts something on screen
+      name.action(arg=value, ...)         changes it
+  - Every segment starts with an empty screen: its first beat creates what it shows, and names last until the end \
+of their segment. To keep a picture into the next segment, create it again there in the state it ended in.
+  - 1-3 calls per beat. A beat with [] keeps the picture as it is (fine for a short reply).
+  - The drawing area is {frame}. Things on screen together go in areas that don't overlap: full, top_half, \
+bottom_half, top_third, middle_third, bottom_third, top_two_thirds, bottom_two_thirds. At most 3 at once, \
+usually one diagram plus, at most, a formula or a note.
+  - Pick values that make the idea easy to see: 5-8 small numbers in a list; small whole-number matrices whose \
+vectors stay on the grid.
+  - Write TeX with single backslashes, e.g. tex="(A - \\lambda I) v = 0". Keep each formula short: about 20 \
+symbols at most, so it stays large enough to read.
+  - Give the colour key's terms their colours (colour=..., colours=[...]). Some colours are fixed by the \
+templates: grey = ruled out (grey_out), green = found, red dashed = a wrong idea (ghost), yellow = the thing \
+being pointed at. Don't use those colours for other meanings.
+  - Every segment shows a diagram. A Note is a label or a question beside a diagram, never the whole picture, and \
+never just the line's words repeated.
+  - A line voicing a misconception draws the wrong idea as a ghost (ArrayBars.ghost, LinearMap2D.ghost_vector) or \
+writes the wrong step (EquationSteps.then); the explainer's feedback line clears it, or crosses the wrong step out \
+(EquationSteps.cross_out) and writes the right one.
+  - A draw shows what its own line says, no more: don't reveal a value or label before the line that says it.
+  - A question or predict line points at what is asked about without giving the answer away: highlight it, or \
+cover the answer (EquationSteps.cover) and uncover it in the line that gives it.
+  - If no template can show a segment's idea, leave every `draw` in that segment empty and describe its visuals \
+in `visual` as before; an animator will code them.
+
+The templates
+{cards}
+"""
+
+TEMPLATE_FRAMES = {
+    "dialogue": "the top 70% of the screen, about 4.5 units wide by 5.6 tall",
+    "full": "the whole portrait screen, about 4.5 units wide by 8 tall",
+}
+
+
+def templates_prompt(frame: str = "dialogue") -> str:
+    from animation_agent.visuals.specs import template_cards
+
+    return _TEMPLATES.format(frame=TEMPLATE_FRAMES[frame], cards=template_cards())
+
+
+_TEMPLATES_BRIEF = """\
+
+The pictures the animator can draw exactly
+  An animator draws each line's `visual` with these templates, so describe pictures they can show:
+{brief}
+  Their fixed colours: grey = ruled out, green = found, red dashed = a wrong idea, yellow = pointed at. Pick \
+colour-key colours that don't clash with these. Every segment shows a diagram (a note is only a label beside it).
+  Their limits: a list of at most 10 cells; a 2x2 matrix of small whole numbers; a formula of about 20 symbols \
+(longer ones go over two steps); one diagram per segment, with at most a formula or a note beside it. Don't \
+write lines or visuals that need more (e.g. "a row of 16 cells", "a 3x3 matrix").
+"""
+
+
+def templates_brief() -> str:
+    """For the script writer: what the templates draw, without their calls (those are filled in per segment)."""
+    from animation_agent.visuals.specs import REGISTRY
+
+    return _TEMPLATES_BRIEF.format(brief="\n".join(f"  - {s.name}: {s.purpose}" for s in REGISTRY.values()))
+
+
+_DRAW_SEGMENT = """\
+You draw one segment of a short educational video with visual templates. You get the whole script, for context, \
+and the segment to draw. Return one entry per beat of that segment (exactly as many as it has beats), each with:
+  - draw: the calls that draw the beat, in step with its words;
+  - visual: one sentence saying exactly what your calls show. It replaces the writer's `visual`, which is a \
+suggestion: follow it where the templates can, and where they can't, draw the closest faithful picture and \
+describe that. What you draw must agree with the line's words (if the line says eight cells, draw eight).
+If the templates can't draw this segment's idea faithfully at all, return an empty `draw` for every beat and keep \
+the writer's `visual` sentences; an animator will code that segment.
+"""
+
+
+def draw_segment_system_prompt(frame: str = "dialogue") -> str:
+    return _DRAW_SEGMENT + templates_prompt(frame)
+
+
+def draw_fix_system_prompt(frame: str = "dialogue") -> str:
+    return _DRAW_FIX + templates_prompt(frame)
+
+
+_DRAW_FIX = """\
+You fix the template calls of a short educational video's script. Each segment below has beats (lines), each \
+with the calls that draw it and the problems an automatic checker found in those calls. Return every listed \
+segment with one entry per beat (the same number of beats): its corrected `draw` calls, and its `visual`, one \
+sentence saying exactly what the calls show. Change only what you must to fix the problems.
+"""

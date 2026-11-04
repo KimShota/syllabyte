@@ -141,10 +141,38 @@ The framework and its sources are in `research_notes/dialogue-framework.md`:
 uv run python scripts/video_jobs.py --store runs/videos request --style dialogue --course runs/<course> --want <ku-id>:2
 uv run python scripts/video_jobs.py --store runs/videos work
 
+# Draw the lines with the visual template library instead of LLM-written Manim code:
+uv run python scripts/video_jobs.py --store runs/videos request --style dialogue --visuals templates --course runs/<course> --want <ku-id>:2
+
 # Scripts only, to read before rendering:
 uv run python -m script_generation_agent.critic --corpus runs/<course>/corpus.json --kus runs/<course>/kus.json \
     --ku-id <ku-id> --level 2 --style dialogue --out-dir runs/dialogue-scripts/<ku-id>
 ```
+
+### Visual templates (`--visuals templates`, dialogue only for now)
+
+`animation_agent/visuals/` holds tested Manim templates (plan: `plan/visual-template-library-plan.md`).
+With `--visuals templates`, each script line also carries the calls that draw it, for example:
+
+```
+arr = ArrayBars(values=[1, 3, 4, 7, 9, 11, 15], area="bottom_two_thirds")
+arr.bisect_check(target=9)
+```
+
+- **What it changes.** The renderer draws a segment from those calls, with no LLM code, no repairs and no
+  visual critic. The templates compute what they show: bisection runs the real algorithm, and eigen-lines come
+  from numpy.
+- **Checking.** Calls are parsed (never executed) and checked by simulating the segment
+  (`visuals/calls.py`). A segment with bad calls gets one cheap fix call
+  (`script_writer.fix_draws`); if it is still wrong, it is drawn by LLM code from its `visual` text as before.
+- **Templates so far:** `ArrayBars`, `LinearMap2D`, `EquationSteps`, `Note`. Each is listed for the writer
+  from `visuals/specs.py`.
+- **Adding a template.** Write its spec in `specs.py`, its drawing class (one generator method per action),
+  and register it in `runner.CLASSES`. `tests/test_visual_templates.py` checks that the spec and the class
+  agree. `SYLLABYTE_RENDER_TESTS=1` renders every example in both frames and requires no layout findings.
+  Bump `TEMPLATES_VERSION` when a template's drawing changes, so cached videos are remade.
+- **Which templates to build next.** `scripts/visual_coverage.py` sorts every KU's planned visual into a
+  template family and reports how much each family would cover (`runs/visual-coverage/coverage.md`).
 
 ### Week-1 shorts (`generate_shorts.py` on its own)
 

@@ -49,6 +49,8 @@ MAX_ATTEMPTS = 2
 
 JobState = Literal["queued", "making", "ready", "failed"]
 VideoStyle = Literal["monologue", "dialogue"]
+# How segments are drawn (script_generation_agent.script_writer.Visuals).
+VideoVisuals = Literal["codegen", "templates"]
 
 
 def cited_slide_content(corpus: CourseCorpus, ku: KnowledgeUnit) -> str:
@@ -74,6 +76,7 @@ def video_key(
     prereq_titles: list[str],
     version: str = PIPELINE_VERSION,
     style: VideoStyle = "monologue",
+    visuals: VideoVisuals = "codegen",
 ) -> str:
     content = {
         "slides": cited_slide_content(corpus, ku),
@@ -87,6 +90,10 @@ def video_key(
 
         # A monologue's key is unchanged; a dialogue is remade when its characters change.
         content |= {"style": style, "cast": cast_fingerprint()}
+    if visuals == "templates":
+        from animation_agent.visuals.specs import TEMPLATES_VERSION
+
+        content |= {"visuals": visuals, "templates": TEMPLATES_VERSION}
     payload = json.dumps(content, sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()
 
@@ -96,6 +103,7 @@ class VideoJob(BaseModel):
     ku_id: str
     level: int = Field(ge=1, le=3)
     style: VideoStyle = "monologue"
+    visuals: VideoVisuals = "codegen"
     # Where the generator finds the course: a directory with corpus.json and kus.json.
     course_dir: str
     state: JobState = "queued"
@@ -159,7 +167,7 @@ class VideoStore:
 
     def request(
         self, key: str, *, ku_id: str, level: int, course_dir: str | Path, priority: int = 0,
-        style: VideoStyle = "monologue",
+        style: VideoStyle = "monologue", visuals: VideoVisuals = "codegen",
     ) -> VideoJob:
         """The video for `key`: ready from the cache, or queued (moved up the
         queue when asked for sooner than before). A failed video is queued
@@ -169,6 +177,7 @@ class VideoStore:
             if job is None:
                 return self._save(VideoJob(
                     key=key, ku_id=ku_id, level=level, course_dir=str(course_dir), priority=priority, style=style,
+                    visuals=visuals,
                 ))
             if job.state == "ready":
                 if job.video_path and Path(job.video_path).exists():

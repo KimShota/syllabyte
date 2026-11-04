@@ -12,6 +12,11 @@ correctly derives frame_width = frame_height * aspect_ratio from the pixel
 dimensions, giving the intended 4.5 x 8.0 unit portrait frame at any pixel
 resolution, as long as the width:height ratio is kept at 9:16.
 
+Before the ladder: a segment whose script lines carry template calls
+(animation_agent/visuals, plan/visual-template-library-plan.md) is drawn from
+those calls by tested template code, with no LLM call. Only if that render
+fails does the segment go to the ladder below, drawn from its `visual` text.
+
 Repair ladder (ScopeRefine-inspired, per the proposal's response to the
 LLM+Manim paper's 38% render-failure finding):
   Tier 1 (llm_repaired):    feed the error back to Claude for a targeted fix, x2
@@ -62,6 +67,7 @@ from animation_agent.molecules import prefetch_molecules
 from animation_agent.plugins import plugin_names_used
 from animation_agent.templates import build_template_scene
 from animation_agent.visual_critic import apply_visual_repair, critique_render
+from animation_agent.visuals.scene_code import build_spec_scene
 
 RENDER_TIMEOUT_SECONDS = 180
 MAX_TIER1_REPAIRS = 2
@@ -252,6 +258,8 @@ def render_segment(
         except SyntaxError:
             pass
 
+    spec_error: str | None = None
+
     def finish(tier: RenderTier, code: str, mp4_path: Path, layout: LayoutReport) -> RenderResult:
         mp4_path, repaired, issues = _visual_critic_pass(
             render_dir, code, class_name, beat_durations, quality, mp4_path, layout,
@@ -261,7 +269,7 @@ def render_segment(
             segment_index=segment_index, tier=tier, attempts=attempts,
             render_seconds=time.monotonic() - start, video_path=str(mp4_path),
             visual_repair_applied=repaired, visual_issues_remaining=issues,
-            plugins_used=plugin_names_used(code), plugins_tried=tried,
+            plugins_used=plugin_names_used(code), plugins_tried=tried, spec_fallback_reason=spec_error,
         )
 
     def attempt(code: str, tier: RenderTier) -> RenderResult | None:
@@ -285,6 +293,24 @@ def render_segment(
             best = _Candidate(tier, code, mp4_path, stash, layout)
         last_error, last_layout = layout.format_for_prompt(), layout
         return None
+
+    # --- Template calls: tested code, no LLM -------------------------------
+    # Kept even with layout findings (a template is the same every time, so a retry can't fix them); they are
+    # logged for the report. The visual critic is skipped: the calls already say exactly what each beat shows.
+    if (spec_code := build_spec_scene(segment, class_name)) is not None:
+        attempts += 1
+        ok, error, mp4_path, layout = _try_render(
+            render_dir, spec_code, class_name, quality, n_beats, duration, check_formulas=False, frame=frame,
+        )
+        if ok:
+            return RenderResult(
+                segment_index=segment_index, tier="spec_template", attempts=attempts,
+                render_seconds=time.monotonic() - start, video_path=str(mp4_path),
+                visual_issues_remaining=layout.issues(),
+            )
+        spec_error = error[-1500:]
+        print(f"[render] segment {segment_index}: template calls failed, writing code instead: {spec_error[-300:]}",
+              flush=True)
 
     # --- First attempt -----------------------------------------------------
     try:

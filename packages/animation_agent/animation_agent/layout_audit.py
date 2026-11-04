@@ -31,7 +31,8 @@ Deliberately allowed: a label fully inside a box, a dot sitting on
 anything (dots are markers), arrows and lines touching or crossing shapes,
 and translucent or outline-only shapes overlapping (Venn diagrams). Vector
 fields (a magnet's or charge's field, from manim or a plugin) are a
-background: they fill the frame by design, so they are not checked at all.
+background: they fill the frame by design, so they are not checked at all; nor are mobjects marked with
+BACKGROUND_ATTR (a template's coordinate grid).
 """
 
 from __future__ import annotations
@@ -77,6 +78,10 @@ TEXT_INSET = 0.02  # strokes this close to a label's edge don't "run through" it
 MIN_OVERLAP_FRACTION = 0.12
 OPAQUE_FILL = 0.6  # fill opacity at which a shape hides what's under it
 VISIBLE_OPACITY = 0.05
+
+# A mobject with this attribute set is a background by design, like a vector field: a template's coordinate grid
+# (visuals/linear_map.py) is drawn under its labels on purpose, so it isn't checked.
+BACKGROUND_ATTR = "syllabyte_background"
 
 RULE_ORDER = ["empty_beat", "off_frame", "covered", "overlap", "too_small", "contrast"]
 
@@ -174,7 +179,7 @@ def collect_units(top_level: list[Mobject], names: dict[int, str]) -> list[_Unit
     ordered = sorted(enumerate(top_level), key=lambda p: (p[1].z_index, p[0]))
 
     def visit(mob: Mobject, context: str | None, top: str) -> None:
-        if id(mob) in seen or isinstance(mob, VectorField):
+        if id(mob) in seen or isinstance(mob, VectorField) or getattr(mob, BACKGROUND_ATTR, False):
             return
         seen.add(id(mob))
         name = names.get(id(mob))
