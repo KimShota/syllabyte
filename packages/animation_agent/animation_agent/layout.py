@@ -30,11 +30,10 @@ import numpy as np
 from manim import Mobject, Scene
 
 from animation_agent.layout_audit import RULE_ORDER, audit_scene
+from animation_agent.frame import scene_safe_size
 from animation_agent.manim_prompt import (
     BEAT_OVERRUN_TOLERANCE_SECONDS,
     GRID_DIAGRAM,
-    SAFE_HEIGHT,
-    SAFE_WIDTH,
 )
 
 GRID_ROWS = ["A", "B", "C", "D", "E", "F"]
@@ -165,10 +164,12 @@ class GridLayoutScene(Scene):
 
     def setup_grid(self) -> None:
         self.grid: dict[str, np.ndarray] = {}
+        # The safe area of whatever frame manim.cfg set (frame.py): the full 9:16 frame or a dialogue video's top 70%.
+        safe_w, safe_h = scene_safe_size()
         for i, row in enumerate(GRID_ROWS):
             for j, col in enumerate(GRID_COLS):
-                x = -SAFE_WIDTH / 2 + (j + 0.5) * (SAFE_WIDTH / len(GRID_COLS))
-                y = SAFE_HEIGHT / 2 - (i + 0.5) * (SAFE_HEIGHT / len(GRID_ROWS))
+                x = -safe_w / 2 + (j + 0.5) * (safe_w / len(GRID_COLS))
+                y = safe_h / 2 - (i + 0.5) * (safe_h / len(GRID_ROWS))
                 self.grid[f"{row}{col}"] = np.array([x, y, 0.0])
 
         beats_path = Path(BEATS_FILE)
@@ -213,11 +214,12 @@ class GridLayoutScene(Scene):
         grid call whose scale_factor overflows the narrow frame)."""
         if mobject.width <= 0 and mobject.height <= 0:
             return
-        factor = min(SAFE_WIDTH / max(mobject.width, 1e-6), SAFE_HEIGHT / max(mobject.height, 1e-6))
+        safe_w, safe_h = scene_safe_size()
+        factor = min(safe_w / max(mobject.width, 1e-6), safe_h / max(mobject.height, 1e-6))
         if factor < 1:
             mobject.scale(factor)
-        dx = max(-SAFE_WIDTH / 2 - mobject.get_left()[0], 0) - max(mobject.get_right()[0] - SAFE_WIDTH / 2, 0)
-        dy = max(-SAFE_HEIGHT / 2 - mobject.get_bottom()[1], 0) - max(mobject.get_top()[1] - SAFE_HEIGHT / 2, 0)
+        dx = max(-safe_w / 2 - mobject.get_left()[0], 0) - max(mobject.get_right()[0] - safe_w / 2, 0)
+        dy = max(-safe_h / 2 - mobject.get_bottom()[1], 0) - max(mobject.get_top()[1] - safe_h / 2, 0)
         if factor < 1 or dx or dy:
             frame = self._construct_frame()
             name = next(

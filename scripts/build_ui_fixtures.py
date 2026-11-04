@@ -375,6 +375,7 @@ def main() -> None:
             sentence_frame=SentenceFrame(template=g.sentence_frame_template, answers=g.sentence_frame_answers),
             claims=claims, tailoring=tailoring_for(ku, kus),
             transcript=[TranscriptRow(**r) for r in m["transcript"]], source_slides=m["source_slides"],
+            captions_burned_in=m.get("captions_burned_in", False),
             prerequisite_titles=[SHORT_TITLES[p] for p in ku.prerequisites if p in kus],
         ))
 

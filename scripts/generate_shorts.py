@@ -41,8 +41,10 @@ from script_generation_agent.critic import write_script_with_critique
 from animation_agent.tts import build_srt, concat_wavs, synthesize_segments
 from animation_agent.renderer import missing_latex_tools, render_segment
 from animation_agent.assemble import assemble_ku_video
+from animation_agent.dialogue_band import compose_dialogue_video
 from syllabyte_common.models import (
     CourseCorpus,
+    DialogueScript,
     KnowledgeUnit,
     KUList,
     RenderResult,
@@ -52,6 +54,7 @@ from syllabyte_common.models import (
     Script,
     Segment,
     SegmentAudioList,
+    load_script,
 )
 from syllabyte_common.run_store import RunDir, new_run_id
 
@@ -108,13 +111,16 @@ def make_ku_video(
     skip_critic: bool = False,
     allow_fallback: bool = False,
     force_from: int = len(STAGES),
+    style: str = "monologue",
 ) -> Path | None:
     """One KU's video: script (at `level` when given) -> tts -> animate ->
     assemble, under `ku_dir`, reusing whatever each stage already wrote there
     unless `force_from` names that stage or an earlier one. Returns the
     final.mp4, or None when a segment fell back to the caption template and
     `allow_fallback` is off. `save_manifest` is called after each stage that
-    spent tokens."""
+    spent tokens. With style="dialogue" (needs `level`) two characters talk
+    the idea through: Manim draws the top 70% and the band with the speaking
+    character and captions goes underneath (dialogue_band.py)."""
     # Stage 3: script + critique
     script_path = ku_dir / "script.json"
     critique_path = ku_dir / "critique.json"
@@ -122,14 +128,14 @@ def make_ku_video(
         log(f"[3/6] script: writing + critiquing script for {ku.id}")
         script, critique_result = write_script_with_critique(
             ku, corpus, manifest=manifest, skip_critic=skip_critic,
-            level=level, prereq_titles=prereq_titles,
+            level=level, prereq_titles=prereq_titles, style=style,
         )
         script_path.write_text(script.model_dump_json(indent=2))
         critique_path.write_text(critique_result.model_dump_json(indent=2))
         save_manifest()
     else:
         log(f"[3/6] script: reusing existing script for {ku.id}")
-        script = Script.model_validate_json(script_path.read_text())
+        script = load_script(script_path.read_text())
 
     # Stage 4: TTS
     audio_dir = ku_dir / "audio"
@@ -161,6 +167,7 @@ def make_ku_video(
                 "packages) and open a new shell."
             )
         forced = force_from <= stage_index("animate")
+        frame = "dialogue" if isinstance(script, DialogueScript) else "full"
 
         def animate_segment(i: int, seg: Segment, audio) -> RenderResult:
             seg_dir = render_dir / f"seg_{i}"
@@ -185,7 +192,7 @@ def make_ku_video(
         # threads run them concurrently. Results keep segment order.
         with ThreadPoolExecutor(max_workers=parallel_segments) as pool:
             futures = [
-                pool.submit(animate_segment, i, RenderSegment(**seg.model_dump(), colour_key=script.colour_key), audio)
+                pool.submit(animate_segment, i, RenderSegment(**seg.model_dump(), colour_key=script.colour_key, frame=frame), audio)
                 for i, (seg, audio) in enumerate(zip(script.segments, segment_audios))
             ]
             render_results = [f.result() for f in futures]
@@ -221,6 +228,12 @@ def make_ku_video(
             ku_dir, render_results, segment_audios,
             audio_dir / "narration.wav",
         )
+        if isinstance(script, DialogueScript):
+            # final.mp4 is the animation alone so far: add the character-and-caption band under it.
+            animation = ku_dir / "animation.mp4"
+            final_path.replace(animation)
+            compose_dialogue_video(animation, final_path, script, segment_audios, quality, work_dir=ku_dir / "render")
+            log("    + dialogue band (speaker and captions) under the animation")
         (ku_dir / "assembly_diagnostics.json").write_text(json.dumps(diagnostics, indent=2))
         log(f"    -> {diagnostics['final_path']} (max drift {diagnostics['max_abs_drift_seconds']:.2f}s)")
     else:
@@ -283,6 +296,7 @@ def run(args: argparse.Namespace) -> None:
             save_manifest=lambda: run_dir.save_json(manifest_path, manifest),
             tts=args.tts, quality=args.quality, parallel_segments=args.parallel_segments,
             skip_critic=args.skip_critic, allow_fallback=args.allow_fallback, force_from=force_from,
+            level=args.level, style=args.style,
         ) is None:
             failed_kus.append(ku.id)
 
@@ -302,6 +316,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out", default="runs/dev", help="Run output directory")
     parser.add_argument("--tts", default="kokoro", choices=["kokoro", "say", "elevenlabs"])
     parser.add_argument("--quality", default="low", choices=["low", "high"])
+    parser.add_argument("--level", type=int, choices=[1, 2, 3], default=None, help="write each script for this level")
+    parser.add_argument(
+        "--style", default="monologue", choices=["monologue", "dialogue"],
+        help="dialogue: two characters talk the idea through (needs --level and media/characters/cast.json)",
+    )
     parser.add_argument("--from-stage", default=None, choices=STAGES, help="Force recomputation from this stage onward")
     parser.add_argument("--skip-critic", action="store_true", help="Skip the semantic critique round (faster iteration)")
     parser.add_argument(

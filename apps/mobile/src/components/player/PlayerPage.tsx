@@ -72,7 +72,8 @@ export function PlayerPage({
   ) ?? [];
   const noteCount = notes.length;
   const lineIdx = activeLine(ku.transcript, pb.time);
-  const caption = lineIdx >= 0 ? ku.transcript[lineIdx].text : null;
+  // a dialogue video draws its own captions, so the overlay would only repeat them
+  const caption = lineIdx >= 0 && !ku.captionsBurnedIn ? ku.transcript[lineIdx].text : null;
 
   // a view counts once per visit to this page, the first time it passes WATCHED_AT
   const counted = useRef(false);

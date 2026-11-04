@@ -90,7 +90,7 @@ def _find_output_mp4(render_dir: Path, class_name: str) -> Path | None:
 
 def _try_render(
     render_dir: Path, code: str, class_name: str, quality: str, n_beats: int, duration: float,
-    *, check_formulas: bool = True,
+    *, check_formulas: bool = True, frame: str = "full",
 ) -> tuple[bool, str, Path | None, LayoutReport]:
     """Checks the beat structure (and, for LLM code, that no formula is set
     as plain Text), writes code to disk, and attempts a render, rejecting one
@@ -110,7 +110,7 @@ def _try_render(
 
     scene_file = render_dir / f"{class_name}.py"
     scene_file.write_text(code)
-    write_manim_cfg(render_dir, quality)
+    write_manim_cfg(render_dir, quality, frame)
     (render_dir / LAYOUT_REPORT_FILE).unlink(missing_ok=True)
 
     try:
@@ -148,6 +148,7 @@ def _visual_critic_pass(
     *,
     model: str,
     manifest: RunManifest | None,
+    frame: str = "full",
 ) -> tuple[Path, bool, list[str]]:
     """One critique + (at most one) repair round on an already-successful
     LLM render. The repair is kept only if it renders and doesn't add
@@ -176,7 +177,7 @@ def _visual_critic_pass(
     kept = mp4_path.with_name(f"{mp4_path.stem}_before_critic.mp4")
     shutil.copy(mp4_path, kept)
     ok, _, repaired_mp4, repaired_layout = _try_render(
-        render_dir, repaired_code, class_name, quality, n_beats, duration,
+        render_dir, repaired_code, class_name, quality, n_beats, duration, frame=frame,
     )
     if ok and len(repaired_layout.findings) <= len(layout.findings):
         kept.unlink()
@@ -235,6 +236,7 @@ def render_segment(
     render_dir.mkdir(parents=True, exist_ok=True)
     (render_dir / BEATS_FILE).write_text(json.dumps(beat_durations))
     class_name = f"Seg{segment_index}"
+    frame = getattr(segment, "frame", "full")  # a dialogue video's segments fill the top 70% (frame.py)
     start = time.monotonic()
     attempts = 0
     last_error = ""
@@ -253,7 +255,7 @@ def render_segment(
     def finish(tier: RenderTier, code: str, mp4_path: Path, layout: LayoutReport) -> RenderResult:
         mp4_path, repaired, issues = _visual_critic_pass(
             render_dir, code, class_name, beat_durations, quality, mp4_path, layout,
-            model=model, manifest=manifest,
+            model=model, manifest=manifest, frame=frame,
         )
         return RenderResult(
             segment_index=segment_index, tier=tier, attempts=attempts,
@@ -269,7 +271,7 @@ def render_segment(
         attempts += 1
         note_plugins(code)
         ok, error, mp4_path, layout = _try_render(
-            render_dir, code, class_name, quality, n_beats, duration,
+            render_dir, code, class_name, quality, n_beats, duration, frame=frame,
         )
         if not ok:
             last_error, last_layout = error, None
@@ -331,7 +333,7 @@ def render_segment(
     # --- Tier 3: deterministic template fallback (always renders) ---------
     template_code = build_template_scene(segment, class_name)
     ok, template_error, mp4_path, _ = _try_render(
-        render_dir, template_code, class_name, quality, n_beats, duration, check_formulas=False,
+        render_dir, template_code, class_name, quality, n_beats, duration, check_formulas=False, frame=frame,
     )
     attempts += 1
     if ok:

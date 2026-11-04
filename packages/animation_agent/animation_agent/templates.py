@@ -16,12 +16,6 @@ import textwrap
 
 from syllabyte_common.models import Segment
 
-FRAME_WIDTH = 4.5
-FRAME_HEIGHT = 8.0
-SAFE_WIDTH = FRAME_WIDTH - 0.6
-SAFE_HEIGHT = FRAME_HEIGHT - 0.8
-
-
 def build_template_scene(segment: Segment, class_name: str) -> str:
     """Returns Manim Python source (as text) for a deterministic scene, used
     as the final tier of the repair ladder when every LLM attempt fails.
@@ -36,8 +30,8 @@ def build_template_scene(segment: Segment, class_name: str) -> str:
         # === Beat {n} ===
         {fade_previous}line = Text({textwrap.fill(beat.narration, 22)!r}, font_size=36, color=WHITE)
         self.place_in_area(line, "B1", "E6")
-        line.scale_to_fit_width(min(line.width, {SAFE_WIDTH:.2f}))
-        line.scale_to_fit_height(min(line.height, {SAFE_HEIGHT * 0.6:.2f}))
+        line.scale_to_fit_width(min(line.width, config.frame_width - 0.6))
+        line.scale_to_fit_height(min(line.height, (config.frame_height - 0.8) * 0.6))
         self.play(FadeIn(line), run_time=0.4)
         self.end_beat({n})
 """)

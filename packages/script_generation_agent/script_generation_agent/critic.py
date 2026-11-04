@@ -11,8 +11,13 @@ a revision instruction, up to MAX_ROUNDS total attempts.
 
 from __future__ import annotations
 
-from script_generation_agent.prompts import CRITIQUE_SYSTEM_PROMPT, build_critique_prompt, critique_system_prompt
-from script_generation_agent.script_writer import gather_source_material, write_script
+from script_generation_agent.prompts import (
+    CRITIQUE_SYSTEM_PROMPT,
+    build_critique_prompt,
+    critique_system_prompt,
+    dialogue_critique_system_prompt,
+)
+from script_generation_agent.script_writer import Style, gather_source_material, write_script
 from syllabyte_common.llm import DEFAULT_MODEL, structured, text_block
 from syllabyte_common.models import (
     CourseCorpus,
@@ -64,6 +69,7 @@ def write_script_with_critique(
     skip_critic: bool = False,
     level: int | None = None,
     prereq_titles: list[str] | None = None,
+    style: Style = "monologue",
 ) -> tuple[Script, CritiqueResult]:
     """Writes a script, critiques it, and regenerates (up to MAX_ROUNDS-1
     additional times) if any critique score falls below threshold. With
@@ -74,11 +80,17 @@ def write_script_with_critique(
     script: Script | None = None
     system = CRITIQUE_SYSTEM_PROMPT if level is None else critique_system_prompt(level)
     stage = "critique" if level is None else f"critique_l{level}"
+    if style == "dialogue":
+        from syllabyte_common.cast import load_cast
+
+        cast = load_cast()
+        system = dialogue_critique_system_prompt(level or 2, explainer=cast.explainer.name, peer=cast.peer.name)
+        stage = f"critique_dialogue_l{level}"
 
     for round_num in range(1, MAX_ROUNDS + 1):
         script = write_script(
             ku, corpus, model=model, manifest=manifest, extra_instruction=extra_instruction,
-            level=level, prereq_titles=prereq_titles,
+            level=level, prereq_titles=prereq_titles, style=style,
         )
 
         if skip_critic:
@@ -119,6 +131,7 @@ if __name__ == "__main__":
     parser.add_argument("--ku-id", required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--level", type=int, choices=[1, 2, 3], default=None, help="write for one student's level on this KU")
+    parser.add_argument("--style", choices=["monologue", "dialogue"], default="monologue", help="dialogue: two characters (needs --level)")
     args = parser.parse_args()
 
     corpus = _Corpus.model_validate_json(Path(args.corpus).read_text())
@@ -127,11 +140,13 @@ if __name__ == "__main__":
 
     manifest = RunManifest(run_id="cli")
     prereqs = [k.title for k in kus.knowledge_units if k.id in ku.prerequisites]
-    script, result = write_script_with_critique(ku, corpus, manifest=manifest, level=args.level, prereq_titles=prereqs)
+    script, result = write_script_with_critique(
+        ku, corpus, manifest=manifest, level=args.level, prereq_titles=prereqs, style=args.style,
+    )
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    suffix = f".L{args.level}" if args.level else ""
+    suffix = (f".L{args.level}" if args.level else "") + (".dialogue" if args.style == "dialogue" else "")
     (out_dir / f"script{suffix}.json").write_text(script.model_dump_json(indent=2))
     (out_dir / f"critique{suffix}.json").write_text(result.model_dump_json(indent=2))
     (out_dir / f"manifest{suffix}.json").write_text(manifest.model_dump_json(indent=2))

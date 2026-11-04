@@ -147,11 +147,63 @@ class Script(BaseModel):
         return " ".join(seg.narration for seg in self.segments)
 
 
+# --------------------------------------------------------------------------
+# Dialogue scripts (research_notes/dialogue-framework.md)
+#
+# Two characters talk the idea through: an explainer and a peer who is learning it, like the viewer. Inside each
+# CLT-bLM phase the beats follow the five-step tutoring frame (Graesser, Person & Magliano 1995): question ->
+# the peer's answer -> the explainer's feedback -> building the answer together -> checking understanding. These
+# are subclasses, so the monologue schema the writer fills in is unchanged, and every stage that takes a Script
+# takes a DialogueScript too.
+# --------------------------------------------------------------------------
+
+Speaker = Literal["explainer", "peer"]
+
+# question:  a deep question (why / how / what-if / compare) about the idea
+# answer:    the peer's first answer: partial, or a misconception (then `misconception` is true)
+# feedback:  the explainer says what is right or wrong in the answer and explains why
+# build:     the two work toward the full answer, one step per beat
+# predict:   a line to the viewer: guess before the answer is shown
+# check:     the peer restates the idea in their own words; the explainer confirms or sharpens it
+# objective: the explainer states what the viewer will be able to do (the initiate phase)
+TutorStep = Literal["question", "answer", "feedback", "build", "predict", "check", "objective"]
+
+
+class DialogueBeat(Beat):
+    speaker: Speaker
+    step: TutorStep
+    # True when this line voices a wrong idea. The explainer's next line corrects it, with the reason.
+    misconception: bool
+
+
+class DialogueSegment(Segment):
+    beats: list[DialogueBeat] = Field(min_length=1)
+
+
+class DialogueScript(Script):
+    segments: list[DialogueSegment]
+    style: Literal["dialogue"]
+
+
+def load_script(json_text: str) -> Script:
+    """A script.json as the class it was written as: a DialogueScript when it says so, else a Script."""
+    import json
+
+    data = json.loads(json_text)
+    schema = DialogueScript if isinstance(data, dict) and data.get("style") == "dialogue" else Script
+    return schema.model_validate(data)
+
+
+# The part of the 9:16 frame Manim draws: all of it, or the top 70% when a dialogue band sits underneath.
+FrameName = Literal["full", "dialogue"]
+
+
 class RenderSegment(Segment):
     """A segment as the animation stage sees it: with the video's colour key, so every codegen and repair prompt
-    carries it and a changed key invalidates the segment's render cache."""
+    carries it and a changed key invalidates the segment's render cache, and with the frame it is drawn in."""
 
     colour_key: list[TermColour] = Field(default_factory=list)
+    frame: FrameName = "full"
 
 
 class CritiqueScore(BaseModel):
@@ -187,6 +239,12 @@ class CritiqueResult(BaseModel):
 RenderTier = Literal["llm_first_try", "llm_repaired", "llm_regenerated", "template_fallback"]
 
 
+class WordTiming(BaseModel):
+    word: str
+    start: float
+    end: float
+
+
 class SegmentAudio(BaseModel):
     segment_index: int
     wav_path: str
@@ -195,6 +253,9 @@ class SegmentAudio(BaseModel):
     srt_end: float
     # Per-beat durations (sum == duration_seconds); empty for pre-beat runs.
     beat_durations: list[float] = Field(default_factory=list)
+    # Per beat, each spoken word with its start and end in seconds from the start of that beat (the burned-in
+    # captions of dialogue videos follow them). Empty when the backend gives no word timings.
+    beat_words: list[list[WordTiming]] = Field(default_factory=list)
 
 
 class RenderResult(BaseModel):

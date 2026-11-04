@@ -48,6 +48,7 @@ PIPELINE_VERSION = "2026-11-04"  # script visuals may name plugin-drawn things (
 MAX_ATTEMPTS = 2
 
 JobState = Literal["queued", "making", "ready", "failed"]
+VideoStyle = Literal["monologue", "dialogue"]
 
 
 def cited_slide_content(corpus: CourseCorpus, ku: KnowledgeUnit) -> str:
@@ -72,17 +73,21 @@ def video_key(
     level: int,
     prereq_titles: list[str],
     version: str = PIPELINE_VERSION,
+    style: VideoStyle = "monologue",
 ) -> str:
-    payload = json.dumps(
-        {
-            "slides": cited_slide_content(corpus, ku),
-            "ku": ku.model_dump(mode="json"),
-            "prerequisites": prereq_titles,
-            "level": level,
-            "version": version,
-        },
-        sort_keys=True,
-    )
+    content = {
+        "slides": cited_slide_content(corpus, ku),
+        "ku": ku.model_dump(mode="json"),
+        "prerequisites": prereq_titles,
+        "level": level,
+        "version": version,
+    }
+    if style == "dialogue":
+        from syllabyte_common.cast import cast_fingerprint
+
+        # A monologue's key is unchanged; a dialogue is remade when its characters change.
+        content |= {"style": style, "cast": cast_fingerprint()}
+    payload = json.dumps(content, sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
@@ -90,6 +95,7 @@ class VideoJob(BaseModel):
     key: str
     ku_id: str
     level: int = Field(ge=1, le=3)
+    style: VideoStyle = "monologue"
     # Where the generator finds the course: a directory with corpus.json and kus.json.
     course_dir: str
     state: JobState = "queued"
@@ -151,7 +157,10 @@ class VideoStore:
 
     # -- the app's side --------------------------------------------------------
 
-    def request(self, key: str, *, ku_id: str, level: int, course_dir: str | Path, priority: int = 0) -> VideoJob:
+    def request(
+        self, key: str, *, ku_id: str, level: int, course_dir: str | Path, priority: int = 0,
+        style: VideoStyle = "monologue",
+    ) -> VideoJob:
         """The video for `key`: ready from the cache, or queued (moved up the
         queue when asked for sooner than before). A failed video is queued
         again until it has been tried MAX_ATTEMPTS times."""
@@ -159,7 +168,7 @@ class VideoStore:
             job = self._load(key)
             if job is None:
                 return self._save(VideoJob(
-                    key=key, ku_id=ku_id, level=level, course_dir=str(course_dir), priority=priority,
+                    key=key, ku_id=ku_id, level=level, course_dir=str(course_dir), priority=priority, style=style,
                 ))
             if job.state == "ready":
                 if job.video_path and Path(job.video_path).exists():

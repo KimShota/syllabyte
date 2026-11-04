@@ -70,7 +70,7 @@ function heading(visual: string | null): string | undefined {
 }
 
 function transcript(video: Video): TranscriptLine[] {
-  return video.transcript.map((r) => ({ t: r.t, text: r.narration, heading: heading(r.visual) }));
+  return video.transcript.map((r) => ({ t: r.t, text: r.narration, heading: heading(r.visual), speaker: r.speaker ?? undefined }));
 }
 
 /** The slides a KU is made from: its video's, else the ones its questions cite, else its lecture's. */
@@ -102,6 +102,7 @@ const DEMO_KUS: Record<string, Ku> = Object.fromEntries(
         durationS: video?.duration_s ?? STAND_IN_S,
         scene: SCENES[k.id] ?? statement(lectureTitle(k.lecture_n), k.short_title, []),
         transcript: video ? transcript(video) : [],
+        captionsBurnedIn: video?.captions_burned_in ?? false,
       },
     ];
   }),

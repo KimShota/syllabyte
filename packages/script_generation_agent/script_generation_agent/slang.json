@@ -1,0 +1,30 @@
+{
+  "_about": "Gen-Z phrases dialogue scripts may use (slang.py). Each is written exactly as it is spoken, so the voice and the burned-in captions say the same thing. Slang dates fast: review this list every term. Keep out profanity, anything that mocks a wrong answer, and single letters or words that are also maths names (W, L, mid, ate).",
+  "phrases": [
+    {"phrase": "no cap", "meaning": "honestly, no lie", "example": "No cap, this is the whole trick."},
+    {"phrase": "for real", "meaning": "seriously; or asking 'really?'", "example": "Wait, for real? It just gets longer?"},
+    {"phrase": "lowkey", "also": ["low-key", "low key"], "meaning": "somewhat, quietly", "example": "That's lowkey the easiest part."},
+    {"phrase": "highkey", "also": ["high-key", "high key"], "meaning": "very, openly", "example": "I highkey thought it would rotate."},
+    {"phrase": "not gonna lie", "meaning": "honestly", "example": "Not gonna lie, I'd have guessed the opposite."},
+    {"phrase": "it's giving", "also": ["it is giving"], "meaning": "it looks like, it has the feel of", "example": "It's giving a straight line."},
+    {"phrase": "bet", "meaning": "okay, deal", "example": "Bet, let's try a bigger list."},
+    {"phrase": "say less", "meaning": "got it, show me", "example": "Say less, run it on that example."},
+    {"phrase": "bro", "also": ["bruh"], "meaning": "friendly 'come on'", "example": "Bro, it only changes length."},
+    {"phrase": "that's wild", "meaning": "that's surprising", "example": "That's wild, it skips half the list."},
+    {"phrase": "the math is mathing", "also": ["the maths is mathing"], "meaning": "it adds up, it makes sense", "example": "Okay, the math is mathing now."},
+    {"phrase": "understood the assignment", "meaning": "did exactly what was needed", "example": "That pivot understood the assignment."},
+    {"phrase": "main character", "meaning": "the one that matters most here", "example": "The base case is the main character."},
+    {"phrase": "rent free", "meaning": "stuck in my head", "example": "That picture lives in my head rent free."},
+    {"phrase": "hits different", "meaning": "feels special, works better", "example": "Seeing it drawn hits different."},
+    {"phrase": "big brain", "meaning": "clever", "example": "Big brain move, start from the end."},
+    {"phrase": "vibe check", "meaning": "quick test", "example": "Vibe check: what happens with zero?"},
+    {"phrase": "plot twist", "meaning": "surprising turn", "example": "Plot twist, it never moves at all."},
+    {"phrase": "sus", "meaning": "suspicious, doubtful", "example": "That step looks sus to me."},
+    {"phrase": "locked in", "meaning": "focused", "example": "Okay, I'm locked in."},
+    {"phrase": "we're cooked", "meaning": "we're in trouble", "example": "If the list is huge, are we cooked?"},
+    {"phrase": "here's the tea", "meaning": "here's the key fact", "example": "Here's the tea: only the direction stays."},
+    {"phrase": "it's a vibe", "meaning": "it works nicely", "example": "Halving every time, it's a vibe."},
+    {"phrase": "slay", "meaning": "great job", "example": "Slay, that's exactly it."},
+    {"phrase": "aura", "meaning": "cool points", "example": "Plus a thousand aura for that answer."}
+  ]
+}

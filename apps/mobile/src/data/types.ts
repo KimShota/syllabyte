@@ -9,6 +9,8 @@ export interface TranscriptLine {
   text: string;
   /** a short label for the transcript list */
   heading?: string;
+  /** who says this line, in a dialogue video */
+  speaker?: string;
 }
 
 /** What the player draws while there's no rendered video file for a KU (the design's motion-graphic frame). */
@@ -39,6 +41,8 @@ export interface Ku {
   videoUri?: string;
   scene: Scene;
   transcript: TranscriptLine[];
+  /** the video draws its own captions (dialogue videos), so the player doesn't overlay the transcript */
+  captionsBurnedIn?: boolean;
 }
 
 export interface LectureSectionDef {

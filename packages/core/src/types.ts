@@ -194,6 +194,8 @@ export interface TranscriptRow {
   t: number;
   narration: string;
   visual: string | null;
+  /** who says the line, in a dialogue video (the character's name) */
+  speaker?: string | null;
 }
 
 export interface Video {
@@ -216,6 +218,8 @@ export interface Video {
   claims: Claim[];
   tailoring: Record<"1" | "2" | "3", TailoringSkeleton[]>;
   transcript: TranscriptRow[];
+  /** dialogue videos draw their own captions, so players don't overlay the transcript */
+  captions_burned_in?: boolean;
   source_slides: number[];
   prerequisite_titles: string[];
   review_status: ReviewStatus;

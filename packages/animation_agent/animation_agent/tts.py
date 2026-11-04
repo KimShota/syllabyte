@@ -9,7 +9,11 @@ Three interchangeable backends, selected with --tts on the CLI:
   - "elevenlabs": highest quality, requires ELEVENLABS_API_KEY and the
     `elevenlabs` extra (`uv sync --extra elevenlabs`).
 
-Each backend implements synthesize(text, out_wav_path) -> duration_seconds.
+Each backend implements synthesize(text, out_wav_path, voice=None) ->
+duration_seconds. Kokoro also gives each word's timing (synthesize_words),
+which the burned-in captions of dialogue videos follow; for the other
+backends the timings are estimated from word length. In a dialogue script
+each beat is read in its speaker's voice (syllabyte_common/cast.py).
 Audio is synthesized BEFORE animation, one clip per beat (sentence): each
 beat's duration is what that beat's animations are padded to fill (see
 layout.GridLayoutScene.end_beat), so audio/video sync is driven by
@@ -26,46 +30,91 @@ from typing import Protocol
 
 import soundfile as sf
 
-from syllabyte_common.models import Script, Segment, SegmentAudio
+from syllabyte_common.models import DialogueScript, Script, Segment, SegmentAudio, WordTiming
 
 KOKORO_SAMPLE_RATE = 24000
 DEFAULT_KOKORO_VOICE = "af_heart"
 # Silence between beats (sentences) within a segment: a natural pause, and
 # a moment for the viewer to take in the visual before the next one starts.
 BEAT_GAP_SECONDS = 0.25
+# In a dialogue, the pause when the other character starts talking: short, so the back-and-forth stays snappy.
+SPEAKER_GAP_SECONDS = 0.12
 
-_kokoro_pipeline = None  # lazy singleton — loading the model takes a few seconds
+_kokoro_pipelines: dict[str, object] = {}  # one per accent; loading the model takes a few seconds
 
 
 class TTSBackend(Protocol):
-    def synthesize(self, text: str, out_wav_path: Path) -> float: ...
+    def synthesize(self, text: str, out_wav_path: Path, voice: str | None = None) -> float: ...
+
+
+def estimate_words(text: str, duration: float) -> list[WordTiming]:
+    """Word timings spread over `duration` in proportion to each word's length: for backends that give none."""
+    words = text.split()
+    total = sum(len(w) for w in words) or 1
+    timings, t = [], 0.0
+    for w in words:
+        end = t + duration * len(w) / total
+        timings.append(WordTiming(word=w, start=t, end=end))
+        t = end
+    return timings
+
+
+def _attach_punctuation(tokens: list[tuple[str, float | None, float | None]]) -> list[WordTiming]:
+    """Kokoro's tokens with punctuation joined onto the word before it ("Peter" + "," -> "Peter,"), and tokens
+    without a timestamp given the previous token's end."""
+    words: list[WordTiming] = []
+    last_end = 0.0
+    for text, start, end in tokens:
+        start = last_end if start is None else start
+        end = start if end is None else end
+        if words and not any(ch.isalnum() for ch in text):
+            words[-1].word += text
+            words[-1].end = max(words[-1].end, end)
+        elif text.strip():
+            words.append(WordTiming(word=text, start=start, end=end))
+        last_end = end
+    return words
 
 
 class KokoroBackend:
-    def __init__(self, voice: str = DEFAULT_KOKORO_VOICE, lang_code: str = "a"):
+    def __init__(self, voice: str = DEFAULT_KOKORO_VOICE):
         self.voice = voice
-        self.lang_code = lang_code
 
-    def _pipeline(self):
-        global _kokoro_pipeline
-        if _kokoro_pipeline is None:
+    @staticmethod
+    def _pipeline(voice: str):
+        # A Kokoro voice id starts with its accent's language code ("a" American, "b" British).
+        lang_code = voice[0]
+        if lang_code not in _kokoro_pipelines:
             from kokoro import KPipeline
 
-            _kokoro_pipeline = KPipeline(lang_code=self.lang_code)
-        return _kokoro_pipeline
+            _kokoro_pipelines[lang_code] = KPipeline(lang_code=lang_code, repo_id="hexgrad/Kokoro-82M")
+        return _kokoro_pipelines[lang_code]
 
-    def synthesize(self, text: str, out_wav_path: Path) -> float:
+    def synthesize_words(self, text: str, out_wav_path: Path, voice: str | None = None) -> tuple[float, list[WordTiming]]:
         import numpy as np
 
-        pipeline = self._pipeline()
-        chunks = []
-        for result in pipeline(text, voice=self.voice):
-            if result.audio is not None:
-                chunks.append(result.audio.numpy())
+        voice = voice or self.voice
+        chunks, tokens = [], []
+        offset = 0.0
+        for result in self._pipeline(voice)(text, voice=voice):
+            if result.audio is None:
+                continue
+            audio = result.audio.numpy()
+            for tok in result.tokens or []:
+                start = None if tok.start_ts is None else offset + tok.start_ts
+                end = None if tok.end_ts is None else offset + tok.end_ts
+                tokens.append((tok.text, start, end))
+            chunks.append(audio)
+            offset += len(audio) / KOKORO_SAMPLE_RATE
         audio = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
         out_wav_path.parent.mkdir(parents=True, exist_ok=True)
         sf.write(str(out_wav_path), audio, KOKORO_SAMPLE_RATE)
-        return len(audio) / KOKORO_SAMPLE_RATE
+        duration = len(audio) / KOKORO_SAMPLE_RATE
+        words = _attach_punctuation(tokens)
+        return duration, words if words else estimate_words(text, duration)
+
+    def synthesize(self, text: str, out_wav_path: Path, voice: str | None = None) -> float:
+        return self.synthesize_words(text, out_wav_path, voice)[0]
 
 
 class SayBackend:
@@ -78,7 +127,8 @@ class SayBackend:
         if shutil.which("ffmpeg") is None:
             raise RuntimeError("ffmpeg is required to convert `say`'s AIFF output to WAV")
 
-    def synthesize(self, text: str, out_wav_path: Path) -> float:
+    def synthesize(self, text: str, out_wav_path: Path, voice: str | None = None) -> float:
+        # `voice` is a Kokoro id, which `say` doesn't have: both characters get this backend's voice.
         out_wav_path.parent.mkdir(parents=True, exist_ok=True)
         aiff_path = out_wav_path.with_suffix(".aiff")
         subprocess.run(["say", "-v", self.voice, "-o", str(aiff_path), text], check=True)
@@ -103,7 +153,7 @@ class ElevenLabsBackend:
         self.client = ElevenLabs(api_key=api_key)
         self.voice_id = voice_id or "21m00Tcm4TlvDq8ikWAM"  # "Rachel", a default stock voice
 
-    def synthesize(self, text: str, out_wav_path: Path) -> float:
+    def synthesize(self, text: str, out_wav_path: Path, voice: str | None = None) -> float:
         out_wav_path.parent.mkdir(parents=True, exist_ok=True)
         audio_bytes = b"".join(
             self.client.text_to_speech.convert(
@@ -133,27 +183,53 @@ def get_backend(name: str) -> TTSBackend:
 # --------------------------------------------------------------------------
 
 
-def _synthesize_beats(backend: TTSBackend, seg: Segment, wav_path: Path) -> list[float]:
-    """Synthesizes each beat's sentence as its own clip, then joins them
-    (with BEAT_GAP_SECONDS of silence between beats) into one segment WAV.
+def _synthesize_beat(backend: TTSBackend, text: str, path: Path, voice: str | None) -> list[WordTiming]:
+    if isinstance(backend, KokoroBackend):
+        return backend.synthesize_words(text, path, voice)[1]
+    return estimate_words(text, backend.synthesize(text, path, voice))
+
+
+def _synthesize_beats(
+    backend: TTSBackend, seg: Segment, wav_path: Path,
+    voices: list[str | None] | None = None, gaps: list[float] | None = None,
+) -> tuple[list[float], list[list[WordTiming]]]:
+    """Synthesizes each beat's sentence as its own clip (in `voices[j]`, when
+    given), then joins them, with `gaps[j]` seconds of silence after beat j
+    (BEAT_GAP_SECONDS by default; none after the last), into one segment WAV.
     Returns each beat's duration, gap included, so the scene can end beat
-    N's animations exactly when sentence N finishes."""
+    N's animations exactly when sentence N finishes, and each beat's word
+    timings from the start of that beat."""
     import numpy as np
 
-    chunks, durations = [], []
+    chunks, durations, words = [], [], []
     sample_rate = None
     for j, beat in enumerate(seg.beats):
         beat_path = wav_path.with_name(f"{wav_path.stem}_beat_{j}.wav")
-        backend.synthesize(beat.narration, beat_path)
+        words.append(_synthesize_beat(backend, beat.narration, beat_path, voices[j] if voices else None))
         audio, sample_rate = sf.read(str(beat_path), dtype="float32")
         beat_path.unlink(missing_ok=True)
         if j < len(seg.beats) - 1:
-            gap = np.zeros((int(BEAT_GAP_SECONDS * sample_rate), *audio.shape[1:]), dtype="float32")
+            gap_seconds = gaps[j] if gaps else BEAT_GAP_SECONDS
+            gap = np.zeros((int(gap_seconds * sample_rate), *audio.shape[1:]), dtype="float32")
             audio = np.concatenate([audio, gap])
         chunks.append(audio)
         durations.append(len(audio) / sample_rate)
     sf.write(str(wav_path), np.concatenate(chunks), sample_rate)
-    return durations
+    return durations, words
+
+
+def _dialogue_voices_and_gaps(script: DialogueScript, i: int) -> tuple[list[str], list[float]]:
+    """Segment i's beats in their speakers' voices, with a short pause where the other character takes over."""
+    from syllabyte_common.cast import load_cast
+
+    cast = load_cast()
+    beats = script.segments[i].beats
+    voices = [cast.of(b.speaker).voice for b in beats]
+    gaps = [
+        SPEAKER_GAP_SECONDS if j + 1 < len(beats) and beats[j + 1].speaker != b.speaker else BEAT_GAP_SECONDS
+        for j, b in enumerate(beats)
+    ]
+    return voices, gaps
 
 
 def synthesize_segments(
@@ -164,7 +240,8 @@ def synthesize_segments(
     t = 0.0
     for i, seg in enumerate(script.segments):
         wav_path = audio_dir / f"seg_{i}.wav"
-        beat_durations = _synthesize_beats(backend, seg, wav_path)
+        voices, gaps = _dialogue_voices_and_gaps(script, i) if isinstance(script, DialogueScript) else (None, None)
+        beat_durations, beat_words = _synthesize_beats(backend, seg, wav_path, voices, gaps)
         duration = sum(beat_durations)
         results.append(
             SegmentAudio(
@@ -174,6 +251,7 @@ def synthesize_segments(
                 srt_start=t,
                 srt_end=t + duration,
                 beat_durations=beat_durations,
+                beat_words=beat_words,
             )
         )
         t += duration

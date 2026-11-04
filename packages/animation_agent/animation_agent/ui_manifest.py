@@ -105,7 +105,9 @@ def describe_visual(visual: dict | str | None) -> str | None:
     return f"{label}: " + " — ".join(pieces) if pieces else None
 
 
-def _segment_rows(seg: dict, start: float, end: float, beat_durations: list[float]) -> list[TranscriptRow]:
+def _segment_rows(
+    seg: dict, start: float, end: float, beat_durations: list[float], names: dict[str, str] | None = None,
+) -> list[TranscriptRow]:
     beats = seg.get("beats")
     if beats:  # current format: one sentence + one visual per beat
         rows: list[TranscriptRow] = []
@@ -114,6 +116,7 @@ def _segment_rows(seg: dict, start: float, end: float, beat_durations: list[floa
             rows.append(TranscriptRow(
                 t=round(t, 2), narration=beat["narration"].strip(),
                 visual=describe_visual(beat.get("visual")),
+                speaker=(names or {}).get(beat.get("speaker", "")),
             ))
             t += beat_durations[i] if i < len(beat_durations) else (end - start) / len(beats)
         return rows
@@ -154,9 +157,16 @@ def build_ui_manifest(ku_dir: Path) -> dict:
         raise ValueError(f"{ku_dir.name}: no deliver segment to place the checkpoint after")
     last = deliver[-1]
 
+    dialogue = script.get("style") == "dialogue"
+    names = None
+    if dialogue:
+        from syllabyte_common.cast import load_cast
+
+        cast = load_cast()
+        names = {"explainer": cast.explainer.name, "peer": cast.peer.name}
     transcript: list[TranscriptRow] = []
     for seg, span, a in zip(segments_raw, spans, audio):
-        transcript.extend(_segment_rows(seg, span.start, span.end, a.get("beat_durations") or []))
+        transcript.extend(_segment_rows(seg, span.start, span.end, a.get("beat_durations") or [], names))
 
     slides = sorted({r["slide_number"] for seg in segments_raw for r in seg["source_refs"]})
 
@@ -177,6 +187,7 @@ def build_ui_manifest(ku_dir: Path) -> dict:
             "segment_idx": last,
         },
         "transcript": [r.model_dump() for r in transcript],
+        "captions_burned_in": dialogue,
         "source_slides": slides,
         "poster": "ui/poster.jpg",
         "vtt": "ui/captions.vtt",

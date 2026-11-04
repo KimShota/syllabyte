@@ -231,6 +231,7 @@ class TranscriptRow(BaseModel):
     t: float
     narration: str
     visual: str | None = None
+    speaker: str | None = None  # the character's name, in a dialogue video
 
 
 class VideoFixture(BaseModel):
@@ -257,6 +258,7 @@ class VideoFixture(BaseModel):
     claims: list[Claim]
     tailoring: dict[str, list[TailoringSkeleton]]  # keys "1" | "2" | "3"
     transcript: list[TranscriptRow]
+    captions_burned_in: bool = False  # dialogue videos draw their own captions
     source_slides: list[int]
     prerequisite_titles: list[str] = Field(default_factory=list)
     review_status: ReviewStatus = "unreviewed"

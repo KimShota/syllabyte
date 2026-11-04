@@ -58,7 +58,7 @@ from manim import (
     VMobject,
 )
 
-from animation_agent.manim_prompt import FRAME_HEIGHT, FRAME_WIDTH
+from animation_agent.frame import scene_frame_size
 
 # Smallest legible text on a phone. The codegen prompt asks for font_size
 # >= 36 at creation; this leaves room for the scale_to_fit_width() shrinks
@@ -298,7 +298,8 @@ def _hex(rgb: np.ndarray) -> str:
 
 def _check_frame(units: list[_Unit]) -> list[Finding]:
     """One finding per top-level object, describing every edge it crosses."""
-    half_w, half_h = FRAME_WIDTH / 2, FRAME_HEIGHT / 2
+    width, height = scene_frame_size()  # the frame manim.cfg set (frame.py)
+    half_w, half_h = width / 2, height / 2
     by_top: dict[str, np.ndarray] = {}
     for u in units:
         b = by_top.get(u.top)
@@ -482,7 +483,8 @@ def audit_units(units: list[_Unit], background: np.ndarray) -> list[Finding]:
 def audit_scene(top_level: list[Mobject], names: dict[int, str], background: ManimColor) -> tuple[list[Finding], bool]:
     """Returns (findings, anything_visible_in_frame)."""
     units = collect_units(top_level, names)
-    half_w, half_h = FRAME_WIDTH / 2, FRAME_HEIGHT / 2
+    width, height = scene_frame_size()  # the frame manim.cfg set (frame.py)
+    half_w, half_h = width / 2, height / 2
     in_frame = any(
         u.bbox[2] > -half_w and u.bbox[0] < half_w and u.bbox[3] > -half_h and u.bbox[1] < half_h
         for u in units

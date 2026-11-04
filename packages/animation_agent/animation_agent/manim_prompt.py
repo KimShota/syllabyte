@@ -15,6 +15,7 @@ from pathlib import Path
 
 from syllabyte_common.models import Segment
 
+from animation_agent.frame import FULL, Frame, frame_of
 from animation_agent.plugins import plugin_cards, plugin_cards_for
 
 EXAMPLES_DIR = Path(__file__).parent / "examples"
@@ -110,7 +111,20 @@ Everything else in this prompt (grid, legibility, beats) still applies.\
 """
 
 
-def _build_system_prompt(class_name: str) -> str:
+def _frame_notes(frame: Frame) -> str:
+    """What differs about a dialogue video's frame: the scene is the top 70% of the video."""
+    if frame.name == "full":
+        return ""
+    return (
+        f"  - Your scene fills the TOP 70% of the video: the bottom 30% shows the speaking character and the "
+        f"captions, added later, so the frame is short as well as narrow ({frame.width} x {frame.height}). Use the "
+        f"height well, but no more than about 4 rows of boxes fit. Sizes in the plugin rules below are for an "
+        f"8-unit-tall frame: keep everything within y in [-{frame.safe_height / 2:.2f}, {frame.safe_height / 2:.2f}] "
+        "here.\n"
+    )
+
+
+def _build_system_prompt(class_name: str, frame: Frame = FULL) -> str:
     # Built directly as an f-string per call (rather than a stored template
     # + .format()) because the few-shot example source code contains its
     # own curly braces (dict literals, e.g. Axes' axis_config={...}), which
@@ -123,10 +137,11 @@ fences, no explanation, no comments about what you're about to do.
 
 Frame geometry (CRITICAL — this is a vertical 9:16 video, not the Manim \
 default 16:9):
-  - The camera frame is {FRAME_WIDTH} units wide x {FRAME_HEIGHT} units tall.
-  - Keep all mobjects within x in [-{SAFE_WIDTH/2:.2f}, {SAFE_WIDTH/2:.2f}] \
-and y in [-{SAFE_HEIGHT/2:.2f}, {SAFE_HEIGHT/2:.2f}] — this is a NARROW \
+  - The camera frame is {frame.width} units wide x {frame.height} units tall.
+  - Keep all mobjects within x in [-{frame.safe_width/2:.2f}, {frame.safe_width/2:.2f}] \
+and y in [-{frame.safe_height/2:.2f}, {frame.safe_height/2:.2f}] — this is a NARROW \
 frame, so prefer stacking content vertically over spreading it horizontally.
+{_frame_notes(frame)}
   - Every Text/MathTex/Tex object must render legibly: never use font_size \
 below 36, and pick a `scale_factor` on the grid call below that keeps the \
 object's rendered width comfortably inside its cell(s).
@@ -154,7 +169,7 @@ fixes, so consistent use of it is what makes those fixes possible.
 Legibility (CRITICAL — an automated check measures the scene after every animation and \
 rejects the scene if any of these fail):
   - Size the diagram for the frame before placing it: the whole group must \
-be at most {SAFE_WIDTH:.1f} units wide and {SAFE_HEIGHT:.1f} tall at the \
+be at most {frame.safe_width:.1f} units wide and {frame.safe_height:.1f} tall at the \
 scale_factor you give. That fits at most two boxes side by side; put \
 anything more in a column. Oversized groups are shrunk to fit \
 automatically, which shrinks their labels too.
@@ -260,7 +275,7 @@ def format_beats(segment: Segment, beat_durations: list[float]) -> str:
 def build_generation_prompt(
     segment: Segment, beat_durations: list[float], class_name: str
 ) -> tuple[str, str]:
-    system = _build_system_prompt(class_name)
+    system = _build_system_prompt(class_name, frame_of(segment))
     user = f"""\
 Segment phase: {segment.phase}
 
@@ -314,6 +329,7 @@ def build_layout_repair_prompt(
     code: str, problems: str, segment: Segment, beat_durations: list[float], class_name: str,
 ) -> str:
     n_beats = len(beat_durations)
+    frame = frame_of(segment)
     return f"""\
 The following Manim scene renders, but an automated legibility check \
 found the problems below: on a phone screen they make the animation hard \
@@ -325,9 +341,9 @@ exactly {n_beats} beats, each ending with `self.end_beat(N)` for N = \
 1..{n_beats} in order, with `self.end_beat({n_beats})` as the last \
 statement of construct(). Make sure each fix doesn't create a new overlap \
 somewhere else. The rules being checked:
-  - The whole diagram fits the frame: at most {SAFE_WIDTH:.1f} units wide \
-and {SAFE_HEIGHT:.1f} tall (x within ±{SAFE_WIDTH / 2:.2f}, y within \
-±{SAFE_HEIGHT / 2:.2f}), at every moment.
+  - The whole diagram fits the frame: at most {frame.safe_width:.1f} units wide \
+and {frame.safe_height:.1f} tall (x within ±{frame.safe_width / 2:.2f}, y within \
+±{frame.safe_height / 2:.2f}), at every moment.
   - Every label renders at font size 28 or more after all scaling.
   - No arrow, line, shape border, dot, or other label touches or crosses a \
 label; labels inside shapes sit fully inside them.

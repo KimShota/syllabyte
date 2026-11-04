@@ -108,6 +108,44 @@ uv run python scripts/video_jobs.py --store runs/videos status    # where each v
 
 The server's upload worker (`apps/server/README.md`) does not call this yet; run it by hand.
 
+### Dialogue videos (`--style dialogue`)
+
+Two characters talk the idea through, with Gen-Z slang, for CS and maths decks.
+The framework and its sources are in `research_notes/dialogue-framework.md`:
+
+- **Script.** The video still follows the CLT-bLM phases. Inside each phase, the
+  lines follow the five-step tutoring frame:
+  question → the peer's answer → the explainer's feedback with the reason →
+  building the answer together → the peer restating it.
+  - The peer voices a misconception in the first deliver segment, and the
+    explainer's next line corrects it and explains why.
+  - One line asks the viewer to pause and predict.
+  - Slang comes only from `script_generation_agent/slang.json`, at most one
+    phrase per 2–3 lines, and never in a definition, formula or recap line.
+  - `validate_dialogue` (`script_writer.py`) rejects scripts that break these
+    rules, and the writer gets two rewrites.
+  - Dialogue scripts are 150–250 words.
+- **Picture.** Manim draws the top 70% of the frame (4.5 × 5.6 units,
+  `animation_agent/frame.py`). `animation_agent/dialogue_band.py` adds the
+  bottom 30%:
+  - the speaking character, on their side of the screen;
+  - burned-in captions (2–4 words at a time, timed to Kokoro's word timings),
+    with colour-key terms drawn in their diagram colour.
+
+  The app hides its own caption overlay for these videos (`captions_burned_in`).
+- **Characters.** `media/characters/cast.json` holds each character's name,
+  image, Kokoro voice and side of the screen. It's gitignored, because the
+  images are not ours to publish. The file format is in `syllabyte_common/cast.py`.
+
+```bash
+uv run python scripts/video_jobs.py --store runs/videos request --style dialogue --course runs/<course> --want <ku-id>:2
+uv run python scripts/video_jobs.py --store runs/videos work
+
+# Scripts only, to read before rendering:
+uv run python -m script_generation_agent.critic --corpus runs/<course>/corpus.json --kus runs/<course>/kus.json \
+    --ku-id <ku-id> --level 2 --style dialogue --out-dir runs/dialogue-scripts/<ku-id>
+```
+
 ### Week-1 shorts (`generate_shorts.py` on its own)
 
 ```bash

@@ -12,6 +12,9 @@ Request per-student videos and make them (plan/per-student-video-plan.md, step 3
 
     uv run python scripts/video_jobs.py status
 
+    # The same, as a dialogue between the two characters in media/characters/cast.json.
+    uv run python scripts/video_jobs.py request --style dialogue --course runs/dev --want ku-potential-outcomes:2
+
 `--course` is a directory with corpus.json and kus.json (a generate_shorts run
 directory). Videos live under --store (default runs/videos).
 """
@@ -58,7 +61,7 @@ def make_video(job: VideoJob, work_dir: Path) -> Path:
     video = make_ku_video(
         ku, corpus, work_dir, manifest=manifest,
         save_manifest=lambda: manifest_path.write_text(manifest.model_dump_json(indent=2)),
-        level=job.level, prereq_titles=prereq_titles,
+        level=job.level, prereq_titles=prereq_titles, style=job.style,
     )
     manifest_path.write_text(manifest.model_dump_json(indent=2))
     log(f"{job.ku_id} at level {job.level}: {time.monotonic() - start:.0f}s")
@@ -69,7 +72,8 @@ def make_video(job: VideoJob, work_dir: Path) -> Path:
 
 def show(job: VideoJob) -> str:
     where = job.video_path if job.state == "ready" else (job.error or "")
-    return f"{job.state:7s} L{job.level} p{job.priority:<3d} {job.ku_id:45s} {where}"
+    style = " dialogue" if job.style == "dialogue" else ""
+    return f"{job.state:7s} L{job.level}{style} p{job.priority:<3d} {job.ku_id:45s} {where}"
 
 
 def main() -> None:
@@ -79,6 +83,7 @@ def main() -> None:
     req = sub.add_parser("request", help="ask for videos (KU:level), in playlist order")
     req.add_argument("--course", required=True, help="directory with corpus.json and kus.json")
     req.add_argument("--want", nargs="+", required=True, metavar="KU:LEVEL")
+    req.add_argument("--style", choices=["monologue", "dialogue"], default="monologue")
     work = sub.add_parser("work", help="make queued videos")
     work.add_argument("--workers", type=int, default=1)
     work.add_argument("--keep-polling", action="store_true", help="wait for new requests instead of stopping when idle")
@@ -94,8 +99,10 @@ def main() -> None:
             if level not in ("1", "2", "3"):
                 raise SystemExit(f"{want}: expected KU:LEVEL with level 1, 2 or 3")
             ku, prereq_titles = find_ku(kus, ku_id)
-            key = video_key(corpus, ku, int(level), prereq_titles)
-            print(show(store.request(key, ku_id=ku_id, level=int(level), course_dir=course.resolve(), priority=position)))
+            key = video_key(corpus, ku, int(level), prereq_titles, style=args.style)
+            print(show(store.request(
+                key, ku_id=ku_id, level=int(level), course_dir=course.resolve(), priority=position, style=args.style,
+            )))
     elif args.command == "work":
         if missing := missing_latex_tools():
             raise SystemExit(f"LaTeX is missing ({', '.join(missing)} not on PATH): see README.md step 2.")

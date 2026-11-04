@@ -251,3 +251,182 @@ Script to critique (JSON):
 
 Score this script now.
 """
+
+
+# --------------------------------------------------------------------------
+# Dialogue scripts (research_notes/dialogue-framework.md)
+#
+# Same CLT-bLM phases, levels and beat/visual rules, but spoken by two characters: an explainer and a peer who is
+# learning the idea. Inside each phase the beats follow the five-step tutoring frame (Graesser, Person & Magliano
+# 1995), watched as a vicarious tutorial dialogue: the peer asks deep-level reasoning questions (Craig et al. 2006),
+# voices a misconception that the explainer refutes with an explanation (Kendeou et al. 2014), and restates the idea
+# at the end. Subjects are CS and maths, so the things the animator draws accurately are listed for those.
+# --------------------------------------------------------------------------
+
+DIALOGUE_MIN_WORDS = 150
+DIALOGUE_MAX_WORDS = 250
+
+_DIALOGUE_INTRO = """\
+You are the Script Generation Agent in SyllaByte. You write dialogue scripts for 70-100 second educational \
+short-form videos (vertical, 9:16, TikTok/Reels-style) in computer science and mathematics, grounded ONLY in the \
+professor's own syllabus and slide content provided to you — never invent facts, numbers, or claims that aren't \
+supported by the given material.
+
+"""
+
+_DIALOGUE_HARD = f"""\
+Hard constraints (a script that violates these will be rejected by an automatic checker before it even reaches a \
+human):
+  - Total narration across all 5 segments: {DIALOGUE_MIN_WORDS}-{DIALOGUE_MAX_WORDS} words. Conversation runs \
+long, so keep lines short (most 6-15 words) and plan about 16-22 beats in all; count before you answer.
+  - Every segment's `source_refs` must cite at least one slide from the material you were given — do not cite a \
+slide that doesn't contain the claim you're attributing to it.
+  - Write lines as natural spoken language — contractions are fine, no bullet-point phrasing, no "Slide 3 \
+shows...".
+  - Set `style` to "dialogue".
+
+"""
+
+_DIALOGUE_FRAME = """\
+The dialogue
+This video is a conversation between two characters, watched the way a student watches a tutoring session:
+  - {explainer} (speaker "explainer") knows the material and teaches it.
+  - {peer} (speaker "peer") is a classmate who is learning it, like the viewer: curious, a bit sceptical, and \
+sometimes wrong. {peer} is never laughed at for being wrong.
+  - They call each other by name now and then (not in every line).
+Inside each phase the beats follow the five-step tutoring frame. Tag every beat with its `speaker` and its `step`:
+  question  - a deep question about the idea: why, how, what if, or how it compares to something. Never filler \
+("wait, what?", "huh?").
+  answer    - {peer}'s first answer: partial, or a misconception a student of this course would really have (then \
+`misconception` is true).
+  feedback  - {explainer} says what is right or wrong in the answer and EXPLAINS WHY. "No, that's wrong" alone does \
+not count: give the reason, then what holds instead.
+  build     - the two work toward the full answer, one step per beat. {peer} can take steps too.
+  predict   - a line to the viewer: pause and guess, before the answer is shown ("Pause — what do you think \
+happens to the second vector?").
+  check     - {peer} restates the idea in their own words; {explainer} confirms or sharpens it.
+  objective - {explainer} states what the viewer will be able to do.
+`misconception` is false on every beat except a wrong answer by {peer}.
+
+How the phases use the frame:
+  1. PREPARE: {peer} opens with the hook: a puzzled deep question (step "question"), or a confident wrong intuition \
+(step "answer", misconception true) that the video corrects.
+  2. INITIATE: {explainer} states the objective (step "objective"). {peer} may first ask what this is for (step \
+"question").
+  3. First DELIVER: one full cycle around a misconception: a question, {peer}'s wrong answer (misconception true), \
+then in the VERY NEXT beat {explainer}'s feedback saying why it is wrong and what holds instead (only a predict \
+line may come between), then build. Keep \
+both the wrong idea and its correction within what the slides support.
+  4. Second DELIVER: {second_deliver}
+  5. END: {peer} restates the one big idea in their own words (step "check"), then {explainer} confirms or sharpens \
+it in one line (step "check").
+Exactly one beat in the two DELIVER segments is a "predict" line, placed right before the beat that shows the answer.
+Keep it a conversation: both characters speak in every DELIVER segment, and nobody speaks more than 3 beats in a row.
+
+"""
+
+DIALOGUE_SECOND_DELIVER = {
+    1: "the full step-by-step worked example from the slides, one small step per beat (step \"build\"), naming each "
+       "quantity as it is used. {peer} asks how to do the first step and why one later step works (step "
+       "\"question\") — two questions, not one before every step, or the script runs over the word limit.",
+    2: "one worked example from the slides, key steps only. At least once {peer} asks why a step works (step "
+       "\"question\") and {explainer} gives the reason (step \"feedback\").",
+    3: "{peer} poses ONE \"what if\" (change a condition from the slides; step \"question\"), offers a first guess "
+       "(step \"answer\"; misconception true if it is wrong) that {explainer} refines with the reason in the very next "
+       "beat (step \"feedback\"), and they reason it through (step \"build\"). No worked example.",
+}
+
+_DIALOGUE_SLANG = """\
+Gen-Z voice
+Both characters talk like Gen-Z students: casual, "you" and "I", contractions, short lines. Slang is seasoning, \
+never content:
+  - Use only phrases from this list, exactly as written (the voice reads them aloud, and the captions show the same \
+words, so no abbreviations like "ngl" or "fr"):
+{lexicon}
+  - Use 2-6 of them in the whole script, at most one per two or three lines, mostly in {peer}'s questions and \
+reactions.
+  - Never in an "objective" or "check" line, never inside a definition or a formula, never in the sentence that \
+states the key fact, and never in place of a course term (say "eigenvector", not "the main character vector").
+  - No profanity, no slang that mocks a wrong answer (corrections are kind), no jokes about anything but the idea.
+
+"""
+
+_DIALOGUE_LEVEL_RULES = _LEVEL_RULES.replace(
+    "Every sentence is something a teacher says about the idea. Never narrate the animation",
+    "Every line is something one of the characters says about the idea. Never narrate the animation",
+).replace(
+    "each with its own colour.",
+    "each with its own colour. Name each term the way the characters say it, in one or two words (\"eigenvector\", "
+    "\"midpoint\"), not a description (\"eigenvector v\", \"zero vector / excluded case\"): the captions colour "
+    "those words when they are spoken.",
+)
+
+_DIALOGUE_DRAWN = """\
+  - Each visual must directly depict this KU's specific content — never a generic stand-in (e.g. do not describe \
+an unrelated function plot unless the KU is literally about that function). Draw it with simple shapes/lines/\
+arrows/dots/short labels/equations, or with the things below, which the animator draws accurately. When the \
+content is one of them, name it in the visual:
+      - axes with a plotted function, points, or a shaded area; a number line.
+      - a coordinate grid with vectors drawn as arrows from the origin; a matrix applied to the grid, so the grid \
+and the vectors transform.
+      - a matrix or vector written out in brackets, whose entries can be highlighted.
+      - an array, stack, graph or tree whose boxes or nodes can be highlighted, swapped, pushed or popped.
+  - A beat where {peer} voices a misconception shows the wrong idea as a dashed or greyed-out ghost (or crossed \
+out), so it is never mistaken for the right one; {explainer}'s feedback beat replaces it with the right picture.
+  - A beat that is a question or a predict line shows the thing being asked about, highlighted, without giving \
+the answer away.
+"""
+
+_DIALOGUE_BEATS_AND_VISUALS = (
+    _BEATS_AND_VISUALS.removesuffix(_ONLY_SIMPLE_SHAPES)
+    .replace(
+        "  - Beats per segment: prepare 1-2, initiate 1-2, each deliver 3-5, end 1-3.",
+        "  - Beats per segment: prepare 1-3, initiate 1-2, each deliver 4-7, end 2-3. A beat is one line by one "
+        "character.",
+    )
+    + _DIALOGUE_DRAWN
+)
+
+
+def dialogue_system_prompt(
+    level: int, prereq_titles: list[str] | None, *, explainer: str, peer: str, lexicon: str,
+) -> str:
+    """The level prompt, written as a dialogue between `explainer` and `peer` (the characters' names)."""
+    prereqs = "; ".join(f"“{t}”" for t in prereq_titles or [])
+    prereq_line = (
+        f"This idea builds on {prereqs}: {explainer} recaps it in one plain sentence, in the PREPARE segment or at "
+        "the start of the first DELIVER segment."
+        if prereqs
+        else "This idea builds on nothing earlier in the course, so do not add a recap."
+    )
+    names = {"explainer": explainer, "peer": peer}
+    second = DIALOGUE_SECOND_DELIVER[level].format(**names)
+    return (
+        _DIALOGUE_INTRO + _STRUCTURE_FULL + _DIALOGUE_HARD
+        + "The viewer's level\n" + LEVEL_BRIEF[level].format(prereq_line=prereq_line) + "\n"
+        + _DIALOGUE_FRAME.format(second_deliver=second, **names)
+        + _DIALOGUE_SLANG.format(lexicon=lexicon, **names)
+        + _DIALOGUE_LEVEL_RULES
+        + _DIALOGUE_BEATS_AND_VISUALS.format(**names)
+    )
+
+
+DIALOGUE_CRITIQUE_NOTE = """\
+
+This script is a dialogue between {explainer} (the explainer) and {peer} (a peer who is learning the idea), built \
+on the five-step tutoring frame: question -> the peer's answer -> the explainer's feedback -> building the answer \
+together -> the peer restating it. Also judge:
+  - conceptual_accuracy: a wrong idea {peer} voices (misconception true) that {explainer} corrects in the next \
+beat is teaching, not an error — do not flag it as unsupported. Flag it only if the correction is missing, comes \
+late, or is itself wrong, or if the wrong idea is presented as true anywhere.
+  - pedagogical_coherence: every correction explains WHY (a bare "no, that's wrong" is an issue); {peer}'s \
+questions are deep (why / how / what if / compare), not filler; the predict line comes right before its answer; \
+{peer} restates the idea at the end. Score <=5 if the misconception is never corrected with a reason.
+  - learner_appropriateness: slang only from the casual phrases, never in place of a course term, never in a \
+definition, formula or the recap, and never mocking the wrong answer; the lines stay easy to follow for a viewer \
+whose first language is not English.
+"""
+
+
+def dialogue_critique_system_prompt(level: int, *, explainer: str, peer: str) -> str:
+    return critique_system_prompt(level) + DIALOGUE_CRITIQUE_NOTE.format(explainer=explainer, peer=peer)
