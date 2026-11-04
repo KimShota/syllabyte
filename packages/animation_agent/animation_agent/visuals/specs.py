@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 # Bump when a template draws differently (or the call language changes): it is part of the cache key of every
 # video drawn with templates (syllabyte_common.video_jobs.video_key), so those videos are made again.
-TEMPLATES_VERSION = "1"
+TEMPLATES_VERSION = "2"
 
 # --------------------------------------------------------------------------
 # Shared vocabulary
@@ -99,6 +99,9 @@ class ActionSpec:
     # Checks the call against what the object holds at that point (e.g. an index is inside the list) and updates
     # that state. Returns a problem, or None.
     check: Callable[[dict, BaseModel], str | None] | None = None
+    # What the call shows, in words, from the object's state after `check` ran: the line's `visual` sentence is
+    # built from these, so it says exactly what is drawn (calls.describe_segment). None: the doc's first sentence.
+    says: Callable[[dict, BaseModel], str] | None = None
 
 
 @dataclass
@@ -112,15 +115,32 @@ class TemplateSpec:
     init_state: Callable[[BaseModel], dict] = lambda params: {}
     min_rows: int = 1  # grid rows (of 6) its area must span to stay legible
     common_actions: dict[str, ActionSpec] = field(default_factory=lambda: dict(COMMON_ACTIONS))
+    noun: str = "picture"  # what the object is called in a visual sentence ("the list", "the grid")
+    describe: Callable[[BaseModel], str] | None = None  # what creating it shows, in words
 
     def all_actions(self) -> dict[str, ActionSpec]:
         return {**self.actions, **self.common_actions}
 
 
 COMMON_ACTIONS = {
-    "remove": ActionSpec("Fade it out. Its name can't be used again in this segment."),
-    "move": ActionSpec("Slide it, shrinking or growing to fit, into another area.", MoveArgs),
+    "remove": ActionSpec("Fade it out. Its name can't be used again in this segment.",
+                         says=lambda s, a: f"the {s['_noun']} fades out"),
+    "move": ActionSpec("Slide it, shrinking or growing to fit, into another area.", MoveArgs,
+                       says=lambda s, a: f"the {s['_noun']} slides into the {_area_words(a.area)}"),
 }
+
+
+def _area_words(area: str) -> str:
+    return "whole frame" if area == "full" else area.replace("_", " ")
+
+
+def _num(x) -> str:
+    """A number as a visual sentence writes it: 3 not 3.0, two decimals at most."""
+    return f"{round(float(x), 2):g}" if isinstance(x, int | float) else str(x)
+
+
+def _matrix_words(m: list[list[float]]) -> str:
+    return "[[" + "], [".join(", ".join(_num(x) for x in row) for row in m) + "]]"
 
 
 # --------------------------------------------------------------------------
@@ -238,6 +258,58 @@ class GhostArgs(_Args):
     _text = field_validator("text")(_short(24))
 
 
+def _describe_array(p: ArrayParams) -> str:
+    kind = "cells" if p.style == "cells" else "bars"
+    out = f"a row of {len(p.values)} {p.colour.lower()} {kind}: {', '.join(_fmt(v) for v in p.values)}"
+    return out + (f', titled "{p.title}"' if p.title else "")
+
+
+def _cells(state: dict, indices) -> str:
+    indices = list(indices)
+    values = ", ".join(_fmt(state["values"][i]) for i in indices)
+    if len(indices) == 1:
+        return f"cell {indices[0]} (value {values})"
+    return f"cells {', '.join(map(str, indices))} (values {values})"
+
+
+def _span(first: int, last: int) -> str:
+    return f"cell {first}" if first == last else f"cells {first}-{last}"
+
+
+def _verb(indices, verb: str) -> str:
+    return verb + "s" if len(list(indices)) == 1 else verb
+
+
+def _said_bisect_check(state: dict, a) -> str:
+    b = state["bisect"]
+    lo, hi = b["range"]
+    mid = (lo + hi) // 2
+    return (f"lo, mid, hi point at cells {lo}, {mid}, {hi}; the middle value {_fmt(state['values'][mid])} is "
+            f"compared with the target {_fmt(b['target'])}")
+
+
+def _said_bisect_discard(state: dict, a) -> str:
+    b = state["bisect"]
+    mid, lo0, hi0, found = b["last"]
+    value, target = state["values"][mid], b["target"]
+    if found:
+        return f"{_fmt(value)} is the target: cell {mid} turns green, found"
+    if value < target:
+        out = f"{_fmt(value)} < {_fmt(target)}, so {_span(lo0, mid)} grey out"
+    else:
+        out = f"{_fmt(value)} > {_fmt(target)}, so {_span(mid, hi0)} grey out"
+    if b["lo"] > b["hi"]:
+        return out + "; nothing is left in play: the target isn't in the list"
+    return out + f"; {_span(b['lo'], b['hi'])} stay in play"
+
+
+def _said_scan(state: dict, a) -> str:
+    out = f"pointer i moves to {_cells(state, [a.index])} and the checks counter goes up by one"
+    if a.target is not None and state["values"][a.index] == a.target:
+        out += "; it matches the target and turns green"
+    return out
+
+
 def _array_state(p: ArrayParams) -> dict:
     return {"values": list(p.values), "pointers": set(), "bisect": None}
 
@@ -269,6 +341,7 @@ def _check_bisect_check(state: dict, a: TargetArgs) -> str | None:
     if b["checked"]:
         return "bisect_check twice in a row: call bisect_discard first"
     b["checked"] = True
+    b["range"] = (b["lo"], b["hi"])
     state["pointers"] |= {"lo", "mid", "hi"}
     return None
 
@@ -277,7 +350,9 @@ def _check_bisect_discard(state: dict, a: NoArgs) -> str | None:
     b = state["bisect"]
     if b is None or not b["checked"]:
         return "bisect_discard needs a bisect_check before it"
-    _, b["lo"], b["hi"], found = bisect_next(state["values"], b["lo"], b["hi"], b["target"])
+    lo0, hi0 = b["lo"], b["hi"]
+    mid, b["lo"], b["hi"], found = bisect_next(state["values"], lo0, hi0, b["target"])
+    b["last"] = (mid, lo0, hi0, found)
     b["checked"] = False
     b["done"] = found or b["lo"] > b["hi"]
     return None
@@ -327,35 +402,52 @@ ARRAY_BARS = TemplateSpec(
     params=ArrayParams,
     min_rows=3,
     init_state=_array_state,
+    noun="list",
+    describe=_describe_array,
     actions={
-        "highlight": ActionSpec("Colour these cells.", IndicesArgs, lambda s, a: _in_range(s, *a.indices)),
-        "clear": ActionSpec("Remove highlights, ghosts and the note (greyed cells stay grey)."),
+        "highlight": ActionSpec("Colour these cells.", IndicesArgs, lambda s, a: _in_range(s, *a.indices),
+                                lambda s, a: f"{_cells(s, a.indices)} {_verb(a.indices, 'turn')} {a.colour.lower()}"),
+        "clear": ActionSpec("Remove highlights, ghosts and the note (greyed cells stay grey).",
+                            says=lambda s, a: "the list's highlights, ghosts and note clear"),
         "grey_out": ActionSpec("Grey out cells start..end: ruled out.", RangeArgs,
-                               lambda s, a: _in_range(s, a.start, a.end)),
-        "restore": ActionSpec("Un-grey every cell."),
-        "point": ActionSpec("Show (or move) a named pointer under a cell.", PointArgs, _check_point),
-        "unpoint": ActionSpec("Remove a pointer.", NameArgs, _check_unpoint),
+                               lambda s, a: _in_range(s, a.start, a.end),
+                               lambda s, a: f"{_span(a.start, a.end)} grey out: ruled out"),
+        "restore": ActionSpec("Un-grey every cell.", says=lambda s, a: "every cell is back in play"),
+        "point": ActionSpec("Show (or move) a named pointer under a cell.", PointArgs, _check_point,
+                            lambda s, a: f'pointer "{a.name}" under {_cells(s, [a.index])}'),
+        "unpoint": ActionSpec("Remove a pointer.", NameArgs, _check_unpoint,
+                              lambda s, a: f'pointer "{a.name}" disappears'),
         "compare": ActionSpec('Highlight two cells and note the comparison, e.g. "4 < 7".', PairArgs,
-                              lambda s, a: _in_range(s, a.i, a.j)),
-        "swap": ActionSpec("Swap two cells (they move past each other).", PairArgs, _check_swap),
-        "set_value": ActionSpec("Change one cell's value.", SetValueArgs, _check_set_value),
-        "note": ActionSpec("A short line of text above the list.", NoteArgs),
-        "counter": ActionSpec('Show or update a counter, e.g. checks: 3.', CounterArgs),
+                              lambda s, a: _in_range(s, a.i, a.j),
+                              lambda s, a: f"{_cells(s, [a.i, a.j])} light up and are compared"),
+        "swap": ActionSpec("Swap two cells (they move past each other).", PairArgs, _check_swap,
+                           lambda s, a: f"cells {a.i} and {a.j} swap places; the row now reads "
+                                        f"{', '.join(_fmt(v) for v in s['values'])}"),
+        "set_value": ActionSpec("Change one cell's value.", SetValueArgs, _check_set_value,
+                                lambda s, a: f"cell {a.index} changes to {_fmt(a.value)}"),
+        "note": ActionSpec("A short line of text above the list.", NoteArgs,
+                           says=lambda s, a: f'note above the list: "{a.text}"'),
+        "counter": ActionSpec('Show or update a counter, e.g. checks: 3.', CounterArgs,
+                              says=lambda s, a: f"counter {a.label}: {a.value}"),
         "scan": ActionSpec("Linear search: pointer i moves to this cell, the checks counter goes up by one.",
-                           ScanArgs, _check_scan),
+                           ScanArgs, _check_scan, _said_scan),
         "bisect_check": ActionSpec(
             "Bisection: show lo, mid, hi on the part still in play and compare the middle value with the target. "
             "The first call starts the search over the whole list. Values must be sorted numbers.",
-            TargetArgs, _check_bisect_check,
+            TargetArgs, _check_bisect_check, _said_bisect_check,
         ),
         "bisect_discard": ActionSpec(
             "Bisection: grey out the half that can't hold the target (or mark mid green if it is the target).",
-            NoArgs, _check_bisect_discard,
+            NoArgs, _check_bisect_discard, _said_bisect_discard,
         ),
-        "bisect_step": ActionSpec("bisect_check and bisect_discard in one line.", TargetArgs, _check_bisect_step),
-        "found": ActionSpec("Mark this cell green: found.", IndexArgs, lambda s, a: _in_range(s, a.index)),
+        "bisect_step": ActionSpec("bisect_check and bisect_discard in one line.", TargetArgs, _check_bisect_step,
+                                  lambda s, a: f"{_said_bisect_check(s, a)}; {_said_bisect_discard(s, a)}"),
+        "found": ActionSpec("Mark this cell green: found.", IndexArgs, lambda s, a: _in_range(s, a.index),
+                            lambda s, a: f"{_cells(s, [a.index])} turns green: found"),
         "ghost": ActionSpec("A wrong idea: dashed red outline around these cells, with the idea noted in red.",
-                            GhostArgs, lambda s, a: _in_range(s, *a.indices)),
+                            GhostArgs, lambda s, a: _in_range(s, *a.indices),
+                            lambda s, a: f"a wrong idea: a red dashed outline around {_cells(s, a.indices)}, "
+                                         f'noted "{a.text}"'),
     },
     example=[
         ['arr = ArrayBars(values=[1, 3, 4, 7, 9, 11, 15], title="sorted list", area="bottom_two_thirds")'],
@@ -474,6 +566,46 @@ def real_eigenvectors(m: list[list[float]]) -> list[tuple[float, tuple[float, fl
     return out
 
 
+def _vector_words(name: str, x: float, y: float, colour: str | None = None) -> str:
+    return f"{name} = ({_num(x)}, {_num(y)})" + (f" {colour.lower()}" if colour else "")
+
+
+def _describe_map(p: MapParams) -> str:
+    out = f"a coordinate grid (-{p.extent}..{p.extent}) for the matrix {_matrix_words(p.matrix)}"
+    if p.vectors:
+        out += " with vector" + ("s " if len(p.vectors) > 1 else " ")
+        out += ", ".join(_vector_words(v.name, v.x, v.y, v.colour) for v in p.vectors)
+    return out + (f', titled "{p.title}"' if p.title else "")
+
+
+def _direction(v: tuple[float, float]) -> str:
+    """A unit direction as small numbers where it is a simple ratio: (0.71, 0.71) -> (1, 1)."""
+    x, y = v
+    small = min((abs(c) for c in (x, y) if abs(c) > 1e-9), default=1.0)
+    a, b = x / small, y / small
+    if a < 0 or (a == 0 and b < 0):
+        a, b = -a, -b
+    if all(abs(c - round(c)) < 1e-6 for c in (a, b)):
+        return f"({round(a):d}, {round(b):d})"
+    return f"({_num(x)}, {_num(y)})"
+
+
+def _said_apply(state: dict, a) -> str:
+    m = state["matrix"]
+    moves = [f"{n} ({_num(x)}, {_num(y)}) -> ({_num(tx)}, {_num(ty)})"
+             for n, (x, y) in state["vectors"].items() for tx, ty in [matvec(m, x, y)]]
+    out = f"the grid and its vectors transform by {_matrix_words(m)}" + (": " + ", ".join(moves) if moves else "")
+    return out + ("; faded copies stay where the vectors started" if a.keep_ghost else "")
+
+
+def _said_eigenlines(state: dict, a) -> str:
+    lines = real_eigenvectors(state["matrix"])
+    if not lines:
+        return "the note says the matrix has no real eigenvectors"
+    return "dashed eigen-lines appear: " + ", ".join(
+        f"along {_direction(v)} labelled lambda = {_num(value)}" for value, v in lines)
+
+
 def _map_state(p: MapParams) -> dict:
     return {"matrix": p.matrix, "vectors": {v.name: (v.x, v.y) for v in p.vectors}, "extent": p.extent,
             "applied": False}
@@ -549,6 +681,12 @@ def _check_ghost_vector(state: dict, a: GhostVectorArgs) -> str | None:
     e = state["extent"]
     if problem := _nonzero(a.x, a.y):
         return problem
+    for name, (x, y) in state["vectors"].items():
+        if state["applied"]:
+            x, y = matvec(state["matrix"], x, y)
+        if abs(x - a.x) < 1e-9 and abs(y - a.y) < 1e-9:
+            return (f"the guess sits exactly on vector {name}, so it can't be seen; put it where the wrong idea "
+                    "says the vector goes")
     return f"({a.x:g}, {a.y:g}) is off the grid (-{e}..{e})" if max(abs(a.x), abs(a.y)) > e else None
 
 
@@ -560,24 +698,39 @@ LINEAR_MAP_2D = TemplateSpec(
     params=MapParams,
     min_rows=3,
     init_state=_map_state,
+    noun="grid",
+    describe=_describe_map,
     actions={
-        "apply": ActionSpec("Transform the grid and every vector by the matrix.", ApplyArgs, _check_apply),
-        "reset": ActionSpec("Undo apply: back to the plain grid.", NoArgs, _check_reset),
-        "add_vector": ActionSpec("Grow a new vector from the origin.", VectorArgs, _check_add_vector),
-        "remove_vector": ActionSpec("Fade a vector out.", NameArgs, _check_remove_vector),
-        "highlight_vector": ActionSpec("Make a vector stand out.", HighlightVectorArgs, _check_vector_name),
+        "apply": ActionSpec("Transform the grid and every vector by the matrix.", ApplyArgs, _check_apply,
+                            _said_apply),
+        "reset": ActionSpec("Undo apply: back to the plain grid.", NoArgs, _check_reset,
+                            lambda s, a: "the grid and vectors return to where they started"),
+        "add_vector": ActionSpec("Grow a new vector from the origin.", VectorArgs, _check_add_vector,
+                                 lambda s, a: f"a {a.colour.lower()} vector {_vector_words(a.name, a.x, a.y)} grows "
+                                              "from the origin"),
+        "remove_vector": ActionSpec("Fade a vector out.", NameArgs, _check_remove_vector,
+                                    lambda s, a: f"vector {a.name} fades out"),
+        "highlight_vector": ActionSpec("Make a vector stand out.", HighlightVectorArgs, _check_vector_name,
+                                       lambda s, a: f"vector {a.name} stands out in {a.colour.lower()}"),
         "eigenlines": ActionSpec(
             "Dashed lines along the matrix's real eigenvectors, each labelled with its eigenvalue (computed, so "
             "they are always right). Vectors on these lines only stretch when the matrix is applied.",
-            ColourArgs,
+            ColourArgs, says=_said_eigenlines,
         ),
         "set_matrix": ActionSpec("Use a different matrix (before apply, or after reset).", MatrixArgs,
-                                 _check_set_matrix),
-        "show_matrix": ActionSpec("Write the matrix in brackets in the note line above the grid."),
-        "note": ActionSpec("A short line above the grid: words (text) or a formula (tex).", MapNoteArgs),
+                                 _check_set_matrix,
+                                 lambda s, a: f"the matrix changes to {_matrix_words(a.matrix)}"),
+        "show_matrix": ActionSpec("Write the matrix in brackets in the note line above the grid.",
+                                  says=lambda s, a: f"the matrix A = {_matrix_words(s['matrix'])} is written at the "
+                                                    "grid's top left"),
+        "note": ActionSpec("A short line above the grid: words (text) or a formula (tex).", MapNoteArgs,
+                           says=lambda s, a: f'note above the grid: "{a.text or a.tex}"'),
         "ghost_vector": ActionSpec("A wrong idea: a dashed red vector where someone guesses it lands.",
-                                   GhostVectorArgs, _check_ghost_vector),
-        "clear_ghosts": ActionSpec("Remove ghost vectors and their notes."),
+                                   GhostVectorArgs, _check_ghost_vector,
+                                   lambda s, a: f"a wrong guess: a red dashed vector to ({_num(a.x)}, {_num(a.y)})"
+                                                + (f' labelled "{a.name}"' if a.name else "")),
+        "clear_ghosts": ActionSpec("Remove ghost vectors and their notes.",
+                                   says=lambda s, a: "the red dashed guesses disappear"),
     },
     example=[
         ['grid = LinearMap2D(matrix=[[2, 1], [1, 2]], vectors=[{"name": "v", "x": 1, "y": 1, "colour": "GOLD"}, '
@@ -638,6 +791,10 @@ class EqNoteArgs(_Args):
     _text = field_validator("text")(_short(26))
 
 
+def _describe_equation(p: EquationParams) -> str:
+    return f"the formula {p.tex}" + (f', titled "{p.title}"' if p.title else "")
+
+
 def _eq_state(p: EquationParams) -> dict:
     return {"last": p.tex, "covered": False}
 
@@ -676,19 +833,29 @@ EQUATION_STEPS = TemplateSpec(
             "term, hide a part for a prediction, box the result, cross out a wrong step.",
     params=EquationParams,
     init_state=_eq_state,
+    noun="formula",
+    describe=_describe_equation,
     actions={
         "rewrite": ActionSpec("Morph the current line into a new formula (matching pieces move into place).",
-                              TexArgs, _check_new_line),
-        "then": ActionSpec("Write the next formula on a new line below.", TexArgs, _check_new_line),
-        "highlight": ActionSpec("Colour a piece of the current line and underline it.", PartArgs, _check_part),
-        "colour": ActionSpec("Colour a piece of the current line.", PartArgs, _check_part),
+                              TexArgs, _check_new_line, lambda s, a: f"the formula morphs into {a.tex}"),
+        "then": ActionSpec("Write the next formula on a new line below.", TexArgs, _check_new_line,
+                           lambda s, a: f"a new line below: {a.tex}"),
+        "highlight": ActionSpec("Colour a piece of the current line and underline it.", PartArgs, _check_part,
+                                lambda s, a: f"{a.part} turns {a.colour.lower()} and is underlined"),
+        "colour": ActionSpec("Colour a piece of the current line.", PartArgs, _check_part,
+                             lambda s, a: f"{a.part} turns {a.colour.lower()}"),
         "cover": ActionSpec("Show a piece of the current line as a boxed ? (for a predict line).",
-                            CoverArgs, _check_cover),
-        "uncover": ActionSpec("Lift the grey block.", NoArgs, _check_uncover),
-        "box": ActionSpec("Box the current line: the result.", BoxArgs),
-        "cross_out": ActionSpec("A wrong step: dim the current line and put a dashed red box around it."),
-        "note": ActionSpec("A short line of words above the formulas.", EqNoteArgs),
-        "clear": ActionSpec("Remove highlights, boxes and the note."),
+                            CoverArgs, _check_cover, lambda s, a: f"{a.part} is hidden behind a boxed ?"),
+        "uncover": ActionSpec("Lift the grey block.", NoArgs, _check_uncover,
+                              lambda s, a: "the hidden piece is revealed"),
+        "box": ActionSpec("Box the current line: the result.", BoxArgs,
+                          says=lambda s, a: f"the line {s['last']} is boxed in {a.colour.lower()}"),
+        "cross_out": ActionSpec("A wrong step: dim the current line and put a dashed red box around it.",
+                                says=lambda s, a: f"the line {s['last']} dims inside a red dashed box: wrong"),
+        "note": ActionSpec("A short line of words above the formulas.", EqNoteArgs,
+                           says=lambda s, a: f'note above the formulas: "{a.text}"'),
+        "clear": ActionSpec("Remove highlights, boxes and the note.",
+                            says=lambda s, a: "the formulas' highlights, boxes and note clear"),
     },
     example=[
         [r'eq = EquationSteps(tex="A v = \lambda v", colours=[{"part": "\lambda", "colour": "ORANGE"}], '
@@ -728,7 +895,10 @@ NOTE = TemplateSpec(
     purpose="A short piece of text: a question, a key word, a takeaway. Use it beside a diagram, not instead "
             "of one.",
     params=NoteParams,
-    actions={"say": ActionSpec("Replace the text.", SayArgs)},
+    noun="note",
+    describe=lambda p: f'the text "{p.text}"' + (" in large type" if p.big else ""),
+    actions={"say": ActionSpec("Replace the text.", SayArgs,
+                               says=lambda s, a: f'the text changes to "{a.text}"')},
     example=[
         ['q = Note(text="Why does halving win?", big=True, area="top_third")'],
         ['q.say(text="n, n/2, n/4 ... 1", colour="TEAL")'],

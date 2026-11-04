@@ -44,6 +44,7 @@ DEFAULT_MODEL = "claude-opus-5"
 PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
     "claude-opus-5": (5.00, 25.00),
     "claude-sonnet-5": (2.00, 10.00),
+    "claude-sonnet-5-5": (2.00, 10.00),
     "claude-haiku-4-5": (1.00, 5.00),
     # OpenAI prices are not filled in: cost for gpt-* calls reports as $0.
     # Add (input, output) $/Mtok here to include them in the report.
@@ -242,13 +243,16 @@ def structured(
     model: str = DEFAULT_MODEL,
     max_tokens: int = 16000,
     manifest: RunManifest | None = None,
+    effort: str | None = None,
 ) -> T:
     """Call the model and validate its response against a Pydantic schema.
 
     Uses client.messages.parse() (output_config-based structured outputs).
     Raises RuntimeError on a refusal stop reason, and re-raises typed
     Anthropic exceptions (retryable ones are already retried by the SDK's
-    default max_retries) so the CLI can log which stage/KU failed.
+    default max_retries) so the CLI can log which stage/KU failed. `effort`
+    (low/medium/high/xhigh/max) sets how much an Anthropic model thinks; None
+    keeps the model's default.
     """
     if is_openai_model(model):
         start = time.monotonic()
@@ -275,6 +279,8 @@ def structured(
         "messages": [{"role": "user", "content": content}],
         "output_config": {"format": {"type": "json_schema", "schema": transform_schema(TypeAdapter(schema).json_schema())}},
     }
+    if effort is not None:
+        kwargs["output_config"]["effort"] = effort
     if system is not None:
         kwargs["system"] = system
 

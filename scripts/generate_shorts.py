@@ -96,6 +96,64 @@ def save_segment_result(seg_dir: Path, key: str, result: RenderResult) -> None:
     )
 
 
+def voice_key(script) -> str:
+    """What a script's voices depend on: each line's words and speaker (not its pictures)."""
+    return json.dumps([[(b.narration, getattr(b, "speaker", None)) for b in seg.beats] for seg in script.segments])
+
+
+class EarlyVoices:
+    """Synthesizes a script's narration in the background as soon as its lines pass the writer's checks, while
+    the template calls are written and the critic reads it (TTS is local and needs only the words). take() hands
+    the result over if the final script still has those words, moving the WAVs into the audio dir; a rewritten
+    script is synthesized again as before. One job at a time (each backend uses one voice model)."""
+
+    def __init__(self, audio_dir: Path, backend: str):
+        self.audio_dir, self.backend = audio_dir, backend
+        self.pool = ThreadPoolExecutor(max_workers=1)
+        self.jobs: dict[str, tuple[Path, object]] = {}
+
+    def start(self, script) -> None:
+        key = voice_key(script)
+        if key in self.jobs:
+            return
+        out = self.audio_dir / f"early-{hashlib.sha256(key.encode()).hexdigest()[:12]}"
+        log("    voices: starting the narration now that the lines passed")
+        self.jobs[key] = (out, self.pool.submit(synthesize_segments, script, out, self.backend))
+
+    def take(self, script) -> list | None:
+        import shutil
+
+        job = self.jobs.get(voice_key(script))
+        if job is None:
+            # The lines were rewritten after the voices started: let that job finish (it started a whole
+            # rewrite ago, so it is long done) so it never shares the voice model with the synthesis that follows.
+            self.pool.shutdown(wait=True, cancel_futures=True)
+            return None
+        out, future = job
+        try:
+            audios = future.result()
+        except Exception as e:  # fall back to synthesizing here
+            log(f"    voices: early synthesis failed ({e}); synthesizing again")
+            return None
+        self.audio_dir.mkdir(parents=True, exist_ok=True)
+        moved = []
+        for a in audios:
+            target = self.audio_dir / Path(a.wav_path).name
+            shutil.move(a.wav_path, target)
+            moved.append(a.model_copy(update={"wav_path": str(target)}))
+        shutil.rmtree(out, ignore_errors=True)
+        return moved
+
+    def close(self) -> None:
+        import shutil
+
+        # Don't wait for a job whose script was rewritten: it cleans up after itself when it finishes.
+        self.pool.shutdown(wait=False, cancel_futures=True)
+        for out, future in self.jobs.values():
+            future.add_done_callback(lambda _, out=out: shutil.rmtree(out, ignore_errors=True))
+        self.jobs.clear()
+
+
 def make_ku_video(
     ku: KnowledgeUnit,
     corpus: CourseCorpus,
@@ -125,12 +183,20 @@ def make_ku_video(
     # Stage 3: script + critique
     script_path = ku_dir / "script.json"
     critique_path = ku_dir / "critique.json"
+    audio_dir = ku_dir / "audio"
+    audio_manifest_path = audio_dir / "segment_audio.json"
+    early_voices = EarlyVoices(audio_dir, tts)
     if force_from <= stage_index("script") or not script_path.exists():
         log(f"[3/6] script: writing + critiquing script for {ku.id}")
-        script, critique_result = write_script_with_critique(
-            ku, corpus, manifest=manifest, skip_critic=skip_critic,
-            level=level, prereq_titles=prereq_titles, style=style, visuals=visuals,
-        )
+        try:
+            script, critique_result = write_script_with_critique(
+                ku, corpus, manifest=manifest, skip_critic=skip_critic,
+                level=level, prereq_titles=prereq_titles, style=style, visuals=visuals,
+                on_lines_ready=early_voices.start,
+            )
+        except BaseException:
+            early_voices.close()
+            raise
         script_path.write_text(script.model_dump_json(indent=2))
         critique_path.write_text(critique_result.model_dump_json(indent=2))
         save_manifest()
@@ -138,12 +204,14 @@ def make_ku_video(
         log(f"[3/6] script: reusing existing script for {ku.id}")
         script = load_script(script_path.read_text())
 
-    # Stage 4: TTS
-    audio_dir = ku_dir / "audio"
-    audio_manifest_path = audio_dir / "segment_audio.json"
+    # Stage 4: TTS (usually already done: it starts as soon as the lines pass, while the pictures are drawn)
     if force_from <= stage_index("tts") or not audio_manifest_path.exists():
-        log(f"[4/6] tts: synthesizing narration ({tts})")
-        segment_audios = synthesize_segments(script, audio_dir, backend_name=tts)
+        segment_audios = early_voices.take(script)
+        if segment_audios is not None:
+            log(f"[4/6] tts: narration was synthesized while the script was finished ({tts})")
+        else:
+            log(f"[4/6] tts: synthesizing narration ({tts})")
+            segment_audios = synthesize_segments(script, audio_dir, backend_name=tts)
         audio_dir.mkdir(parents=True, exist_ok=True)
         audio_manifest_path.write_text(
             SegmentAudioList(items=segment_audios).model_dump_json(indent=2)
@@ -155,6 +223,7 @@ def make_ku_video(
         segment_audios = SegmentAudioList.model_validate_json(
             audio_manifest_path.read_text()
         ).items
+    early_voices.close()
 
     # Stage 5: animate
     render_dir = ku_dir / "render"

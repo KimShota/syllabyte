@@ -147,25 +147,71 @@ def test_templated_scripts_load_and_keep_their_calls_for_the_renderer():
     assert segment_draws(render_seg) == [[ARR], ["a.bisect_step(target=9)"]]
 
 
-def test_fix_draws_repairs_then_falls_back_to_code(monkeypatch):
-    script = _templated([[ARR], ["a.highlight(indices=[9])"]])
-    BD = script_writer._BeatDraw
-    fixed = script_writer._DrawFixes(segments=[script_writer._SegmentDraws(
-        segment_index=0, beats=[BD(draw=[ARR], visual="a list"), BD(draw=["a.highlight(indices=[2])"],
-                                                                     visual="cell 2 lights up")])])
-    monkeypatch.setattr(script_writer, "structured", lambda **kw: fixed)
-    assert script_writer.fix_draws(script, ku_id="ku-x") == {}
-    assert script.segments[0].beats[1].draw == ["a.highlight(indices=[2])"]
-    assert script.segments[0].beats[1].visual == "cell 2 lights up"
+def test_add_draws_fixes_a_bad_segment_at_once_then_falls_back_to_code(monkeypatch):
+    from test_dialogue import make_script
 
-    broken = _templated([[ARR], ["a.highlight(indices=[9])"]])
+    script = make_script()
+    calls = []
 
-    def fail(**kw):
-        raise RuntimeError("no")
+    def fake(**kw):
+        calls.append(kw["stage"])
+        text = kw["content"][0]["text"]
+        good = [script_writer._BeatDraw(draw=[ARR]), script_writer._BeatDraw(draw=["a.highlight(indices=[2])"])]
+        if kw["stage"] == "fix_draws":
+            assert "index 9 is outside" in text and kw["model"] == script_writer.DRAW_MODEL
+            return script_writer._Draws(beats=good if "Segment 3" in text else [])
+        if "Draw segment 3" in text or "Draw segment 4" in text:  # both wrong at first
+            return script_writer._Draws(beats=[script_writer._BeatDraw(draw=[ARR]),
+                                               script_writer._BeatDraw(draw=["a.highlight(indices=[9])"])])
+        return script_writer._Draws(beats=[])
 
-    monkeypatch.setattr(script_writer, "structured", fail)
-    left = script_writer.fix_draws(broken, ku_id="ku-x")
-    assert 0 in left and all(b.draw == [] for b in broken.segments[0].beats)
+    monkeypatch.setattr(script_writer, "structured", fake)
+    out = script_writer.add_draws(script, ku_id="ku-eigen")
+    assert sorted(calls).count("fix_draws") == 2  # one per bad segment, no second round
+    assert out.segments[3].beats[1].draw == ["a.highlight(indices=[2])"]
+    assert out.segments[3].beats[1].visual == "Cell 2 (value 4) turns yellow."
+    assert all(b.draw == [] for b in out.segments[4].beats)  # still wrong: left to the animator
+    assert out.segments[4].beats[0].visual == script.segments[4].beats[0].visual
+
+
+def test_visual_sentences_are_computed_from_the_calls():
+    from animation_agent.visuals.calls import describe_segment
+
+    said = describe_segment([[ARR], ["a.bisect_step(target=9)"], [], ["a.remove()"]])
+    assert said[0] == "A row of 5 blue cells: 1, 3, 4, 7, 9 (bottom half)."
+    assert said[1] == ("Lo, mid, hi point at cells 0, 2, 4; the middle value 4 is compared with the target 9; "
+                       "4 < 9, so cells 0-2 grey out; cells 3-4 stay in play.")
+    assert said[2] == "The picture stays as it is."
+    assert said[3] == "The list fades out."
+    grid = describe_segment([['g = LinearMap2D(matrix=[[2, 1], [1, 2]], vectors=[{"name": "v", "x": 1, "y": 1}])'],
+                             ["g.apply()", "g.eigenlines()"]])
+    assert "v (1, 1) -> (3, 3)" in grid[1] and "along (1, 1) labelled lambda = 3" in grid[1]
+    eq = describe_segment([[r'e = EquationSteps(tex="A v = \lambda v")']])
+    assert eq == [r"The formula A v = \lambda v (filling the frame)."]  # TeX keeps its case
+
+
+def test_every_action_says_what_it_shows():
+    for spec in REGISTRY.values():
+        assert spec.describe is not None, spec.name
+        for name, action in spec.all_actions().items():
+            assert action.says is not None, f"{spec.name}.{name}"
+
+
+def test_the_calls_are_checked_against_the_words():
+    lines = ["Here are eight cells.", "Check the middle."]
+    problems = check_segment([[ARR], ["a.bisect_check(target=9)"]], lines)
+    assert any('says "eight cells" but the list on screen has 5 cells' in p for p in problems)
+    assert check_segment([[ARR], []], ["Five numbers, sorted.", "ok"]) == []
+    assert check_segment([[ARR], []], ["A million items.", "ok"]) == []  # nothing to count against
+    only_notes = check_segment([['n = Note(text="hi")'], ['n.say(text="bye")']], ["a", "b"])
+    assert any("only Notes" in p for p in only_notes)
+    assert check_segment([['n = Note(text="hi")']]) == []  # the renderer's check stays structural
+    echo = check_segment([[ARR, 'a.note(text="does v leave its line?")']], ["Pause: does v leave its line?"])
+    assert any("repeats the line's own words" in p for p in echo)
+    assert check_segment([[ARR, 'a.note(text="mid = 4")']], ["Check the middle one."]) == []
+    on_top = check_segment([['g = LinearMap2D(matrix=[[2, 0], [0, 1]], vectors=[{"name": "v", "x": 1, "y": 0}])',
+                             'g.ghost_vector(x=1, y=0)']])
+    assert any("sits exactly on vector v" in p for p in on_top)
 
 
 def test_template_visuals_change_the_video_key_only_when_used():
@@ -212,13 +258,15 @@ def test_add_draws_fills_each_segment_and_survives_a_failed_call(monkeypatch):
         if "Draw segment 1" in text:
             raise RuntimeError("timeout")
         # one entry: padded with empty ones to the beat count
-        return script_writer._Draws(beats=[script_writer._BeatDraw(draw=['n = Note(text="hi")'], visual="hi")])
+        return script_writer._Draws(beats=[script_writer._BeatDraw(draw=[ARR])])
 
     monkeypatch.setattr(script_writer, "structured", fake)
     out = script_writer.add_draws(script, ku_id="ku-eigen")
     assert isinstance(out, TemplatedDialogueScript) and out.visuals == "templates"
     assert [len(s.beats) for s in out.segments] == [len(s.beats) for s in script.segments]
-    assert out.segments[0].beats[0].draw == ['n = Note(text="hi")'] and out.segments[0].beats[0].visual == "hi"
+    assert out.segments[2].beats[0].draw == [ARR]
+    assert out.segments[2].beats[0].visual == "A row of 5 blue cells: 1, 3, 4, 7, 9 (bottom half)."
+    assert out.segments[2].beats[1].visual == "The picture stays as it is."
     assert out.segments[1].beats[0].visual == script.segments[1].beats[0].visual  # left to the animator
     assert all(b.draw == [] for b in out.segments[1].beats)
     assert all(b.draw == [] for b in out.segments[2].beats[1:])
@@ -231,7 +279,7 @@ def test_feedback_redraws_only_the_flagged_segments(monkeypatch):
 
     def fake(**kw):
         calls.append(kw["content"][0]["text"])
-        return script_writer._Draws(beats=[script_writer._BeatDraw(draw=['n = Note(text="new")'], visual="new")])
+        return script_writer._Draws(beats=[script_writer._BeatDraw(draw=[ARR])])
 
     monkeypatch.setattr(script_writer, "structured", fake)
     first = script_writer.add_draws(make_script(), ku_id="ku-eigen")
@@ -239,3 +287,33 @@ def test_feedback_redraws_only_the_flagged_segments(monkeypatch):
     again = script_writer.add_draws(first, ku_id="ku-eigen", feedback={2: ["the arrow never moves"]})
     assert len(calls) == 1 and "the arrow never moves" in calls[0] and "Draw segment 2" in calls[0]
     assert again.segments[0].beats[0].draw == first.segments[0].beats[0].draw
+
+
+def test_early_voices_are_used_only_for_the_same_lines(tmp_path, monkeypatch):
+    import sys
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "scripts"))
+    sys.modules.pop("generate_shorts", None)
+    import generate_shorts
+    from test_dialogue import make_script
+    from syllabyte_common.models import SegmentAudio
+
+    def fake_tts(script, out, backend):
+        out.mkdir(parents=True)
+        (out / "seg_0.wav").write_bytes(b"RIFF")
+        return [SegmentAudio(segment_index=0, wav_path=str(out / "seg_0.wav"), duration_seconds=1.0,
+                             srt_start=0.0, srt_end=1.0, beat_durations=[1.0])]
+
+    monkeypatch.setattr(generate_shorts, "synthesize_segments", fake_tts)
+    voices = generate_shorts.EarlyVoices(tmp_path / "audio", "kokoro")
+    script = make_script()
+    voices.start(script)
+    redrawn = script.model_copy(deep=True)
+    redrawn.segments[0].beats[0].visual = "something else"  # pictures change, words don't
+    audios = voices.take(redrawn)
+    assert audios is not None and Path(audios[0].wav_path) == tmp_path / "audio" / "seg_0.wav"
+    assert Path(audios[0].wav_path).exists()
+    rewritten = script.model_copy(deep=True)
+    rewritten.segments[0].beats[0].narration = "New words."
+    assert voices.take(rewritten) is None
+    voices.close()

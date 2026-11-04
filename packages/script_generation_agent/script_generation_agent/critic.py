@@ -21,7 +21,6 @@ from script_generation_agent.script_writer import (
     Style,
     Visuals,
     add_draws,
-    fix_draws,
     gather_source_material,
     write_script,
 )
@@ -62,7 +61,7 @@ def critique(
         stage=stage,
         ku_id=ku.id,
         model=model,
-        max_tokens=4000,
+        max_tokens=16000,  # a dialogue critique with many issues ran past 4000
         manifest=manifest,
     )
 
@@ -78,11 +77,13 @@ def write_script_with_critique(
     prereq_titles: list[str] | None = None,
     style: Style = "monologue",
     visuals: Visuals = "codegen",
+    on_lines_ready=None,
 ) -> tuple[Script, CritiqueResult]:
     """Writes a script, critiques it, and regenerates (up to MAX_ROUNDS-1
     additional times) if any critique score falls below threshold. With
     `level`, both the script and the critic's idea of "appropriate" are for
-    that level."""
+    that level. `on_lines_ready` is passed to write_script: it is called each
+    time a script's lines pass the checks (the voices can start then)."""
     result = CritiqueResult(ku_id=ku.id)
     extra_instruction = ""
     script: Script | None = None
@@ -100,13 +101,13 @@ def write_script_with_critique(
         if redraw and script is not None:
             # Template visuals: the lines passed and only the pictures scored low, so draw again with the
             # critic's issues (a few parallel calls) instead of rewriting the script (plan phase 3 finding).
-            script = add_draws(script, ku_id=ku.id, model=model, manifest=manifest,
+            script = add_draws(script, ku_id=ku.id, manifest=manifest,
                                feedback={i: redraw for i in range(len(script.segments))})
-            fix_draws(script, ku_id=ku.id, model=model, manifest=manifest)
         else:
             script = write_script(
                 ku, corpus, model=model, manifest=manifest, extra_instruction=extra_instruction,
                 level=level, prereq_titles=prereq_titles, style=style, visuals=visuals,
+                on_lines_ready=on_lines_ready,
             )
 
         if skip_critic:

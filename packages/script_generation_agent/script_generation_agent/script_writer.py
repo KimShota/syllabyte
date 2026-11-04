@@ -12,6 +12,7 @@ spending an extra LLM call.
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
@@ -221,12 +222,15 @@ def write_script(
     prereq_titles: list[str] | None = None,
     style: Style = "monologue",
     visuals: Visuals = "codegen",
+    on_lines_ready: Callable[[Script], None] | None = None,
 ) -> Script:
     """Writes the 5-segment script for `ku`. With `level` (1-3) the script is written for one student's level on this
     KU (plan/per-student-video-plan.md V1): the level shapes the language, the objective and the second deliver
     segment, and a script the code-side checks reject is rewritten once with the problems fed back. With
     style="dialogue" (which needs a level) it is a DialogueScript spoken by the cast's two characters; with
-    visuals="templates" as well, each line also carries the template calls that draw it (see fix_draws)."""
+    visuals="templates" as well, each line also carries the template calls that draw it (see add_draws).
+    `on_lines_ready` is called with the script as soon as its lines pass the checks, before the calls are
+    added: the narration is final from then on, unless a critic asks for a rewrite."""
     text_context, image_blocks = gather_source_material(corpus, ku)
     if not text_context:
         raise ScriptValidationError(
@@ -280,9 +284,10 @@ def write_script(
 
         problems = check(script)
         if not problems:
+            if on_lines_ready is not None:
+                on_lines_ready(script)  # e.g. start the voices while the pictures are drawn
             if visuals == "templates":
-                script = add_draws(script, ku_id=ku.id, model=model, manifest=manifest)
-                fix_draws(script, ku_id=ku.id, model=model, manifest=manifest)
+                script = add_draws(script, ku_id=ku.id, manifest=manifest)
             return script
         print(f"[write_script] {ku.id}: attempt rejected: {'; '.join(problems)}", file=sys.stderr, flush=True)
         feedback = "Your previous attempt was rejected by the automatic checker: " + "; ".join(problems) + ". Fix these."
@@ -295,9 +300,14 @@ def write_script(
 # --------------------------------------------------------------------------
 
 
+# Writing the calls is filling in a form that code then checks (animation_agent.visuals.calls), so a faster model
+# does it; whatever it gets wrong the checker catches, and the segment gets one fix call straight away.
+DRAW_MODEL = "claude-sonnet-5-5"
+DRAW_EFFORT = "medium"
+
+
 class _BeatDraw(BaseModel):
     draw: list[str]
-    visual: str  # what the calls show, replacing the writer's sentence
 
 
 class _Draws(BaseModel):
@@ -313,24 +323,35 @@ def _script_listing(script: Script) -> str:
     return "\n".join(out)
 
 
-def add_draws(script: DialogueScript, *, ku_id: str, model: str = DEFAULT_MODEL,
+def _fit(draws: list[list[str]], n: int) -> list[list[str]]:
+    """Exactly n beats of calls: missing beats keep the picture, extra ones are dropped."""
+    return (draws + [[] for _ in range(n)])[:n]
+
+
+def add_draws(script: DialogueScript, *, ku_id: str, model: str = DRAW_MODEL,
               manifest: RunManifest | None = None, frame: str = "dialogue",
               feedback: dict[int, list[str]] | None = None) -> TemplatedDialogueScript:
-    """The script with each line's template calls, and its `visual` sentence rewritten to say what they show:
-    one call per segment, all at once. A segment whose call fails gets no calls (it is drawn by LLM code);
-    fix_draws then checks every segment's calls. With `feedback` (segment index -> a reviewer's issues), only
-    those segments are drawn again, the others keep their calls."""
+    """The script with each line's template calls: one call per segment, all at once. Each segment's calls are
+    checked as soon as they arrive (calls.check_segment, with the lines' words), and a segment with problems gets
+    one fix call right away. A segment still wrong after that, or whose call failed, gets no calls: it is drawn by
+    LLM code from the writer's `visual` sentences. In a drawn segment every beat's `visual` is replaced by what
+    its calls show, computed from them (calls.describe_segment), so the sentence the critic reads can't promise
+    more than the picture. With `feedback` (segment index -> a reviewer's issues), only those segments are drawn
+    again; the others keep their calls."""
     from concurrent.futures import ThreadPoolExecutor
 
-    head = ("Colour key: " + ", ".join(f"{t.term} = {t.colour}" for t in script.colour_key)
-            + "\n\nThe whole script:\n" + _script_listing(script))
+    from animation_agent.visuals.calls import check_segment, describe_segment
+
+    colours = "Colour key: " + ", ".join(f"{t.term} = {t.colour}" for t in script.colour_key)
+    head = colours + "\n\nThe whole script:\n" + _script_listing(script)
     system = draw_segment_system_prompt(frame)
 
-    def draw(i: int) -> list[_BeatDraw] | None:
+    def draw(i: int) -> list[list[str]] | None:
         seg = script.segments[i]
         n = len(seg.beats)
         if feedback is not None and i not in feedback:
             return None  # keep this segment as it is
+        lines = [b.narration for b in seg.beats]
         ask = f"Draw segment {i} ({seg.phase}): {n} beats, so {n} entries."
         if feedback and i in feedback:
             current = "\n".join(f"  beat {k}: {getattr(b, 'draw', [])}" for k, b in enumerate(seg.beats, 1))
@@ -338,87 +359,58 @@ def add_draws(script: DialogueScript, *, ku_id: str, model: str = DEFAULT_MODEL,
                     "them:\n" + "\n".join(f"  - {p}" for p in feedback[i]))
         try:
             out = structured(schema=_Draws, content=[text_block(f"{head}\n\n{ask}")], system=system,
-                             stage="draw_segment", ku_id=ku_id, model=model, max_tokens=8000, manifest=manifest)
+                             stage="draw_segment", ku_id=ku_id, model=model, effort=DRAW_EFFORT, max_tokens=16000,
+                             manifest=manifest)
         except Exception as e:
             print(f"[write_script] {ku_id}: drawing segment {i} failed: {e}", file=sys.stderr, flush=True)
-            return [_BeatDraw(draw=[], visual=b.visual) for b in seg.beats]
-        return (out.beats + [_BeatDraw(draw=[], visual=b.visual) for b in seg.beats[len(out.beats):]])[:n]
+            return [[] for _ in range(n)]
+        draws = _fit([b.draw for b in out.beats], n)
+        if any(draws) and (problems := check_segment(draws, lines)):
+            draws = _fix_segment(i, seg, draws, problems, colours, ku_id=ku_id, model=model, manifest=manifest,
+                                 frame=frame)
+        return draws
 
     with ThreadPoolExecutor(max_workers=len(script.segments)) as pool:
         drawn = list(pool.map(draw, range(len(script.segments))))
     data = script.model_dump(mode="json") | {"visuals": "templates"}
-    for seg, seg_drawn in zip(data["segments"], drawn):
-        for beat, d in zip(seg["beats"], seg_drawn or []):
-            beat["draw"] = d.draw
-            if d.draw:  # a segment left to the animator keeps the writer's sentences
-                beat["visual"] = d.visual
+    for seg, seg_draws in zip(data["segments"], drawn):
+        if seg_draws is not None:
+            visuals = describe_segment(seg_draws) if any(seg_draws) else None
+            for k, beat in enumerate(seg["beats"]):
+                beat["draw"] = seg_draws[k]
+                if visuals:  # a segment left to the animator keeps the writer's sentences
+                    beat["visual"] = visuals[k]
         for beat in seg["beats"]:
             beat.setdefault("draw", [])
     return TemplatedDialogueScript.model_validate(data)
 
 
-class _SegmentDraws(BaseModel):
-    segment_index: int
-    beats: list[_BeatDraw]
+def _fix_segment(i: int, seg, draws: list[list[str]], problems: list[str], colours: str, *, ku_id: str,
+                 model: str, manifest: RunManifest | None, frame: str) -> list[list[str]]:
+    """One segment's calls corrected once, from the checker's problems (a small call: the lines already passed).
+    If they are still wrong, no calls: the segment is drawn by LLM code from its `visual` text."""
+    from animation_agent.visuals.calls import check_segment
 
-
-class _DrawFixes(BaseModel):
-    segments: list[_SegmentDraws]
-
-
-def draw_problems(script: Script) -> dict[int, list[str]]:
-    """Segment index -> what animation_agent.visuals.calls.check_segment found in its calls (segments without
-    calls, which are drawn by LLM code, are skipped)."""
-    from animation_agent.visuals.calls import check_segment, segment_draws
-
-    out = {}
-    for i, seg in enumerate(script.segments):
-        draws = segment_draws(seg)
-        if draws is not None and (problems := check_segment(draws)):
-            out[i] = problems
-    return out
-
-
-def fix_draws(script: Script, *, ku_id: str, model: str = DEFAULT_MODEL, manifest: RunManifest | None = None,
-              frame: str = "dialogue") -> dict[int, list[str]]:
-    """Checks the script's template calls and, if some segments have problems, asks for corrected calls for just
-    those segments, once (a small call: far cheaper than rewriting the script, whose lines already passed). A
-    segment still wrong after that has its calls removed, so it is drawn by LLM code from its `visual` text.
-    Edits `script` in place and returns the problems left in the segments it emptied."""
-    problems = draw_problems(script)
-    if not problems:
-        return {}
-    print(f"[write_script] {ku_id}: fixing template calls in segments {sorted(problems)}: "
-          f"{'; '.join(p for ps in problems.values() for p in ps)[:600]}", file=sys.stderr, flush=True)
-    listing = []
-    for i, ps in problems.items():
-        seg = script.segments[i]
-        beats = "\n".join(
-            f"    beat {k}: [{getattr(b, 'speaker', '')}] {b.narration}\n      visual: {b.visual}\n      draw: {b.draw}"
-            for k, b in enumerate(seg.beats, 1)
-        )
-        listing.append(f"Segment {i} ({seg.phase}), {len(seg.beats)} beats:\n{beats}\n  Problems:\n"
-                       + "\n".join(f"    - {p}" for p in ps))
+    n = len(seg.beats)
+    lines = [b.narration for b in seg.beats]
+    print(f"[write_script] {ku_id}: fixing template calls in segment {i}: {'; '.join(problems)[:600]}",
+          file=sys.stderr, flush=True)
+    beats = "\n".join(
+        f"    beat {k}: [{getattr(b, 'speaker', '')}] {b.narration}\n      visual: {b.visual}\n      draw: {d}"
+        for k, (b, d) in enumerate(zip(seg.beats, draws), 1)
+    )
+    listing = (f"Segment {i} ({seg.phase}), {n} beats:\n{beats}\n  Problems:\n"
+               + "\n".join(f"    - {p}" for p in problems))
     try:
-        fixes = structured(
-            schema=_DrawFixes,
-            content=[text_block("Colour key: " + ", ".join(f"{t.term} = {t.colour}" for t in script.colour_key)
-                                + "\n\n" + "\n\n".join(listing))],
-            system=draw_fix_system_prompt(frame), stage="fix_draws", ku_id=ku_id, model=model, max_tokens=6000,
-            manifest=manifest,
-        )
-        for fix in fixes.segments:
-            seg = script.segments[fix.segment_index] if fix.segment_index in problems else None
-            if seg is not None and len(fix.beats) == len(seg.beats):
-                for beat, d in zip(seg.beats, fix.beats):
-                    beat.draw, beat.visual = d.draw, d.visual
-    except Exception as e:  # the fix is best-effort: the segments fall back to LLM code below
-        print(f"[write_script] {ku_id}: fixing template calls failed: {e}", file=sys.stderr, flush=True)
-    left = draw_problems(script)
-    for i in left:
-        for beat in script.segments[i].beats:
-            beat.draw = []
-    if left:
-        print(f"[write_script] {ku_id}: segments {sorted(left)} will be drawn by LLM code: "
-              f"{'; '.join(p for ps in left.values() for p in ps)[:600]}", file=sys.stderr, flush=True)
-    return left
+        out = structured(schema=_Draws, content=[text_block(f"{colours}\n\n{listing}")],
+                         system=draw_fix_system_prompt(frame), stage="fix_draws", ku_id=ku_id, model=model,
+                         effort=DRAW_EFFORT, max_tokens=16000, manifest=manifest)
+        fixed = _fit([b.draw for b in out.beats], n)
+    except Exception as e:  # the fix is best-effort: the segment falls back to LLM code
+        print(f"[write_script] {ku_id}: fixing segment {i}'s calls failed: {e}", file=sys.stderr, flush=True)
+        return [[] for _ in range(n)]
+    if left := check_segment(fixed, lines):
+        print(f"[write_script] {ku_id}: segment {i} will be drawn by LLM code: {'; '.join(left)[:600]}",
+              file=sys.stderr, flush=True)
+        return [[] for _ in range(n)]
+    return fixed

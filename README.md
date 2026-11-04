@@ -162,12 +162,19 @@ arr.bisect_check(target=9)
 - **What it changes.** The renderer draws a segment from those calls, with no LLM code, no repairs and no
   visual critic. The templates compute what they show: bisection runs the real algorithm, and eigen-lines come
   from numpy.
+- **Writing the calls.** After the lines pass, each segment's calls are written in parallel by
+  Claude Sonnet 5.5 (`script_writer.DRAW_MODEL`), and the voices are synthesized at the same time
+  (`generate_shorts.EarlyVoices`).
 - **Checking.** Calls are parsed (never executed) and checked by simulating the segment
-  (`visuals/calls.py`). A segment with bad calls gets one cheap fix call
-  (`script_writer.fix_draws`); if it is still wrong, it is drawn by LLM code from its `visual` text as before.
+  (`visuals/calls.py`), including against the line's words: a segment needs a diagram, not only notes, and
+  "eight cells" needs eight cells on screen. A segment with bad calls gets one fix call straight away
+  (`script_writer._fix_segment`); if it is still wrong, it is drawn by LLM code from its `visual` text as before.
+- **Visual sentences.** In a drawn segment, each line's `visual` is generated from its calls
+  (`calls.describe_segment`), so the critic compares the words with what is actually drawn.
 - **Templates so far:** `ArrayBars`, `LinearMap2D`, `EquationSteps`, `Note`. Each is listed for the writer
   from `visuals/specs.py`.
-- **Adding a template.** Write its spec in `specs.py`, its drawing class (one generator method per action),
+- **Adding a template.** Write its spec in `specs.py` (with a `says` sentence for every action), its drawing
+  class (one generator method per action),
   and register it in `runner.CLASSES`. `tests/test_visual_templates.py` checks that the spec and the class
   agree. `SYLLABYTE_RENDER_TESTS=1` renders every example in both frames and requires no layout findings.
   Bump `TEMPLATES_VERSION` when a template's drawing changes, so cached videos are remade.

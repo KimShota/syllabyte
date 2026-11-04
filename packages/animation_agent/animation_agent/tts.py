@@ -25,6 +25,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 from typing import Protocol
 
@@ -232,9 +233,19 @@ def _dialogue_voices_and_gaps(script: DialogueScript, i: int) -> tuple[list[str]
     return voices, gaps
 
 
+# One synthesis at a time per process: Kokoro's phonemizer (espeak-ng) isn't thread-safe, and two threads
+# initialising it at once abort the whole process (seen with two video_jobs workers starting their voices together).
+_SYNTH_LOCK = threading.Lock()
+
+
 def synthesize_segments(
     script: Script, audio_dir: Path, backend_name: str = "kokoro"
 ) -> list[SegmentAudio]:
+    with _SYNTH_LOCK:
+        return _synthesize_segments(script, audio_dir, backend_name)
+
+
+def _synthesize_segments(script: Script, audio_dir: Path, backend_name: str) -> list[SegmentAudio]:
     backend = get_backend(backend_name)
     results: list[SegmentAudio] = []
     t = 0.0

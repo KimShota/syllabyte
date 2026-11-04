@@ -441,7 +441,8 @@ _TEMPLATES = """\
 Drawing each line with templates
   Every beat also has `draw`: calls on the visual templates listed below, which draw that line's picture with \
 tested code (the numbers, halves and eigenvectors are computed, so they are always right). Draw with them \
-whenever one fits the idea. Keep `visual` too: one sentence saying what the calls show.
+whenever one fits the idea. Each line's `visual` sentence is then written from your calls, saying exactly what \
+they show, so the calls alone have to carry the picture the line needs.
   - Write each call as one line of Python with keyword arguments and plain values (numbers, strings, lists, \
 dicts, True/False/None):
       name = Template(arg=value, ...)     puts something on screen
@@ -508,13 +509,14 @@ def templates_brief() -> str:
 
 _DRAW_SEGMENT = """\
 You draw one segment of a short educational video with visual templates. You get the whole script, for context, \
-and the segment to draw. Return one entry per beat of that segment (exactly as many as it has beats), each with:
-  - draw: the calls that draw the beat, in step with its words;
-  - visual: one sentence saying exactly what your calls show. It replaces the writer's `visual`, which is a \
-suggestion: follow it where the templates can, and where they can't, draw the closest faithful picture and \
-describe that. What you draw must agree with the line's words (if the line says eight cells, draw eight).
-If the templates can't draw this segment's idea faithfully at all, return an empty `draw` for every beat and keep \
-the writer's `visual` sentences; an animator will code that segment.
+and the segment to draw. Return one entry per beat of that segment (exactly as many as it has beats), each with \
+`draw`: the calls that draw the beat, in step with its words.
+  - The writer's `visual` sentences are suggestions: follow them where the templates can, and where they can't, \
+draw the closest faithful picture. A reviewer then compares each line's words with a sentence generated from your \
+calls, so draw what the words say: if the line says eight cells, draw eight; if it names a value, show that value.
+  - Code checks your calls before anything renders, including that the segment shows a diagram and not only notes.
+If the templates can't draw this segment's idea faithfully at all, return an empty `draw` for every beat; an \
+animator will code that segment from the writer's sentences.
 """
 
 
@@ -527,8 +529,8 @@ def draw_fix_system_prompt(frame: str = "dialogue") -> str:
 
 
 _DRAW_FIX = """\
-You fix the template calls of a short educational video's script. Each segment below has beats (lines), each \
-with the calls that draw it and the problems an automatic checker found in those calls. Return every listed \
-segment with one entry per beat (the same number of beats): its corrected `draw` calls, and its `visual`, one \
-sentence saying exactly what the calls show. Change only what you must to fix the problems.
+You fix the template calls of one segment of a short educational video's script. The segment below has beats \
+(lines), each with the calls that draw it, and the problems an automatic checker found in those calls. Return one \
+entry per beat (the same number of beats) with its corrected `draw` calls. Change only what you must to fix the \
+problems.
 """

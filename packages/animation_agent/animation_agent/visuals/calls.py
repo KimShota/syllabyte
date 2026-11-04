@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ast
 import io
+import re
 import tokenize
 from dataclasses import dataclass
 
@@ -116,64 +117,170 @@ class _Live:
     state: dict
 
 
-def check_segment(draws: list[list[str]]) -> list[str]:
+def check_segment(draws: list[list[str]], lines: list[str] | None = None) -> list[str]:
     """Problems with one segment's calls (one list per beat), as messages naming the beat. Simulates the calls:
     every name is created before it's used, arguments match the template, indices stay in range, objects on
-    screen at the same time sit in areas that don't overlap."""
+    screen at the same time sit in areas that don't overlap. With `lines` (each beat's narration), also checks
+    the calls against the words, as the script critic would: the segment shows a diagram, not only notes, and a
+    line that counts cells ("eight cells") has a list of that many on screen."""
+    return _simulate(draws, lines)[0]
+
+
+def describe_segment(draws: list[list[str]]) -> list[str]:
+    """One sentence per beat saying what its calls show, computed from the calls (so it can't promise anything
+    they don't draw): the beat's `visual` when it is drawn from templates. Only for calls check_segment passed."""
+    return _simulate(draws, None)[1]
+
+
+# "eight cells", "a list of 5 numbers": a count the list on screen has to match.
+_NUMBER_WORDS = {w: i for i, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve".split())}
+_COUNTED = re.compile(r"\b(\d+|" + "|".join(_NUMBER_WORDS) + r")\s+(?:sorted\s+|unsorted\s+|blue\s+)?"
+                      r"(cells|numbers|items|elements|values|boxes|entries|slots|bars)\b", re.IGNORECASE)
+
+
+def _counts(line: str) -> list[tuple[int, str]]:
+    out = []
+    for m in _COUNTED.finditer(line):
+        word = m.group(1).lower()
+        out.append((int(word) if word.isdigit() else _NUMBER_WORDS[word], m.group(0)))
+    return out
+
+
+def _simulate(draws: list[list[str]], lines: list[str] | None) -> tuple[list[str], list[str]]:
     problems: list[str] = []
+    said: list[str] = []
     if not draws or not draws[0]:
-        return ["beat 1 has no calls: the segment's first beat must create what it shows"]
+        return ["beat 1 has no calls: the segment's first beat must create what it shows"], said
     live: dict[str, _Live] = {}
     used: set[str] = set()
     for b, calls in enumerate(draws, 1):
         if len(calls) > MAX_CALLS_PER_BEAT:
             problems.append(f"beat {b}: {len(calls)} calls; at most {MAX_CALLS_PER_BEAT} per beat")
+        words = []
         for text in calls:
             where = f"beat {b}, `{text}`"
             try:
                 call = parse_call(text, {n: o.template for n, o in live.items()})
-                problem = _check(call, live, used)
+                problem, what = _check(call, live, used)
             except CallError as e:
-                problem = str(e)
+                problem, what = str(e), None
             if problem:
                 problems.append(f"{where}: {problem}")
-    return problems
+            elif what:
+                words.append(what)
+        sentence = "; ".join(words) + "."
+        said.append(sentence[0].upper() + sentence[1:] if words else "The picture stays as it is.")
+        if lines is not None and b <= len(lines):
+            problems += _count_problems(b, lines[b - 1], live)
+            problems += _echo_problems(b, lines[b - 1], calls)
+    if lines is not None and used and all(o.template == "Note" for o in _created(draws)):
+        problems.append("the segment shows only Notes: every segment shows a diagram (a list, a grid, a formula), "
+                        "and a Note is a label or a question beside it")
+    return problems, said
 
 
-def _check(call: Call, live: dict[str, _Live], used: set[str]) -> str | None:
+def _created(draws: list[list[str]]) -> list[_Live]:
+    out = []
+    for calls in draws:
+        for text in calls:
+            try:
+                call = parse_call(text, {})
+            except CallError:
+                continue
+            out.append(_Live(call.template, "", {}))
+    return out
+
+
+def _count_problems(b: int, line: str, live: dict[str, _Live]) -> list[str]:
+    from animation_agent.visuals.specs import MAX_CELLS
+
+    lists = [len(o.state["values"]) for o in live.values() if o.template == "ArrayBars"]
+    out = []
+    for n, phrase in _counts(line):
+        if lists and n <= MAX_CELLS and n not in lists:
+            shown = " and ".join(str(k) for k in lists)
+            out.append(f'beat {b}: the line says "{phrase}" but the list on screen has {shown} cells; draw '
+                       f"{n} values so the picture matches the words")
+    return out
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
+def _echo_problems(b: int, line: str, calls: list[str]) -> list[str]:
+    """A note that writes out the line's own words (the critic marks these down: the screen should add something
+    the voice doesn't say, like a value, a label or a formula)."""
+    spoken = set(_words(line))
+    out = []
+    for text in calls:
+        try:
+            tree = ast.parse(_as_raw_strings(text.strip()))
+            call = tree.body[0].value  # type: ignore[attr-defined]
+            name = call.func.id if isinstance(call.func, ast.Name) else call.func.attr
+        except (CallError, SyntaxError, AttributeError, IndexError):
+            continue
+        if name not in ("Note", "say", "note"):
+            continue
+        written = next((ast.literal_eval(kw.value) for kw in call.keywords if kw.arg == "text"), None)
+        words = _words(written) if isinstance(written, str) else []
+        if len(words) >= 3 and sum(w in spoken for w in words) / len(words) >= 0.8:
+            out.append(f'beat {b}, `{text}`: the note repeats the line\'s own words; show something the voice '
+                       "doesn't say (a value, a label, a formula), or highlight the thing itself instead")
+    return out
+
+
+def _check(call: Call, live: dict[str, _Live], used: set[str]) -> tuple[str | None, str | None]:
+    """The call's problem, or None and what it shows in words."""
     spec = REGISTRY[call.template]
     if call.action is None:
         if call.target in used:
-            return f"the name {call.target} is already used in this segment; pick another"
+            return f"the name {call.target} is already used in this segment; pick another", None
         try:
             params = spec.params.model_validate(call.args)
         except ValidationError as e:
-            return _first_error(e)
+            return _first_error(e), None
         if call.template in INIT_CHECKS and (problem := INIT_CHECKS[call.template](params)):
-            return problem
+            return problem, None
         if problem := _area_clash(params.area, live, call.target) or _too_small(spec, params.area):
-            return problem
+            return problem, None
         if len(live) >= MAX_OBJECTS_ON_SCREEN:
-            return f"at most {MAX_OBJECTS_ON_SCREEN} objects on screen; remove one first"
-        live[call.target] = _Live(call.template, params.area, spec.init_state(params))
+            return f"at most {MAX_OBJECTS_ON_SCREEN} objects on screen; remove one first", None
+        state = spec.init_state(params) | {"_noun": spec.noun}
+        live[call.target] = _Live(call.template, params.area, state)
         used.add(call.target)
-        return None
+        what = spec.describe(params) if spec.describe else f"a {spec.noun}"
+        return None, f"{what} ({AREA_WORDS[params.area]})"
 
     action = spec.all_actions()[call.action]
     try:
         args = action.args.model_validate(call.args)
     except ValidationError as e:
-        return _first_error(e)
+        return _first_error(e), None
     obj = live[call.target]
     if call.action == "remove":
         del live[call.target]
-        return None
-    if call.action == "move":
+    elif call.action == "move":
         if problem := _area_clash(args.area, live, call.target) or _too_small(spec, args.area):
-            return problem
+            return problem, None
         obj.area = args.area
-        return None
-    return action.check(obj.state, args) if action.check else None
+    elif action.check and (problem := action.check(obj.state, args)):
+        return problem, None
+    what = action.says(obj.state, args) if action.says else f"the {spec.noun}: {action.doc.split('.')[0].lower()}"
+    return None, what
+
+
+AREA_WORDS = {
+    "full": "filling the frame",
+    "top_half": "top half",
+    "bottom_half": "bottom half",
+    "top_third": "top third",
+    "middle_third": "middle third",
+    "bottom_third": "bottom third",
+    "top_two_thirds": "top two thirds",
+    "bottom_two_thirds": "bottom two thirds",
+}
 
 
 def _too_small(spec, area: str) -> str | None:
