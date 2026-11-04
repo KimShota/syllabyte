@@ -309,7 +309,11 @@ class ArrayBars(Template):
 
     def bisect_check(self, a) -> Steps:
         b = self.bisect
-        if b is None or b["target"] != a.target:
+        if b is None or b["target"] != a.target or b.get("done"):
+            if b is not None:  # a new search: every cell back in play
+                out = [i for i, st in enumerate(self.cell_state) if st != "base"]
+                if out:
+                    yield Step(self._restyle(out, "base").anims, 0.2)
             b = self.bisect = {"lo": 0, "hi": self.n - 1, "target": a.target}
         mid = (b["lo"] + b["hi"]) // 2
         b["mid"] = mid
@@ -326,6 +330,7 @@ class ArrayBars(Template):
         b = self.bisect
         mid, lo, hi, found = bisect_next(self.values, b["lo"], b["hi"], b["target"])
         if found:
+            b["done"] = True
             yield Step(self._restyle([mid], "GREEN").anims + self._note("found it", colour("GREEN")))
             return
         out = range(b["lo"], mid + 1) if lo > b["lo"] else range(mid, b["hi"] + 1)
@@ -333,6 +338,7 @@ class ArrayBars(Template):
         b["lo"], b["hi"] = lo, hi
         self.pointers.pop("mid", None)
         if lo > hi:
+            b["done"] = True
             for name in ("lo", "hi"):
                 self.pointers.pop(name, None)
             anims = self._note("not in the list", GREY_B)

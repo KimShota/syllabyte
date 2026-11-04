@@ -18,8 +18,7 @@ from animation_agent.visuals.calls import CallError, check_segment, parse_call, 
 from animation_agent.visuals.runner import CLASSES
 from animation_agent.visuals.scene_code import build_spec_scene
 from animation_agent.visuals.specs import REGISTRY, bisect_next, real_eigenvectors, template_cards
-from script_generation_agent import script_writer
-from script_generation_agent.prompts import templates_prompt
+from script_generation_agent.prompts import storyboard_system_prompt
 from syllabyte_common.models import RenderSegment, TemplatedDialogueScript, load_script
 
 ARR = 'a = ArrayBars(values=[1, 3, 4, 7, 9], area="bottom_half")'
@@ -46,7 +45,8 @@ def test_every_action_has_a_method_and_back(name):
 def test_each_example_passes_and_is_in_the_prompt(name):
     spec = REGISTRY[name]
     assert check_segment(spec.example) == []
-    assert f"{name}(" in template_cards() and spec.example[0][0] in templates_prompt()
+    prompt = storyboard_system_prompt(2, None, explainer="P", peer="S", lexicon="-", example="")
+    assert f"{name}(" in template_cards() and f"{name}(" in prompt and "area=" not in prompt
 
 
 # --------------------------------------------------------------------------
@@ -83,9 +83,9 @@ def test_anything_outside_the_language_is_rejected(text, why):
     ([['a = ArrayBars(values=[3, 1, 2])'], ["a.bisect_check(target=2)"]], "sorted"),
     ([[ARR], ["a.bisect_discard()"]], "needs a bisect_check"),
     ([[ARR], ['b = Note(text="hi", area="bottom_third")']], "overlaps a"),
-    ([[ARR, "a.clear()", "a.clear()", "a.clear()", "a.clear()"]], "at most 4"),
+    ([[ARR] + ["a.clear()"] * 6], "at most 6"),
     ([[ARR], ["a.remove()"], ["a.clear()"]], "hasn't been created"),
-    ([[ARR], ['a = Note(text="again")']], "already used"),
+    ([[ARR], ['a = Note(text="again", area="bottom_half")'], ["a.highlight(indices=[0])"]], "has no action"),
     ([['a = ArrayBars(values=[1, 2], area="bottom_third")']], "at least half"),
     ([['g = LinearMap2D(matrix=[[3, 0], [0, 3]], vectors=[{"name": "v", "x": 2, "y": 0}])']], "off the grid"),
     ([['g = LinearMap2D(matrix=[[1, 2, 3], [0, 1]])']], "2x2"),
@@ -100,8 +100,8 @@ def test_check_segment_finds(beats, why):
 def test_bisection_is_simulated_to_its_end():
     beats = [[ARR], ["a.bisect_step(target=9)"], ["a.bisect_step(target=9)"], ["a.bisect_step(target=9)"]]
     assert check_segment(beats) == []  # 4 -> mid 2 (4<9, go right), then mid 3 (7<9), then mid 4 found
-    assert check_segment(beats + [["a.bisect_step(target=9)"]])[0].endswith("the search already ended "
-                                                                           "(found, or nothing left to check)")
+    assert check_segment(beats + [["a.bisect_step(target=9)"]]) == []  # after it ends, a new search starts
+    assert "needs a bisect_check" in check_segment(beats + [["a.bisect_discard()"]])[0]
 
 
 def test_bisect_next_and_eigenvectors():
@@ -145,33 +145,6 @@ def test_templated_scripts_load_and_keep_their_calls_for_the_renderer():
     assert isinstance(loaded, TemplatedDialogueScript)
     render_seg = RenderSegment(**loaded.segments[0].model_dump(), frame="dialogue")
     assert segment_draws(render_seg) == [[ARR], ["a.bisect_step(target=9)"]]
-
-
-def test_add_draws_fixes_a_bad_segment_at_once_then_falls_back_to_code(monkeypatch):
-    from test_dialogue import make_script
-
-    script = make_script()
-    calls = []
-
-    def fake(**kw):
-        calls.append(kw["stage"])
-        text = kw["content"][0]["text"]
-        good = [script_writer._BeatDraw(draw=[ARR]), script_writer._BeatDraw(draw=["a.highlight(indices=[2])"])]
-        if kw["stage"] == "fix_draws":
-            assert "index 9 is outside" in text and kw["model"] == script_writer.DRAW_MODEL
-            return script_writer._Draws(beats=good if "Segment 3" in text else [])
-        if "Draw segment 3" in text or "Draw segment 4" in text:  # both wrong at first
-            return script_writer._Draws(beats=[script_writer._BeatDraw(draw=[ARR]),
-                                               script_writer._BeatDraw(draw=["a.highlight(indices=[9])"])])
-        return script_writer._Draws(beats=[])
-
-    monkeypatch.setattr(script_writer, "structured", fake)
-    out = script_writer.add_draws(script, ku_id="ku-eigen")
-    assert sorted(calls).count("fix_draws") == 2  # one per bad segment, no second round
-    assert out.segments[3].beats[1].draw == ["a.highlight(indices=[2])"]
-    assert out.segments[3].beats[1].visual == "The cell holding 4 turns yellow."
-    assert all(b.draw == [] for b in out.segments[4].beats)  # still wrong: left to the animator
-    assert out.segments[4].beats[0].visual == script.segments[4].beats[0].visual
 
 
 def test_visual_sentences_are_computed_from_the_calls():
@@ -251,47 +224,6 @@ def test_each_example_renders_with_no_layout_findings(name, frame, tmp_path):
     assert layout.findings == [], layout.findings
 
 
-def test_add_draws_fills_each_segment_and_survives_a_failed_call(monkeypatch):
-    from test_dialogue import make_script  # tests/ is on sys.path (no __init__.py)
-
-    script = make_script()
-
-    def fake(**kw):
-        text = kw["content"][0]["text"]
-        if "Draw segment 1" in text:
-            raise RuntimeError("timeout")
-        # one entry: padded with empty ones to the beat count
-        return script_writer._Draws(beats=[script_writer._BeatDraw(draw=[ARR])])
-
-    monkeypatch.setattr(script_writer, "structured", fake)
-    out = script_writer.add_draws(script, ku_id="ku-eigen")
-    assert isinstance(out, TemplatedDialogueScript) and out.visuals == "templates"
-    assert [len(s.beats) for s in out.segments] == [len(s.beats) for s in script.segments]
-    assert out.segments[2].beats[0].draw == [ARR]
-    assert out.segments[2].beats[0].visual == "A row of 5 blue cells: 1, 3, 4, 7, 9 (bottom half)."
-    assert out.segments[2].beats[1].visual == "The picture stays as it is."
-    assert out.segments[1].beats[0].visual == script.segments[1].beats[0].visual  # left to the animator
-    assert all(b.draw == [] for b in out.segments[1].beats)
-    assert all(b.draw == [] for b in out.segments[2].beats[1:])
-
-
-def test_feedback_redraws_only_the_flagged_segments(monkeypatch):
-    from test_dialogue import make_script
-
-    calls = []
-
-    def fake(**kw):
-        calls.append(kw["content"][0]["text"])
-        return script_writer._Draws(beats=[script_writer._BeatDraw(draw=[ARR])])
-
-    monkeypatch.setattr(script_writer, "structured", fake)
-    first = script_writer.add_draws(make_script(), ku_id="ku-eigen")
-    calls.clear()
-    again = script_writer.add_draws(first, ku_id="ku-eigen", feedback={2: ["the arrow never moves"]})
-    assert len(calls) == 1 and "the arrow never moves" in calls[0] and "Draw segment 2" in calls[0]
-    assert again.segments[0].beats[0].draw == first.segments[0].beats[0].draw
-
-
 def test_early_voices_are_used_only_for_the_same_lines(tmp_path, monkeypatch):
     import sys
 
@@ -320,17 +252,3 @@ def test_early_voices_are_used_only_for_the_same_lines(tmp_path, monkeypatch):
     rewritten.segments[0].beats[0].narration = "New words."
     assert voices.take(rewritten) is None
     voices.close()
-
-
-def test_critic_issues_go_to_the_segments_they_name():
-    from script_generation_agent.critic import issues_by_segment
-    from test_dialogue import make_script
-
-    script = make_script()  # prepare, initiate, deliver, deliver, end
-    assert [seg.phase for seg in script.segments] == ["prepare", "initiate", "deliver", "deliver", "end"]
-    issues = ["deliver (second segment), beat 3: only a note", "end, beat 2: a caption", "pacing: too long",
-              "deliver, beat 1: vague", "visual_alignment - deliver (first segment), beat 6: text"]
-    out = issues_by_segment(script, issues)
-    assert out[3] == [issues[0], issues[3]] and out[4] == [issues[1]] and out[2] == [issues[3], issues[4]]
-    assert 0 not in out and 1 not in out
-    assert issues_by_segment(script, ["pacing: too long"]) == {i: ["pacing: too long"] for i in range(5)}

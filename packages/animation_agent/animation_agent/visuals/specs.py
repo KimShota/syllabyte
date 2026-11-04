@@ -11,6 +11,7 @@ checker and the drawing compute the same thing.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
@@ -19,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 # Bump when a template draws differently (or the call language changes): it is part of the cache key of every
 # video drawn with templates (syllabyte_common.video_jobs.video_key), so those videos are made again.
-TEMPLATES_VERSION = "2"
+TEMPLATES_VERSION = "3"  # 3: storyboards (objects carry over between segments; code lays them out)
 
 # --------------------------------------------------------------------------
 # Shared vocabulary
@@ -334,11 +335,9 @@ def _check_bisect_check(state: dict, a: TargetArgs) -> str | None:
     if problem := _numeric_sorted(state):
         return problem
     b = state["bisect"]
-    if b is None or b["target"] != a.target:
+    if b is None or b["target"] != a.target or b["done"]:  # after a search ends, a check starts a new one
         b = state["bisect"] = {"lo": 0, "hi": len(state["values"]) - 1, "target": a.target, "checked": False,
                                "done": False}
-    if b["done"]:
-        return "the search already ended (found, or nothing left to check)"
     if b["checked"]:
         return "bisect_check twice in a row: call bisect_discard first"
     b["checked"] = True
@@ -435,7 +434,8 @@ ARRAY_BARS = TemplateSpec(
                            ScanArgs, _check_scan, _said_scan),
         "bisect_check": ActionSpec(
             "Bisection: show lo, mid, hi on the part still in play and compare the middle value with the target. "
-            "The first call starts the search over the whole list. Values must be sorted numbers.",
+            "The first call (or the first after a search ended) starts a search over the whole list. Values must "
+            "be sorted numbers.",
             TargetArgs, _check_bisect_check, _said_bisect_check,
         ),
         "bisect_discard": ActionSpec(
@@ -924,10 +924,12 @@ def _type_name(annotation) -> str:
     return text.replace("NoneType", "None").replace("<class '", "").replace("'>", "")
 
 
-def _signature(model: type[BaseModel]) -> str:
+def _signature(model: type[BaseModel], auto_layout: bool = False) -> str:
     parts = []
     for name, f in model.model_fields.items():
         if f.annotation in (Area,):
+            if auto_layout:
+                continue  # code places it (normalize.lay_out)
             parts.append(f"{name}=<area>" if f.is_required() else f'{name}="{f.default}"')
         elif f.annotation in (Colour,):
             parts.append(f'{name}="{f.default}"' if f.default is not None and not f.is_required() else f"{name}=<colour>")
@@ -943,19 +945,25 @@ def _field_notes(model: type[BaseModel]) -> list[str]:
     return [f"{name}: {f.description}" for name, f in model.model_fields.items() if f.description]
 
 
-def template_card(spec: TemplateSpec) -> str:
-    lines = [f"{spec.name}({_signature(spec.params)})", f"  {spec.purpose}"]
+_AREA_ARG = re.compile(r""",?\s*area=["'][a-z_]+["']""")
+
+
+def template_card(spec: TemplateSpec, auto_layout: bool = False) -> str:
+    """The template as the writer sees it. With `auto_layout`, without areas or `move` (code lays objects out)."""
+    lines = [f"{spec.name}({_signature(spec.params, auto_layout)})", f"  {spec.purpose}"]
     lines += [f"  - {note}" for note in _field_notes(spec.params)]
     lines.append("  Actions:")
     for name, action in spec.all_actions().items():
-        lines.append(f"    .{name}({_signature(action.args)}): {action.doc}")
+        if auto_layout and name == "move":
+            continue
+        lines.append(f"    .{name}({_signature(action.args, auto_layout)}): {action.doc}")
         lines += [f"        {note}" for note in _field_notes(action.args)]
     lines.append("  Example (one segment):")
     for k, calls in enumerate(spec.example, 1):
         lines.append(f"    beat {k}:" + ("" if calls else " (no calls: the picture stays)"))
-        lines += [f"      {call}" for call in calls]
+        lines += [f"      {_AREA_ARG.sub('', call).replace('(, ', '(') if auto_layout else call}" for call in calls]
     return "\n".join(lines)
 
 
-def template_cards(names: list[str] | None = None) -> str:
-    return "\n\n".join(template_card(REGISTRY[n]) for n in (names or list(REGISTRY)))
+def template_cards(names: list[str] | None = None, auto_layout: bool = False) -> str:
+    return "\n\n".join(template_card(REGISTRY[n], auto_layout) for n in (names or list(REGISTRY)))

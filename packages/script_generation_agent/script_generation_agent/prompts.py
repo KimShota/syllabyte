@@ -433,104 +433,143 @@ def dialogue_critique_system_prompt(level: int, *, explainer: str, peer: str) ->
 
 
 # --------------------------------------------------------------------------
-# Drawing lines with the visual template library (plan/visual-template-library-plan.md)
+# Storyboards: one call writes every line and its picture together (plan/one-shot-storyboard-plan.md)
+#
+# The beat plan (who speaks, which tutoring step, where the misconception and the predict line go, a word budget
+# per line, where slang goes) is built by code (storyboard.skeleton), so the writer can't break it. The writer
+# gets the same rubric the critic scores with.
 # --------------------------------------------------------------------------
 
-_TEMPLATES = """\
+# One rubric, read by the writer (as what it is scored on) and the critic (as how it scores). Two rules differ from
+# the older critic prompt, because they contradicted the video format: approved slang is not marked down, and a
+# formula that is written, rewritten, highlighted or boxed is a picture.
+SHARED_RUBRIC = """\
+How the video is scored (0-10 each; 7 or more on every one passes):
+  - pedagogical_coherence: each line does its step's job in the tutoring frame: a question is a deep one (why, \
+how, what if, compare), never filler; the explainer's feedback gives the REASON a wrong idea is wrong and what \
+holds instead; the predict line asks the viewer to guess right before the answer; the peer's restatement at the \
+end is the one big idea. Pacing fits a 70-100 second short.
+  - conceptual_accuracy: every claim matches the slides. A wrong idea the peer voices and the explainer corrects \
+in the next line is teaching, not an error. Flag any unsupported claim, wrong formula or invented detail.
+  - learner_appropriateness: the language suits the viewer's level; every new term gets a short gloss at Level 1 \
+and 2; lines are easy to follow by ear for a viewer whose first language is not English (one idea per line, \
+numbers said simply). The casual phrases come from an approved list and the format requires 2-6 of them: one \
+is an issue only if it replaces a course term, sits in a definition, formula, objective or restatement line, or \
+makes the line hard to follow.
+  - visual_alignment: each beat's picture shows what that same line says, at the moment it says it, with shapes \
+and motion: cells, pointers, arrows, a grid that moves, a formula being written, rewritten, highlighted or \
+boxed. A beat whose picture is only text (a caption, a note, a bullet list, the line's words on screen) scores \
+4 at most. A beat that keeps the picture as it is is fine for a short reply. A picture must not show an answer \
+before the line that gives it.
+"""
 
-Drawing each line with templates
-  Every beat also has `draw`: calls on the visual templates listed below, which draw that line's picture with \
-tested code (the numbers, halves and eigenvectors are computed, so they are always right). Draw with them \
-whenever one fits the idea. Each line's `visual` sentence is then written from your calls, saying exactly what \
-they show, so the calls alone have to carry the picture the line needs.
+STORYBOARD_EXAMPLE_NOTE = """\
+An example of a finished storyboard (a different idea, at Level 2), to show the format and the bar: every line \
+says what its picture shows, and every picture moves.
+"""
+
+_STORYBOARD_TASK = """\
+You write a storyboard for one short dialogue video: for every beat, the line one character says and the \
+template calls that draw it. You write both together, picture first: decide what the viewer sees during the \
+line, then write the line so it says what that picture shows.
+
+The beat plan is fixed. Each beat in the schema is named for its speaker and its tutoring step (e.g. \
+b3_explainer_feedback), and its description says what the line does, how many words it has, and whether it \
+carries a casual phrase. Fill in every beat in that order; don't add, drop or swap beats.
+  - {explainer} (the explainer) knows the material and teaches it. {peer} (the peer) is a classmate learning it, \
+like the viewer: curious, a bit sceptical, sometimes wrong, never laughed at. They use each other's names now \
+and then.
+  - A beat marked "wrong idea" is a misconception a student of this course would really have, said with \
+confidence; the explainer's next feedback line says why it is wrong and what holds instead.
+  - Keep to each beat's word range: the whole script must come to {min_words}-{max_words} words.
+  - Every segment cites the slides its lines come from (`source_refs`).
+  - Give the video a `colour_key`: the 2-4 things its pictures show again and again, each with its own colour, \
+named the way the characters say them in one or two words ("eigenvector", "midpoint"). Use those colours in the \
+calls.
+
+"""
+
+_STORYBOARD_SLANG = """\
+Casual phrases
+Both characters talk like Gen-Z students: casual, "you" and "I", contractions, short lines. A beat whose \
+description says "casual phrase here" uses exactly one phrase from this list, exactly as written; no other beat \
+uses one:
+{lexicon}
+Never in place of a course term, and never mocking a wrong answer.
+
+"""
+
+_STORYBOARD_DRAWING = """\
+Drawing
+Each beat's `draw` lists the template calls that draw its picture with tested code (numbers, halves and \
+eigenvectors are computed, so they are always right). A sentence describing the picture is generated from your \
+calls, and that is what the reviewer reads, so the calls alone carry the picture.
   - Write each call as one line of Python with keyword arguments and plain values (numbers, strings, lists, \
 dicts, True/False/None):
       name = Template(arg=value, ...)     puts something on screen
       name.action(arg=value, ...)         changes it
-  - Every segment starts with an empty screen: its first beat creates what it shows, and names last until the end \
-of their segment. To keep a picture into the next segment, create it again there in the state it ended in.
-  - 1-3 calls per beat. A beat with [] keeps the picture as it is (fine for a short reply).
-  - The drawing area is {frame}. Things on screen together go in areas that don't overlap: full, top_half, \
-bottom_half, top_third, middle_third, bottom_third, top_two_thirds, bottom_two_thirds. At most 3 at once, \
-usually one diagram plus, at most, a formula or a note.
-  - Pick values that make the idea easy to see: 5-8 small numbers in a list; small whole-number matrices whose \
-vectors stay on the grid.
-  - Write TeX with single backslashes, e.g. tex="(A - \\lambda I) v = 0". Keep each formula short: about 20 \
-symbols at most, so it stays large enough to read.
-  - Give the colour key's terms their colours (colour=..., colours=[...]). Some colours are fixed by the \
-templates: grey = ruled out (grey_out), green = found, red dashed = a wrong idea (ghost), yellow = the thing \
-being pointed at. Don't use those colours for other meanings.
-  - Every segment shows a diagram. A Note is a label or a question beside a diagram, never the whole picture, and \
-never just the line's words repeated.
-  - A line voicing a misconception draws the wrong idea as a ghost (ArrayBars.ghost, LinearMap2D.ghost_vector) or \
-writes the wrong step (EquationSteps.then); the explainer's feedback line clears it, or crosses the wrong step out \
-(EquationSteps.cross_out) and writes the right one.
-  - A draw shows what its own line says, no more: don't reveal a value or label before the line that says it.
-  - A question or predict line points at what is asked about without giving the answer away: highlight it, or \
-cover the answer (EquationSteps.cover) and uncover it in the line that gives it.
-  - If no template can show a segment's idea, leave every `draw` in that segment empty and describe its visuals \
-in `visual` as before; an animator will code them.
+  - What is on screen stays on screen, from one segment into the next, until you remove it. Create a diagram \
+once and keep acting on it; creating a name again replaces that object. Where things sit is worked out for you: \
+give no areas.
+  - 1-3 calls per beat; [] keeps the picture as it is (fine for a short reply). At most one diagram (a list or a \
+grid) and one formula or note on screen at a time.
+  - Every beat's picture moves: highlight, point, scan, swap, grey out, apply, add a vector, write or rewrite a \
+formula. A beat whose only calls change text (a note, a counter, clear) counts as text on screen. A note adds \
+what the voice doesn't say (a value, a label, a question); it never repeats the line.
+  - Pick values that make the idea easy to see: 5-8 small numbers in a list; small whole-number 2x2 matrices whose \
+vectors stay on a grid of -3..3. Notes and titles: about 20 characters. Formulas: about 20 symbols, TeX with single \
+backslashes (tex="(A - \\lambda I) v = 0").
+  - Fixed colours: grey = ruled out, green = found, red dashed = a wrong idea, yellow = pointed at. Don't use them \
+for other meanings.
+  - The "wrong idea" beat draws the wrong idea as a ghost (ArrayBars.ghost, LinearMap2D.ghost_vector) or a wrong \
+formula step (EquationSteps.then); the feedback line clears it, or crosses the step out (EquationSteps.cross_out) \
+and writes the right one.
+  - A question or predict line points at what is asked about without giving the answer away (highlight it, or \
+EquationSteps.cover); the line that answers shows the answer.
+  - If no template can draw a segment's idea at all, leave its calls empty and write `sketches`: one sentence per \
+beat saying what an animator should draw. Otherwise `sketches` is [].
 
 The templates
 {cards}
+
 """
 
-TEMPLATE_FRAMES = {
-    "dialogue": "the top 70% of the screen, about 4.5 units wide by 5.6 tall",
-    "full": "the whole portrait screen, about 4.5 units wide by 8 tall",
-}
 
-
-def templates_prompt(frame: str = "dialogue") -> str:
+def storyboard_system_prompt(level: int, prereq_titles: list[str] | None, *, explainer: str, peer: str,
+                             lexicon: str, example: str, frame: str = "dialogue") -> str:
     from animation_agent.visuals.specs import template_cards
 
-    return _TEMPLATES.format(frame=TEMPLATE_FRAMES[frame], cards=template_cards())
+    prereqs = "; ".join(f"“{t}”" for t in prereq_titles or [])
+    prereq_line = (f"This idea builds on {prereqs}: the plan has a line where {explainer} recaps it in one plain "
+                   "sentence." if prereqs else "This idea builds on nothing earlier in the course: no recap.")
+    names = {"explainer": explainer, "peer": peer}
+    return (
+        _DIALOGUE_INTRO
+        + _STORYBOARD_TASK.format(min_words=DIALOGUE_MIN_WORDS, max_words=DIALOGUE_MAX_WORDS, **names)
+        + "The viewer's level\n" + LEVEL_BRIEF[level].format(prereq_line=prereq_line) + "\n"
+        + _DIALOGUE_LEVEL_RULES.replace("Give the video a `colour_key`", "As above, give the video a `colour_key`")
+        + _STORYBOARD_SLANG.format(lexicon=lexicon)
+        + _STORYBOARD_DRAWING.replace("{cards}", template_cards(auto_layout=True))
+        + SHARED_RUBRIC + "\n"
+        + STORYBOARD_EXAMPLE_NOTE + example
+    )
 
 
-_TEMPLATES_BRIEF = """\
+STORYBOARD_CRITIQUE_NOTE = """\
 
-The pictures the animator can draw exactly
-  An animator draws each line's `visual` with these templates, so describe pictures they can show:
-{brief}
-  Their fixed colours: grey = ruled out, green = found, red dashed = a wrong idea, yellow = pointed at. Pick \
-colour-key colours that don't clash with these. Every segment shows a diagram (a note is only a label beside it).
-  Their limits: a list of at most 10 cells; a 2x2 matrix of small whole numbers; a formula of about 20 symbols \
-(longer ones go over two steps); one diagram per segment, with at most a formula or a note beside it. Don't \
-write lines or visuals that need more (e.g. "a row of 16 cells", "a 3x3 matrix").
+This script is a dialogue between {explainer} (the explainer) and {peer} (a peer who is learning the idea), on \
+the five-step tutoring frame: question -> the peer's answer -> the explainer's feedback -> building the answer \
+together -> the peer restating it. Its beat plan (who speaks, each line's step, where the misconception and the \
+predict line sit) was fixed by design: judge what each line says, not the plan. Each beat's `visual` is generated \
+from its `draw` calls, so it says exactly what is drawn: judge the picture by it, and ignore the calls' syntax.
 """
 
 
-def templates_brief() -> str:
-    """For the script writer: what the templates draw, without their calls (those are filled in per segment)."""
-    from animation_agent.visuals.specs import REGISTRY
-
-    return _TEMPLATES_BRIEF.format(brief="\n".join(f"  - {s.name}: {s.purpose}" for s in REGISTRY.values()))
-
-
-_DRAW_SEGMENT = """\
-You draw one segment of a short educational video with visual templates. You get the whole script, for context, \
-and the segment to draw. Return one entry per beat of that segment (exactly as many as it has beats), each with \
-`draw`: the calls that draw the beat, in step with its words.
-  - The writer's `visual` sentences are suggestions: follow them where the templates can, and where they can't, \
-draw the closest faithful picture. A reviewer then compares each line's words with a sentence generated from your \
-calls, so draw what the words say: if the line says eight cells, draw eight; if it names a value, show that value.
-  - Code checks your calls before anything renders, including that the segment shows a diagram and not only notes.
-If the templates can't draw this segment's idea faithfully at all, return an empty `draw` for every beat; an \
-animator will code that segment from the writer's sentences.
-"""
-
-
-def draw_segment_system_prompt(frame: str = "dialogue") -> str:
-    return _DRAW_SEGMENT + templates_prompt(frame)
-
-
-def draw_fix_system_prompt(frame: str = "dialogue") -> str:
-    return _DRAW_FIX + templates_prompt(frame)
-
-
-_DRAW_FIX = """\
-You fix the template calls of one segment of a short educational video's script. The segment below has beats \
-(lines), each with the calls that draw it, and the problems an automatic checker found in those calls. Return one \
-entry per beat (the same number of beats) with its corrected `draw` calls. Change only what you must to fix the \
-problems.
-"""
+def storyboard_critique_system_prompt(level: int, *, explainer: str, peer: str) -> str:
+    """The critic for storyboards: SHARED_RUBRIC (the writer's rubric) in place of the older dialogue rules."""
+    base = CRITIQUE_SYSTEM_PROMPT
+    head = base[: base.index("  - pedagogical_coherence:")]
+    tail = base[base.index("List every concrete issue"):]
+    return (head + SHARED_RUBRIC + "\n" + tail
+            + critique_system_prompt(level)[len(CRITIQUE_SYSTEM_PROMPT):]
+            + STORYBOARD_CRITIQUE_NOTE.format(explainer=explainer, peer=peer))

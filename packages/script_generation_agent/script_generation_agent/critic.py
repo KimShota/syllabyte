@@ -16,11 +16,11 @@ from script_generation_agent.prompts import (
     build_critique_prompt,
     critique_system_prompt,
     dialogue_critique_system_prompt,
+    storyboard_critique_system_prompt,
 )
 from script_generation_agent.script_writer import (
     Style,
     Visuals,
-    add_draws,
     gather_source_material,
     write_script,
 )
@@ -66,35 +66,24 @@ def critique(
     )
 
 
-_ORDINALS = {"first": 0, "second": 1, "third": 2, "1": 0, "2": 1, "3": 2}
+def critique_storyboard(
+    script: Script,
+    corpus: CourseCorpus,
+    ku: KnowledgeUnit,
+    *,
+    level: int,
+    model: str = DEFAULT_MODEL,
+    manifest: RunManifest | None = None,
+) -> CritiqueResult:
+    """One critique of a storyboard, with the rubric its writer was given (prompts.SHARED_RUBRIC). Nothing is
+    rewritten: the score is recorded, so quality can be tracked without the video waiting for a second round."""
+    from syllabyte_common.cast import load_cast
 
-
-def issues_by_segment(script: Script, issues: list[str]) -> dict[int, list[str]]:
-    """Segment index -> the critic's issues that name that segment's phase ("deliver (second segment), beat 3",
-    "end, beat 2"), so a redraw changes only the segments with problems and each drawer sees only its own. An
-    issue naming one of several segments of a phase without saying which goes to all of them; one naming no
-    phase (pacing, slang) is about the words and is left out. Every segment, with every issue, if none match."""
-    import re
-
-    phases = [seg.phase for seg in script.segments]
-    out: dict[int, list[str]] = {}
-    for issue in issues:
-        low = issue.lower()
-        hits = []
-        for phase in dict.fromkeys(phases):
-            if not re.search(rf"\b{phase}\b", low):
-                continue
-            same = [i for i, p in enumerate(phases) if p == phase]
-            which = re.search(rf"\b{phase}\b[^,;:]*?\b(first|second|third|segment \d|-\d)\b|"
-                              rf"\b(first|second|third)\s+{phase}\b", low)
-            if len(same) > 1 and which:
-                word = next(g for g in which.groups() if g).replace("segment ", "").lstrip("-")
-                k = _ORDINALS.get(word)
-                same = [same[k]] if k is not None and k < len(same) else same
-            hits += same
-        for i in dict.fromkeys(hits):
-            out.setdefault(i, []).append(issue)
-    return out or {i: list(issues) for i in range(len(phases))}
+    cast = load_cast()
+    system = storyboard_critique_system_prompt(level, explainer=cast.explainer.name, peer=cast.peer.name)
+    score = critique(script, corpus, ku, model=model, manifest=manifest, system=system,
+                     stage=f"critique_storyboard_l{level}")
+    return CritiqueResult(ku_id=ku.id, rounds=[score], passed=score.min_score >= CRITIQUE_THRESHOLD)
 
 
 def write_script_with_critique(
@@ -127,19 +116,22 @@ def write_script_with_critique(
         system = dialogue_critique_system_prompt(level or 2, explainer=cast.explainer.name, peer=cast.peer.name)
         stage = f"critique_dialogue_l{level}"
 
-    redraw: list[str] = []  # the critic's issues, when only the pictures need another go
+    if visuals == "templates":
+        # A storyboard: one call writes lines and pictures; one critique scores it, with no rewrite.
+        from script_generation_agent.storyboard import write_storyboard
+
+        script = write_storyboard(ku, corpus, level=level or 2, prereq_titles=prereq_titles, model=model,
+                                  manifest=manifest, on_lines_ready=on_lines_ready)
+        if skip_critic:
+            return script, CritiqueResult(ku_id=ku.id, passed=True)
+        return script, critique_storyboard(script, corpus, ku, level=level or 2, model=model, manifest=manifest)
+
     for round_num in range(1, MAX_ROUNDS + 1):
-        if redraw and script is not None:
-            # Template visuals: the lines passed and only the pictures scored low, so draw again with the
-            # critic's issues (a few parallel calls) instead of rewriting the script (plan phase 3 finding).
-            script = add_draws(script, ku_id=ku.id, manifest=manifest,
-                               feedback=issues_by_segment(script, redraw))
-        else:
-            script = write_script(
-                ku, corpus, model=model, manifest=manifest, extra_instruction=extra_instruction,
-                level=level, prereq_titles=prereq_titles, style=style, visuals=visuals,
-                on_lines_ready=on_lines_ready,
-            )
+        script = write_script(
+            ku, corpus, model=model, manifest=manifest, extra_instruction=extra_instruction,
+            level=level, prereq_titles=prereq_titles, style=style, visuals=visuals,
+            on_lines_ready=on_lines_ready,
+        )
 
         if skip_critic:
             result.passed = True
@@ -152,10 +144,7 @@ def write_script_with_critique(
             result.passed = True
             return script, result
 
-        text_ok = min(score.pedagogical_coherence, score.conceptual_accuracy,
-                      score.learner_appropriateness) >= CRITIQUE_THRESHOLD
-        redraw = score.issues if visuals == "templates" and text_ok else []
-        if round_num < MAX_ROUNDS and not redraw:
+        if round_num < MAX_ROUNDS:
             extra_instruction = (
                 "The previous script scored below threshold. Issues found:\n"
                 + "\n".join(f"- {issue}" for issue in score.issues)

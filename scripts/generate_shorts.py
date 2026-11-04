@@ -37,13 +37,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ingestion_agent.corpus import build_corpus
 from curriculum_alignment_agent.ku_extractor import extract_kus, select_kus
-from script_generation_agent.critic import write_script_with_critique
+from script_generation_agent.critic import critique_storyboard, write_script_with_critique
+from script_generation_agent.storyboard import write_storyboard
 from animation_agent.tts import build_srt, concat_wavs, synthesize_segments
 from animation_agent.renderer import missing_latex_tools, render_segment
 from animation_agent.assemble import assemble_ku_video
 from animation_agent.dialogue_band import compose_dialogue_video
 from syllabyte_common.models import (
     CourseCorpus,
+    CritiqueResult,
     DialogueScript,
     KnowledgeUnit,
     KUList,
@@ -94,6 +96,17 @@ def save_segment_result(seg_dir: Path, key: str, result: RenderResult) -> None:
     (seg_dir / SEGMENT_RESULT_FILE).write_text(
         json.dumps({"key": key, "result": result.model_dump()}, indent=2)
     )
+
+
+def render_segment_for(script, i: int, frame: str) -> RenderSegment:
+    """Segment i as the animation stage sees it: with the colour key, the frame, and, for a segment drawn from
+    templates, the calls of the segments before it (replayed first, so the picture carries over)."""
+    from animation_agent.visuals.calls import carried_calls
+
+    seg = script.segments[i]
+    templates = getattr(seg, "drawn_by", "code") == "templates"
+    return RenderSegment(**seg.model_dump(exclude={"drawn"}), colour_key=script.colour_key, frame=frame,
+                         templates=templates, carried=carried_calls(script, i) if templates else [])
 
 
 def voice_key(script) -> str:
@@ -181,6 +194,7 @@ def make_ku_video(
     the idea through: Manim draws the top 70% and the band with the speaking
     character and captions goes underneath (dialogue_band.py)."""
     # Stage 3: script + critique
+    critic_future = None
     script_path = ku_dir / "script.json"
     critique_path = ku_dir / "critique.json"
     audio_dir = ku_dir / "audio"
@@ -189,11 +203,23 @@ def make_ku_video(
     if force_from <= stage_index("script") or not script_path.exists():
         log(f"[3/6] script: writing + critiquing script for {ku.id}")
         try:
-            script, critique_result = write_script_with_critique(
-                ku, corpus, manifest=manifest, skip_critic=skip_critic,
-                level=level, prereq_titles=prereq_titles, style=style, visuals=visuals,
-                on_lines_ready=early_voices.start,
-            )
+            if visuals == "templates":
+                # A storyboard: lines and pictures from one call. Its critique runs beside the voices and the
+                # render, so the video never waits for it (nothing is rewritten from it; it is recorded).
+                script = write_storyboard(ku, corpus, level=level or 2, prereq_titles=prereq_titles,
+                                          manifest=manifest, on_lines_ready=early_voices.start)
+                if not skip_critic:
+                    critic_job = ThreadPoolExecutor(max_workers=1)
+                    critic_future = critic_job.submit(critique_storyboard, script, corpus, ku, level=level or 2,
+                                                      manifest=manifest)
+                    critic_job.shutdown(wait=False)
+                critique_result = CritiqueResult(ku_id=ku.id, passed=True)
+            else:
+                script, critique_result = write_script_with_critique(
+                    ku, corpus, manifest=manifest, skip_critic=skip_critic,
+                    level=level, prereq_titles=prereq_titles, style=style, visuals=visuals,
+                    on_lines_ready=early_voices.start,
+                )
         except BaseException:
             early_voices.close()
             raise
@@ -262,7 +288,7 @@ def make_ku_video(
         # threads run them concurrently. Results keep segment order.
         with ThreadPoolExecutor(max_workers=parallel_segments) as pool:
             futures = [
-                pool.submit(animate_segment, i, RenderSegment(**seg.model_dump(), colour_key=script.colour_key, frame=frame), audio)
+                pool.submit(animate_segment, i, render_segment_for(script, i, frame), audio)
                 for i, (seg, audio) in enumerate(zip(script.segments, segment_audios))
             ]
             render_results = [f.result() for f in futures]
@@ -308,7 +334,23 @@ def make_ku_video(
         log(f"    -> {diagnostics['final_path']} (max drift {diagnostics['max_abs_drift_seconds']:.2f}s)")
     else:
         log(f"[6/6] assemble: {ku.id} already has final.mp4")
+    if critic_future is not None:
+        _record_critique(critic_future, critique_path)
+        save_manifest()
     return final_path
+
+
+def _record_critique(future, critique_path: Path) -> None:
+    """Writes the storyboard's critique once it is in (it ran beside the voices and the render)."""
+    try:
+        result = future.result()
+    except Exception as e:  # the video is made either way; a missing critique is reported, not fatal
+        log(f"    critique failed: {e}")
+        return
+    critique_path.write_text(result.model_dump_json(indent=2))
+    r = result.rounds[0]
+    log(f"    critique: coherence={r.pedagogical_coherence} accuracy={r.conceptual_accuracy} "
+        f"appropriateness={r.learner_appropriateness} visual_alignment={r.visual_alignment} passed={result.passed}")
 
 
 def run(args: argparse.Namespace) -> None:

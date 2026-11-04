@@ -152,25 +152,29 @@ uv run python -m script_generation_agent.critic --corpus runs/<course>/corpus.js
 ### Visual templates (`--visuals templates`, dialogue only for now)
 
 `animation_agent/visuals/` holds tested Manim templates (plan: `plan/visual-template-library-plan.md`).
-With `--visuals templates`, each script line also carries the calls that draw it, for example:
+With `--visuals templates`, the script is written as a storyboard (`script_generation_agent/storyboard.py`,
+plan: `plan/one-shot-storyboard-plan.md`): one call writes every line and the template calls that draw it,
+for example:
 
 ```
-arr = ArrayBars(values=[1, 3, 4, 7, 9, 11, 15], area="bottom_two_thirds")
+arr = ArrayBars(values=[1, 3, 4, 7, 9, 11, 15])
 arr.bisect_check(target=9)
 ```
 
+- **The plan is built by code.** Who speaks each line, its tutoring step, where the misconception and the
+  predict line go, a word range per line and where the casual phrases go come from `storyboard.skeleton`; the
+  call's schema has one required field per beat. The writer sees the critic's rubric (`prompts.SHARED_RUBRIC`)
+  and a worked example (`storyboard_example.py`, kept valid by `tests/test_storyboard.py`).
 - **What it changes.** The renderer draws a segment from those calls, with no LLM code, no repairs and no
   visual critic. The templates compute what they show: bisection runs the real algorithm, and eigen-lines come
-  from numpy.
-- **Writing the calls.** After the lines pass, each segment's calls are written in parallel by
-  Claude Sonnet 5.5 (`script_writer.DRAW_MODEL`), and the voices are synthesized at the same time
-  (`generate_shorts.EarlyVoices`).
-- **Checking.** Calls are parsed (never executed) and checked by simulating the segment
-  (`visuals/calls.py`), including against the line's words: a segment needs a diagram, not only notes, and
-  "eight cells" needs eight cells on screen. A segment with bad calls gets one fix call straight away
-  (`script_writer._fix_segment`); if it is still wrong, it is drawn by LLM code from its `visual` text as before.
-- **Visual sentences.** In a drawn segment, each line's `visual` is generated from its calls
-  (`calls.describe_segment`), so the critic compares the words with what is actually drawn.
+  from numpy. What is on screen carries over to the next segment (the renderer replays the earlier calls).
+- **Checking and fixing, in code.** Calls are parsed (never executed) and the whole script is simulated
+  (`visuals/calls.py`), including against the lines' words. `visuals/normalize.py` lays every object out and
+  fixes the mechanical mistakes (a note too long, a note repeating the line, a zero vector, a grid too small).
+  What code can't fix gets one fix call; whatever is still wrong is dropped.
+- **Visual sentences.** Each line's `visual` is generated from its calls (`calls.describe_script`), so the
+  critic compares the words with what is actually drawn. The critic runs once, beside the voices and the
+  render, and its score is recorded; nothing is rewritten.
 - **Templates so far:** `ArrayBars`, `LinearMap2D`, `EquationSteps`, `Note`. Each is listed for the writer
   from `visuals/specs.py`.
 - **Adding a template.** Write its spec in `specs.py` (with a `says` sentence for every action), its drawing

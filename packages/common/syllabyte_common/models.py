@@ -198,6 +198,14 @@ class TemplatedDialogueBeat(DialogueBeat):
 
 class TemplatedDialogueSegment(DialogueSegment):
     beats: list[TemplatedDialogueBeat] = Field(min_length=1)
+    # How the segment is drawn: "templates" (its calls, after what earlier segments left on screen) or "code"
+    # (LLM-written Manim from each beat's `visual`). None in scripts written before storyboards: templates when
+    # any beat has calls.
+    drawn: Literal["templates", "code"] | None = None
+
+    @property
+    def drawn_by(self) -> str:
+        return self.drawn or ("templates" if any(b.draw for b in self.beats) else "code")
 
 
 class TemplatedDialogueScript(DialogueScript):
@@ -232,6 +240,10 @@ class RenderSegment(Segment):
     beats: list[RenderBeat] = Field(min_length=1)
     colour_key: list[TermColour] = Field(default_factory=list)
     frame: FrameName = "full"
+    # Drawn from template calls (TemplatedDialogueSegment.drawn_by), after replaying `carried`: every call of the
+    # template segments before it, so the picture continues from where the last segment ended.
+    templates: bool = False
+    carried: list[str] = Field(default_factory=list)
 
 
 class CritiqueScore(BaseModel):

@@ -1,0 +1,274 @@
+"""
+Fixing a script's template calls in code, so a storyboard needs no LLM repair for mechanical mistakes.
+
+Across the template pilots, most rejected calls were bookkeeping a model is bad at (runs/template-videos-*):
+areas that were too small or overlapped, objects not re-created in a new segment, notes a few characters too
+long, too many calls in a beat, zero vectors, a vector off the grid. normalize_script:
+
+  1. lays out every object itself: the writer never picks an area. Each object keeps one area for its whole
+     life, chosen so that everything on screen at the same time fits (a diagram gets the most room);
+  2. then simulates the script (calls.simulate_script) and, for each problem it knows how to fix, edits the
+     calls and simulates again: it drops a note that is too long, repeats the line or is the beat's only picture,
+     a zero vector, a guess hidden under a real vector, or a call on an object that doesn't exist, and it widens
+     a grid whose vector falls off it.
+
+What is left (a formula too long to read, an index outside the list, ...) is returned for a fix call.
+No Manim import.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from animation_agent.visuals.calls import (
+    Call,
+    CallError,
+    Problem,
+    parse_call,
+    simulate_script,
+)
+from animation_agent.visuals.specs import AREAS, REGISTRY, areas_overlap
+
+MAX_EXTENT = 5  # LinearMap2D's largest grid
+MAX_PASSES = 40  # one fix per pass, then simulate again (cheap: no Manim)
+
+
+# --------------------------------------------------------------------------
+# Writing calls back out
+# --------------------------------------------------------------------------
+
+
+def _literal(value) -> str:
+    """A Python literal that calls.parse_call reads back as `value` (it reads every string as a raw string, so
+    a string is written between quotes it doesn't contain, without escaping its backslashes)."""
+    if isinstance(value, str):
+        for q in ('"', "'"):
+            if q not in value and not value.endswith("\\"):
+                return f"{q}{value}{q}"
+        raise ValueError(f"can't write {value!r} as a call argument")
+    if isinstance(value, bool) or value is None:
+        return repr(value)
+    if isinstance(value, int | float):
+        return repr(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_literal(v) for v in value) + "]"
+    if isinstance(value, dict):
+        return "{" + ", ".join(f"{_literal(k)}: {_literal(v)}" for k, v in value.items()) + "}"
+    raise ValueError(f"can't write {value!r} as a call argument")
+
+
+def format_call(call: Call) -> str:
+    args = ", ".join(f"{k}={_literal(v)}" for k, v in call.args.items())
+    if call.action is None:
+        return f"{call.target} = {call.template}({args})"
+    return f"{call.target}.{call.action}({args})"
+
+
+# --------------------------------------------------------------------------
+# Layout
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class _Object:
+    template: str
+    start: int  # global beat index of its creation
+    end: int  # last global beat it is on screen
+    where: tuple[int, int, int]  # (segment, beat, call) of its creation
+    area: str | None = None
+
+    @property
+    def is_diagram(self) -> bool:
+        return REGISTRY[self.template].min_rows >= 3
+
+
+# Preferred areas, best first: a diagram wants room, a formula or note sits above it.
+_DIAGRAM_ALONE = ["full"]
+_DIAGRAM_SHARED = ["bottom_two_thirds", "bottom_half", "top_two_thirds", "top_half"]
+_SMALL_ALONE = {"EquationSteps": ["full", "top_two_thirds", "top_half"], "Note": ["top_third", "middle_third"]}
+_SMALL_SHARED = ["top_third", "top_half", "bottom_third", "middle_third", "bottom_half"]
+
+
+def _objects(segments: list[list[list[str]] | None]) -> list[_Object]:
+    """Every object the calls create, with the beats it is on screen (objects carry over between segments)."""
+    objects: list[_Object] = []
+    live: dict[str, _Object] = {}
+    templates: dict[str, str] = {}
+    g = 0
+    for s, draws in enumerate(segments):
+        for b, calls in enumerate(draws or []):
+            for c, text in enumerate(calls):
+                try:
+                    call = parse_call(text, templates)
+                except CallError:
+                    continue
+                if call.action is None:
+                    if call.target in live:
+                        live.pop(call.target).end = g
+                    obj = _Object(call.template, g, -1, (s, b, c))
+                    objects.append(obj)
+                    live[call.target] = obj
+                    templates[call.target] = call.template
+                elif call.action == "remove" and call.target in live:
+                    live.pop(call.target).end = g
+            g += 1
+    for obj in live.values():
+        obj.end = g
+    return objects
+
+
+def _lay_out(objects: list[_Object]) -> None:
+    # Diagrams first, so a note never takes the room a later diagram needs.
+    for obj in sorted(objects, key=lambda o: (not o.is_diagram, o.start)):
+        together = [o for o in objects if o is not obj and o.start <= obj.end and obj.start <= o.end]
+        if obj.is_diagram and any(o.is_diagram for o in together):
+            choices = ["bottom_half", "top_half"]  # two diagrams at once: half the frame each
+        elif obj.is_diagram:
+            choices = _DIAGRAM_SHARED if together else _DIAGRAM_ALONE + _DIAGRAM_SHARED
+        else:
+            alone = _SMALL_ALONE.get(obj.template, ["top_third"])
+            choices = _SMALL_SHARED if together else alone + _SMALL_SHARED
+        spec = REGISTRY[obj.template]
+        taken = [o.area for o in together if o.area is not None]
+        for area in choices:
+            first, last = AREAS[area]
+            if last - first + 1 >= spec.min_rows and not any(areas_overlap(area, t) for t in taken):
+                obj.area = area
+                break
+
+
+def lay_out(segments: list[list[list[str]] | None]) -> list[list[list[str]] | None]:
+    """The calls with every object's area chosen by code (any area the writer gave is replaced) and `move` calls
+    dropped (an object keeps its area). An object that can't be placed keeps the writer's area."""
+    objects = _objects(segments)
+    _lay_out(objects)
+    placed = {o.where: o.area for o in objects if o.area is not None}
+    out: list[list[list[str]] | None] = []
+    templates: dict[str, str] = {}
+    for s, draws in enumerate(segments):
+        if draws is None:
+            out.append(None)
+            continue
+        seg = []
+        for b, calls in enumerate(draws):
+            beat = []
+            for c, text in enumerate(calls):
+                try:
+                    call = parse_call(text, templates)
+                except CallError:
+                    beat.append(text)
+                    continue
+                if call.action is None:
+                    templates[call.target] = call.template
+                    if (s, b, c) in placed:
+                        call.args = {k: v for k, v in call.args.items() if k != "area"} | {"area": placed[(s, b, c)]}
+                        text = format_call(call)
+                elif call.action == "move":
+                    continue
+                beat.append(text)
+            seg.append(beat)
+        out.append(seg)
+    return out
+
+
+# --------------------------------------------------------------------------
+# Fixing what the simulation finds
+# --------------------------------------------------------------------------
+
+# Problems fixed by dropping the call: what it adds is a note, or nothing the viewer could see.
+_DROP = {"echo", "zero_vector", "hidden_ghost", "not_created"}
+
+
+@dataclass
+class Fixed:
+    segments: list[list[list[str]] | None]
+    left: list[Problem]  # problems code couldn't fix
+    log: list[str]  # what was changed, for the run log
+
+
+def _is_note(text: str) -> bool:
+    from animation_agent.visuals.calls import _call_name
+
+    _, name = _call_name(text)
+    return name in ("Note", "note", "say")
+
+
+def _creation_of(segments, s: int, b: int, name: str) -> tuple[int, int, int] | None:
+    """Where the object called `name` that is on screen at (segment s, beat b) was created."""
+    found = None
+    for si, draws in enumerate(segments[: s + 1]):
+        for bi, calls in enumerate(draws or []):
+            if si == s and bi > b:
+                break
+            for ci, text in enumerate(calls):
+                if text.split("=")[0].strip() == name and "(" in text.split("=", 1)[-1]:
+                    found = (si, bi, ci)
+    return found
+
+
+def _widen(segments, s: int, b: int, c: int) -> str | None:
+    """Gives the grid the call at (s, b, c) acts on (or creates) one more unit of extent; None if it can't grow."""
+    text = segments[s][b][c]
+    name = text.split("=")[0].strip() if "=" in text.split("(")[0] else text.split(".")[0].strip()
+    where = _creation_of(segments, s, b, name)
+    if where is None:
+        return None
+    cs, cb, cc = where
+    call = parse_call(segments[cs][cb][cc], {})
+    extent = int(call.args.get("extent", 3))
+    if extent >= MAX_EXTENT:
+        return None
+    call.args["extent"] = extent + 1
+    segments[cs][cb][cc] = format_call(call)
+    return f"widened {name}'s grid to {extent + 1}"
+
+
+def _drop_title(text: str) -> str | None:
+    try:
+        call = parse_call(text, {})
+    except CallError:
+        return None
+    if call.action is None and "title" in call.args:
+        call.args.pop("title")
+        return format_call(call)
+    return None
+
+
+def normalize_script(segments: list[list[list[str]] | None], lines: list[list[str]] | None = None) -> Fixed:
+    """The calls laid out by code, with every problem it can fix fixed (module docstring). `lines` are each
+    beat's narration, for the checks against the words."""
+    segs = segments
+    log: list[str] = []
+    for _ in range(MAX_PASSES):
+        segs = lay_out(segs)  # again after every fix: a dropped note frees room
+        problems = simulate_script(segs, lines).problems
+        changed = False
+        # Highest call first within a beat, so dropping a call doesn't shift the next one's index.
+        for p in sorted(problems, key=lambda p: (p.segment, p.beat, -(p.call if p.call is not None else -1))):
+            calls = segs[p.segment][p.beat - 1]
+            if p.kind in _DROP and p.call is not None and p.call < len(calls):
+                log.append(f"segment {p.segment} beat {p.beat}: dropped `{calls.pop(p.call)}` ({p.kind})")
+                changed = True
+            elif p.kind == "text_only" and calls:
+                log.append(f"segment {p.segment} beat {p.beat}: dropped its text-only calls {calls}")
+                calls.clear()
+                changed = True
+            elif p.kind == "too_long" and p.call is not None and p.call < len(calls):
+                text = calls[p.call]
+                if (fixed := _drop_title(text)) is not None and "title" in p.message.split("`: ")[-1]:
+                    calls[p.call] = fixed
+                    log.append(f"segment {p.segment} beat {p.beat}: dropped a title too long to read")
+                    changed = True
+                elif _is_note(text):
+                    log.append(f"segment {p.segment} beat {p.beat}: dropped `{calls.pop(p.call)}` (too long)")
+                    changed = True
+            elif p.kind == "off_grid" and p.call is not None and p.call < len(calls):
+                if (what := _widen(segs, p.segment, p.beat - 1, p.call)) is not None:
+                    log.append(f"segment {p.segment} beat {p.beat}: {what}")
+                    changed = True
+            if changed:
+                break  # simulate again: one fix can clear (or change) the problems after it
+        if not changed:
+            return Fixed(segs, problems, log)
+    segs = lay_out(segs)
+    return Fixed(segs, simulate_script(segs, lines).problems, log)

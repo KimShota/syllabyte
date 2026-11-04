@@ -24,7 +24,7 @@ from pydantic import ValidationError
 
 from animation_agent.visuals.specs import AREAS, INIT_CHECKS, REGISTRY, areas_overlap
 
-MAX_CALLS_PER_BEAT = 4
+MAX_CALLS_PER_BEAT = 6
 MAX_OBJECTS_ON_SCREEN = 3
 
 
@@ -117,19 +117,70 @@ class _Live:
     state: dict
 
 
-def check_segment(draws: list[list[str]], lines: list[str] | None = None) -> list[str]:
-    """Problems with one segment's calls (one list per beat), as messages naming the beat. Simulates the calls:
-    every name is created before it's used, arguments match the template, indices stay in range, objects on
-    screen at the same time sit in areas that don't overlap. With `lines` (each beat's narration), also checks
-    the calls against the words, as the script critic would: the segment shows a diagram, not only notes, and a
-    line that counts cells ("eight cells") has a list of that many on screen."""
-    return _simulate(draws, lines)[0]
+@dataclass
+class Problem:
+    """One thing wrong with a script's calls. `kind` says what (KINDS), so normalize.py can fix the mechanical
+    ones without an LLM; `message` names the beat and the call the way a fix prompt does."""
+
+    segment: int
+    beat: int  # 1-based, within the segment
+    call: int | None  # index of the call within the beat, None for the beat or segment as a whole
+    kind: str
+    message: str
+
+    def __str__(self) -> str:
+        return self.message
 
 
-def describe_segment(draws: list[list[str]]) -> list[str]:
-    """One sentence per beat saying what its calls show, computed from the calls (so it can't promise anything
-    they don't draw): the beat's `visual` when it is drawn from templates. Only for calls check_segment passed."""
-    return _simulate(draws, None)[1]
+# What a problem is about, from its message (the checks in specs.py return plain sentences).
+_KINDS = [
+    ("hasn't been created", "not_created"), ("fit on screen", "too_long"), ("symbols", "formula_too_long"),
+    ("zero vector", "zero_vector"), ("off the grid", "off_grid"), ("sits exactly", "hidden_ghost"),
+    ("overlaps", "layout"), ("needs at least half", "layout"), ("objects on screen", "layout"),
+    ("calls; at most", "too_many_calls"), ("repeats the line", "echo"), ("only put text", "text_only"),
+    ("only Notes", "notes_only"), ("the line says", "count"),
+]
+
+
+def _kind(message: str) -> str:
+    return next((kind for pattern, kind in _KINDS if pattern in message), "other")
+
+
+@dataclass
+class Simulation:
+    problems: list[Problem]
+    said: list[list[str]]  # per segment, per beat: what the beat's calls show, in words
+
+
+def check_script(segments: list[list[list[str]] | None], lines: list[list[str]] | None = None) -> list[Problem]:
+    """Problems with a whole script's calls (per segment, per beat), simulated in order. What a segment leaves on
+    screen stays on screen into the next one (the renderer replays it), so a later segment can keep acting on it;
+    creating a name that is on screen replaces that object. A segment given as None is drawn by LLM code and is
+    skipped. With `lines` (each beat's narration), the calls are also checked against the words, as the script
+    critic would: every segment shows a diagram, a line that counts cells has that many, notes don't repeat the
+    line, and no beat puts only text on screen."""
+    return simulate_script(segments, lines).problems
+
+
+def describe_script(segments: list[list[list[str]] | None]) -> list[list[str]]:
+    """Per segment, one sentence per beat saying what its calls show, computed from the calls (so it can't promise
+    anything they don't draw): the beat's `visual` when it is drawn from templates."""
+    return simulate_script(segments, None).said
+
+
+def check_segment(draws: list[list[str]], lines: list[str] | None = None, carried: list[str] | None = None,
+                  ) -> list[str]:
+    """check_script for one segment, after `carried` (every call of the segments before it, which the renderer
+    replays before beat 1). Problems as messages."""
+    segments = [[carried]] if carried else []
+    problems = simulate_script([*segments, draws], None if lines is None else [*[[""]] * len(segments), lines],
+                               report_from=len(segments)).problems
+    return [p.message for p in problems]
+
+
+def describe_segment(draws: list[list[str]], carried: list[str] | None = None) -> list[str]:
+    segments = [[carried]] if carried else []
+    return simulate_script([*segments, draws], None).said[-1]
 
 
 # "eight cells", "a list of 5 numbers": a count the list on screen has to match.
@@ -147,57 +198,63 @@ def _counts(line: str) -> list[tuple[int, str]]:
     return out
 
 
-def _simulate(draws: list[list[str]], lines: list[str] | None) -> tuple[list[str], list[str]]:
-    problems: list[str] = []
-    said: list[str] = []
-    if not draws or not draws[0]:
-        return ["beat 1 has no calls: the segment's first beat must create what it shows"], said
+def simulate_script(segments: list[list[list[str]] | None], lines: list[list[str]] | None = None, *,
+                    report_from: int = 0) -> Simulation:
+    """The simulation behind check_script; problems in segments before `report_from` are not reported (they are
+    the carried calls of check_segment)."""
+    problems: list[Problem] = []
+    said: list[list[str]] = []
     live: dict[str, _Live] = {}
-    used: set[str] = set()
-    for b, calls in enumerate(draws, 1):
-        if len(calls) > MAX_CALLS_PER_BEAT:
-            problems.append(f"beat {b}: {len(calls)} calls; at most {MAX_CALLS_PER_BEAT} per beat")
-        words = []
-        for text in calls:
-            where = f"beat {b}, `{text}`"
-            try:
-                call = parse_call(text, {n: o.template for n, o in live.items()})
-                problem, what = _check(call, live, used)
-            except CallError as e:
-                problem, what = str(e), None
-            if problem:
-                problems.append(f"{where}: {problem}")
-            elif what:
-                words.append(what)
-        sentence = "; ".join(words) + "."
-        said.append(sentence[0].upper() + sentence[1:] if words else "The picture stays as it is.")
-        if lines is not None and b <= len(lines):
-            problems += _count_problems(b, lines[b - 1], live)
-            problems += _echo_problems(b, lines[b - 1], calls)
-            if calls and all(_only_text(text) for text in calls):
-                problems.append(f"beat {b}: its calls only put text on screen (a note, a cleared highlight); the "
-                                "reviewer scores a text-only picture 4 of 10 at most. Show the line in the diagram "
-                                "itself (highlight, point, move, add, apply, grey out), or leave the beat [] to "
-                                "keep the picture")
-    if lines is not None and used and all(o.template == "Note" for o in _created(draws)):
-        problems.append("the segment shows only Notes: every segment shows a diagram (a list, a grid, a formula), "
-                        "and a Note is a label or a question beside it")
-    return problems, said
+    for s, draws in enumerate(segments):
+        if draws is None:
+            said.append([])
+            continue
+        report = s >= report_from
+        seg_lines = lines[s] if lines is not None and s < len(lines) else None
+        shown = {o.template for o in live.values()}
+        seg_said = []
+
+        def flag(beat: int, call: int | None, message: str) -> None:
+            if report:
+                problems.append(Problem(s, beat, call, _kind(message), message))
+
+        if report and not live and (not draws or not draws[0]):
+            flag(1, None, "beat 1 has no calls: the segment's first beat must create what it shows")
+        for b, calls in enumerate(draws, 1):
+            if report and len(calls) > MAX_CALLS_PER_BEAT:
+                flag(b, None, f"beat {b}: {len(calls)} calls; at most {MAX_CALLS_PER_BEAT} per beat")
+            words = []
+            for c, text in enumerate(calls):
+                try:
+                    call = parse_call(text, {n: o.template for n, o in live.items()})
+                    problem, what = _check(call, live)
+                    if call.action is None and not problem:
+                        shown.add(call.template)
+                except CallError as e:
+                    problem, what = str(e), None
+                if problem:
+                    flag(b, c, f"beat {b}, `{text}`: {problem}")
+                elif what:
+                    words.append(what)
+            sentence = "; ".join(words) + "."
+            seg_said.append(sentence[0].upper() + sentence[1:] if words else "The picture stays as it is.")
+            if seg_lines is not None and b <= len(seg_lines) and report:
+                for message, c in (_count_problems(b, seg_lines[b - 1], live)
+                                   + _echo_problems(b, seg_lines[b - 1], calls)):
+                    flag(b, c, message)
+                if calls and all(_only_text(text) for text in calls):
+                    flag(b, None, f"beat {b}: its calls only put text on screen (a note, a cleared highlight); the "
+                                  "reviewer scores a text-only picture 4 of 10 at most. Show the line in the diagram "
+                                  "itself (highlight, point, add, apply, grey out), or leave the beat [] to keep the "
+                                  "picture")
+        if seg_lines is not None and report and shown and shown <= {"Note"}:
+            flag(1, None, "the segment shows only Notes: every segment shows a diagram (a list, a grid, a "
+                          "formula), and a Note is a label or a question beside it")
+        said.append(seg_said)
+    return Simulation(problems, said)
 
 
-def _created(draws: list[list[str]]) -> list[_Live]:
-    out = []
-    for calls in draws:
-        for text in calls:
-            try:
-                call = parse_call(text, {})
-            except CallError:
-                continue
-            out.append(_Live(call.template, "", {}))
-    return out
-
-
-def _count_problems(b: int, line: str, live: dict[str, _Live]) -> list[str]:
+def _count_problems(b: int, line: str, live: dict[str, _Live]) -> list[tuple[str, int | None]]:
     from animation_agent.visuals.specs import MAX_CELLS
 
     lists = [len(o.state["values"]) for o in live.values() if o.template == "ArrayBars"]
@@ -205,8 +262,8 @@ def _count_problems(b: int, line: str, live: dict[str, _Live]) -> list[str]:
     for n, phrase in _counts(line):
         if lists and n <= MAX_CELLS and n not in lists:
             shown = " and ".join(str(k) for k in lists)
-            out.append(f'beat {b}: the line says "{phrase}" but the list on screen has {shown} cells; draw '
-                       f"{n} values so the picture matches the words")
+            out.append((f'beat {b}: the line says "{phrase}" but the list on screen has {shown} cells; draw '
+                        f"{n} values so the picture matches the words", None))
     return out
 
 
@@ -214,65 +271,75 @@ def _count_problems(b: int, line: str, live: dict[str, _Live]) -> list[str]:
 TEXT_ONLY_ACTIONS = {"note", "say", "clear", "unpoint", "counter", "clear_ghosts"}
 
 
-def _only_text(text: str) -> bool:
+def _call_name(text: str) -> tuple[ast.Call | None, str | None]:
+    """The call node and its template or action name, without checking anything."""
     try:
-        tree = ast.parse(_as_raw_strings(text.strip()))
-        stmt = tree.body[0]
+        stmt = ast.parse(_as_raw_strings(text.strip())).body[0]
     except (CallError, SyntaxError, IndexError):
-        return False
-    if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Call) and isinstance(stmt.value.func, ast.Name):
-        return stmt.value.func.id == "Note"
+        return None, None
     call = getattr(stmt, "value", None)
-    return isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr in TEXT_ONLY_ACTIONS
+    if not isinstance(call, ast.Call):
+        return None, None
+    if isinstance(call.func, ast.Name):
+        return call, call.func.id
+    if isinstance(call.func, ast.Attribute):
+        return call, call.func.attr
+    return None, None
+
+
+def _only_text(text: str) -> bool:
+    """A call that only changes text. A formula written as a note (note(tex=...)) is a picture (SHARED_RUBRIC)."""
+    call, name = _call_name(text)
+    if call is not None and name == "note" and any(kw.arg == "tex" for kw in call.keywords):
+        return False
+    return name == "Note" or name in TEXT_ONLY_ACTIONS
 
 
 def _words(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", text.lower())
 
 
-def _echo_problems(b: int, line: str, calls: list[str]) -> list[str]:
+def _echo_problems(b: int, line: str, calls: list[str]) -> list[tuple[str, int | None]]:
     """A note that writes out the line's own words (the critic marks these down: the screen should add something
     the voice doesn't say, like a value, a label or a formula)."""
     spoken = set(_words(line))
     out = []
-    for text in calls:
+    for c, text in enumerate(calls):
+        call, name = _call_name(text)
+        if call is None or name not in ("Note", "say", "note"):
+            continue
         try:
-            tree = ast.parse(_as_raw_strings(text.strip()))
-            call = tree.body[0].value  # type: ignore[attr-defined]
-            name = call.func.id if isinstance(call.func, ast.Name) else call.func.attr
-        except (CallError, SyntaxError, AttributeError, IndexError):
+            written = next((ast.literal_eval(kw.value) for kw in call.keywords if kw.arg == "text"), None)
+        except ValueError:
             continue
-        if name not in ("Note", "say", "note"):
-            continue
-        written = next((ast.literal_eval(kw.value) for kw in call.keywords if kw.arg == "text"), None)
         words = _words(written) if isinstance(written, str) else []
         if len(words) >= 3 and sum(w in spoken for w in words) / len(words) >= 0.8:
-            out.append(f'beat {b}, `{text}`: the note repeats the line\'s own words; show something the voice '
-                       "doesn't say (a value, a label, a formula), or highlight the thing itself instead")
+            out.append((f'beat {b}, `{text}`: the note repeats the line\'s own words; show something the voice '
+                        "doesn't say (a value, a label, a formula), or highlight the thing itself instead", c))
     return out
 
 
-def _check(call: Call, live: dict[str, _Live], used: set[str]) -> tuple[str | None, str | None]:
-    """The call's problem, or None and what it shows in words."""
+def _check(call: Call, live: dict[str, _Live]) -> tuple[str | None, str | None]:
+    """The call's problem, or None and what it shows in words. Creating a name that is on screen replaces it."""
     spec = REGISTRY[call.template]
     if call.action is None:
-        if call.target in used:
-            return f"the name {call.target} is already used in this segment; pick another", None
         try:
             params = spec.params.model_validate(call.args)
         except ValidationError as e:
             return _first_error(e), None
         if call.template in INIT_CHECKS and (problem := INIT_CHECKS[call.template](params)):
             return problem, None
-        if problem := _area_clash(params.area, live, call.target) or _too_small(spec, params.area):
+        others = {n: o for n, o in live.items() if n != call.target}
+        if problem := _area_clash(params.area, others, call.target) or _too_small(spec, params.area):
             return problem, None
-        if len(live) >= MAX_OBJECTS_ON_SCREEN:
+        if len(others) >= MAX_OBJECTS_ON_SCREEN:
             return f"at most {MAX_OBJECTS_ON_SCREEN} objects on screen; remove one first", None
+        replaced = call.target in live
+        live.pop(call.target, None)
         state = spec.init_state(params) | {"_noun": spec.noun}
         live[call.target] = _Live(call.template, params.area, state)
-        used.add(call.target)
         what = spec.describe(params) if spec.describe else f"a {spec.noun}"
-        return None, f"{what} ({AREA_WORDS[params.area]})"
+        return None, ("it is replaced by " if replaced else "") + f"{what} ({AREA_WORDS[params.area]})"
 
     action = spec.all_actions()[call.action]
     try:
@@ -338,3 +405,14 @@ def segment_draws(segment) -> list[list[str]] | None:
     """A segment's calls, one list per beat, or None when it isn't drawn from templates (no beat has calls)."""
     draws = [list(getattr(beat, "draw", None) or []) for beat in segment.beats]
     return draws if any(draws) else None
+
+
+def script_segments(script) -> list[list[list[str]] | None]:
+    """A templated script's calls per segment, per beat; None for a segment drawn by LLM code."""
+    return [[list(b.draw) for b in seg.beats] if getattr(seg, "drawn_by", "code") == "templates" else None
+            for seg in script.segments]
+
+
+def carried_calls(script, i: int) -> list[str]:
+    """Every call of the template segments before segment i, in order: what the renderer replays before beat 1."""
+    return [c for draws in script_segments(script)[:i] if draws is not None for beat in draws for c in beat]
