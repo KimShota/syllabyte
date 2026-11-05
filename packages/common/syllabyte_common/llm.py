@@ -55,6 +55,7 @@ def _effort(model: str, effort: str | None) -> str | None:
 # Used by RunManifest.total_cost_usd() for the Week-1 cost report.
 PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
     "claude-opus-5": (5.00, 25.00),
+    "claude-opus-5-5": (4.00, 20.00),
     "claude-sonnet-5": (2.00, 10.00),
     "claude-sonnet-5-5": (2.00, 10.00),
     "claude-haiku-4-5": (1.00, 5.00),

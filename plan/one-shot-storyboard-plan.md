@@ -95,3 +95,18 @@ Three causes:
 |---|---|---|---|
 | Eigenvectors, Level 1 | 47 s | 1 | 6, 6, 6, 4 |
 | Bisection, Level 3 | 55 s | 2 (first at 265 words) | 6, 6, 7, 6 |
+
+### Opus for the storyboard call (tried 2026-11-05, set aside for now)
+
+| Storyboard call | Videos (eigenvectors / bisection, L2) | Call time | Cost per video | Critic (lowest) |
+|---|---|---|---|---|
+| Sonnet 5.5, medium (`runs/storyboard-2`) | 48 s / 37 s | 12-19 s | $0.10-0.13 | 5 / 5 |
+| Opus 5.5, medium (`runs/storyboard-opus-1`) | 72 s / 81 s | 39-43 s | $0.17-0.18 | 5 / 5 |
+| Opus 5.5, low (`runs/storyboard-opus-2`) | 45 s / 56 s | 16-17 s | $0.12-0.13 | 5 / 3 |
+
+- Opus at medium broke the under-a-minute goal. At low it was about as fast as Sonnet at medium.
+- No setting scored better in two videos each, and the critic's noise is unmeasured.
+- Opus kept to the word budget in all four of its videos.
+- Back on Sonnet at medium (`STORYBOARD_MODEL`, `STORYBOARD_EFFORT`).
+- The Opus runs also exposed a bug: removing a casual phrase from a build line could break the sentence. Code now
+  removes phrases only from objective and check lines, and only when the sentence stays whole.

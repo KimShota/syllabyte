@@ -184,7 +184,8 @@ def test_write_storyboard_is_one_call(monkeypatch):
 
     def fake(**kw):
         stages.append(kw["stage"])
-        assert "Fill in the storyboard" in kw["content"][0]["text"] and kw["effort"] == storyboard.STORYBOARD_EFFORT
+        assert "Fill in the storyboard" in kw["content"][0]["text"] and kw["effort"] == "medium"
+        assert kw["model"] == "claude-sonnet-5-5"
         return example_board()
 
     monkeypatch.setattr(storyboard, "structured", fake)
@@ -241,3 +242,23 @@ def test_a_few_words_over_the_limit_is_not_a_rewrite():
         assert script.word_count == storyboard.DIALOGUE_MAX_WORDS + over
         word = [p for p in validate_dialogue(script) if p.startswith("word_count=")]
         assert word and storyboard._close_enough(word[0], script) is passes
+
+
+@pytest.mark.parametrize("line, phrase, expected", [
+    ("No cap, linear search checks each cell once.", "no cap", "Linear search checks each cell once."),
+    ("Linear search checks each cell once, no cap.", "no cap", "Linear search checks each cell once."),
+    ("Wait, for real? But v stayed on its own line.", "for real", None),  # a clause of its own
+    ("Okay, the math is mathing.", "the math is mathing", None),  # nothing left
+])
+def test_taking_a_phrase_out_never_breaks_the_line(line, phrase, expected):
+    from script_generation_agent.slang import _pattern
+
+    assert storyboard._strip(line, _pattern(phrase)) == expected
+
+
+def test_a_phrase_off_its_slot_stays_unless_the_step_forbids_it():
+    plan = storyboard.skeleton(2)
+    script = storyboard.assemble(example_board(plan), plan, KU)
+    script.segments[2].beats[3].narration = "Wait, for real? So we keep checking until it matches."  # a build line
+    assert storyboard.fix_slang(script, plan) == []
+    assert script.segments[2].beats[3].narration == "Wait, for real? So we keep checking until it matches."

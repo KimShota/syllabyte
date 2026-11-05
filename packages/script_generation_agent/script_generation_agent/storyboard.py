@@ -41,7 +41,11 @@ from syllabyte_common.models import (
     TermColour,
 )
 
-# The one call that writes the whole video thinks more than the rest of the pipeline (llm.DEFAULT_EFFORT is low).
+# The one call that writes the whole video: Sonnet at medium effort (2026-11-05). Opus 5.5 was tried and set
+# aside for now: at medium it took 39-43 s (videos of 72-81 s, runs/storyboard-opus-1), and at low it was about as
+# fast as Sonnet at medium (45-56 s, runs/storyboard-opus-2) with no better critic scores in two videos. Every
+# other call runs on llm.DEFAULT_MODEL (Sonnet) at llm.DEFAULT_EFFORT (low), including the fix call.
+STORYBOARD_MODEL = DEFAULT_MODEL
 STORYBOARD_EFFORT = "medium"
 
 # Words per line by step, before the plan is scaled to fit the script's word limits.
@@ -258,24 +262,44 @@ def fix_slang(script: TemplatedDialogueScript, plan: list[SegmentPlan], names: t
             rest = line if keep else line[:1].lower() + line[1:]
             beat.narration = f"{next(openers)}, {rest}"
             log.append(f"added a casual phrase: {beat.narration!r}")
-        elif found and (p.step in NO_SLANG_STEPS or not p.slang):
+        elif found and p.step in NO_SLANG_STEPS:
+            # Elsewhere a phrase off its slot is allowed (validate_dialogue only bans these steps); removing it
+            # can break the sentence, so this is the only place code takes one out.
             for phrase in found:
-                beat.narration = _strip(beat.narration, _pattern(phrase))
-            log.append(f"removed {found} from a {p.step} line")
+                if (stripped := _strip(beat.narration, _pattern(phrase))) is not None:
+                    beat.narration = stripped
+                    log.append(f"removed {phrase!r} from a {p.step} line")
     cap = max_slang(len(beats))
     used = sum(len(find_slang(b.narration)) for b, _ in beats)
     for beat, p in reversed(beats):
         if used <= cap:
             break
         if not p.slang and (found := find_slang(beat.narration)):
-            beat.narration = _strip(beat.narration, _pattern(found[0]))
-            used -= 1
+            if (stripped := _strip(beat.narration, _pattern(found[0]))) is not None:
+                beat.narration = stripped
+                used -= 1
+                log.append(f"removed {found[0]!r}: over the cap")
     return log
 
 
-def _strip(line: str, pattern) -> str:
-    out = pattern.sub("", line, count=1).strip()
-    out = out.lstrip(",;:—- ").replace(" ,", ",").replace("  ", " ")
+def _strip(line: str, pattern) -> str | None:
+    """The line without the phrase, or None when taking it out would leave a broken sentence: the phrase works as
+    an opener ("No cap, it ...") or a closer ("..., no cap.") but not as a clause of its own ("Wait, for real? But
+    ..." would become "Wait, ? But ...")."""
+    import re
+
+    m = pattern.search(line)
+    if m is None:
+        return line
+    after = line[m.end():].lstrip()
+    if after[:1] in ("?", "!") and after[1:].strip():
+        return None
+    out = re.sub(r"\s+", " ", line[:m.start()] + line[m.end():]).strip()
+    out = re.sub(r"^[,;:—\-\s]+", "", out)  # it was an opener
+    out = re.sub(r",\s*([.!?])", r"\1", out)  # it was a closer
+    out = re.sub(r"\s+([,.!?;:])", r"\1", out)
+    if len(out.split()) < 4 or re.search(r"[,;:]\s*[,.!?;:]|[,;:]$", out) or not out[:1].isalnum():
+        return None
     return out[:1].upper() + out[1:]
 
 
@@ -411,9 +435,11 @@ def write_storyboard(
     model: str = DEFAULT_MODEL,
     manifest: RunManifest | None = None,
     on_lines_ready: Callable | None = None,
+    writer_model: str = STORYBOARD_MODEL,
 ) -> TemplatedDialogueScript:
-    """A dialogue script with its template calls, from one storyboard call. `on_lines_ready` gets the script as
-    soon as its lines are final (before the calls are checked), so the voices can start."""
+    """A dialogue script with its template calls, from one storyboard call (on `writer_model`; `model` makes
+    the fix call). `on_lines_ready` gets the script as soon as its lines are final (before the calls are checked),
+    so the voices can start."""
     from script_generation_agent.script_writer import ScriptValidationError, gather_source_material, validate_dialogue
     from syllabyte_common.cast import load_cast
 
@@ -434,7 +460,8 @@ def write_storyboard(
     feedback = ""
     for _ in range(2):  # the plan makes a rejected script rare; one retry with the checker's findings
         board = structured(schema=schema, content=[text_block(prompt + feedback), *image_blocks], system=system,
-                           stage=f"storyboard_l{level}", ku_id=ku.id, model=model, effort=STORYBOARD_EFFORT,
+                           stage=f"storyboard_l{level}", ku_id=ku.id, model=writer_model,
+                           effort=STORYBOARD_EFFORT,
                            max_tokens=16000, manifest=manifest)
         script = assemble(board, plan, ku)
         for line in fix_slang(script, plan, (cast.explainer.name, cast.peer.name)):
