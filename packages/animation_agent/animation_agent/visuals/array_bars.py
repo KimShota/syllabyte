@@ -302,8 +302,14 @@ class ArrayBars(Template):
     def ghost(self, a) -> Steps:
         old = self.ghost_mob
         cells = VGroup(*[self.cells[i] for i in a.indices])
-        self.ghost_mob = DashedVMobject(SurroundingRectangle(cells, color=GHOST_COLOUR, buff=0.05), num_dashes=30)
-        yield Step(self.drop(old) + self.add(self.ghost_mob) + self._note(a.text, GHOST_COLOUR))
+        outline = SurroundingRectangle(cells, color=GHOST_COLOUR, buff=0.05)
+        note = self._note(a.text, GHOST_COLOUR)
+        # A full-height bar reaches the note row: keep the outline's top edge clear of the note's letters.
+        limit = self.note_mob.get_bottom()[1] - 0.06
+        if (over := outline.get_top()[1] - limit) > 0:
+            outline.stretch_to_fit_height(max(outline.height - over, 0.2), about_edge=DOWN)
+        self.ghost_mob = DashedVMobject(outline, num_dashes=30)
+        yield Step(self.drop(old) + self.add(self.ghost_mob) + note)
 
     # ---- bisection --------------------------------------------------------
 

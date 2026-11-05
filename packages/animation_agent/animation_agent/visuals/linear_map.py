@@ -304,7 +304,7 @@ class LinearMap2D(Template):
         (p, q), (r, s) = self.matrix
         body = rf"A = \begin{{bmatrix}} {p:g} & {q:g} \\ {r:g} & {s:g} \end{{bmatrix}}"
         mob = tex(body, 32, WHITE)
-        bg = BackgroundRectangle(mob, fill_opacity=0.85, buff=0.08)
+        bg = mark_background(BackgroundRectangle(mob, fill_opacity=0.85, buff=0.08))  # backing, not content
         group = VGroup(bg, mob)
         # Top-left corner of the plane.
         group.move_to([self.plane.left + group.width / 2 + 0.05, self.plane.top - group.height / 2 - 0.05, 0])

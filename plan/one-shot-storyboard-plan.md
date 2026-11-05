@@ -59,7 +59,6 @@ Three causes:
 
 ## Open
 
-- Only Level 2 has a worked example; Levels 1 and 3 reuse it as a format example.
 - Measure whether medium effort on the storyboard call is worth the time over low.
 - High-quality (1080 px) renders of carried pictures: the instant replay is only render-tested at low quality.
 
@@ -81,3 +80,18 @@ Three causes:
   - eigen-lines and values appearing before the narration explains them.
 - Next levers: a worked example per level, effort high on the storyboard call (measure the time), and an
   Opus storyboard call if quality has to beat speed.
+
+### Worked examples for every level (2026-11-05)
+
+- **The three examples:** Level 1 is a matrix times a vector (a grid with a formula); Level 2 is linear search
+  (cells); Level 3 is insertion sort on already-sorted input (bars). A test holds each to its plan, its word
+  ranges and the checkers, and render tests draw a carried segment from each.
+- **The examples were part of why writers ran long.** All three broke their own word ranges until rewritten. The
+  ranges now sum to about 225 words, plus 2 for each line that carries a casual phrase.
+- **Template bugs the examples found:** `ArrayBars.ghost` ran through the note above full-height bars, and
+  `LinearMap2D.show_matrix`'s backing box failed the contrast check.
+
+| Run (`runs/storyboard-3`) | Time | Storyboard calls | Critic |
+|---|---|---|---|
+| Eigenvectors, Level 1 | 47 s | 1 | 6, 6, 6, 4 |
+| Bisection, Level 3 | 55 s | 2 (first at 265 words) | 6, 6, 7, 6 |

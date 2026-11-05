@@ -464,8 +464,8 @@ before the line that gives it.
 """
 
 STORYBOARD_EXAMPLE_NOTE = """\
-An example of a finished storyboard (a different idea, at Level 2), to show the format and the bar: every line \
-says what its picture shows, and every picture moves.
+An example of a finished storyboard at this viewer's level, on a different idea, to show the format and the bar: \
+every line says what its picture shows, every picture moves, and no picture shows an answer before its line.
 """
 
 _STORYBOARD_TASK = """\

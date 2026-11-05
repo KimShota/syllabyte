@@ -17,7 +17,7 @@ from animation_agent.visuals.scene_code import build_spec_scene
 from script_generation_agent import storyboard
 from script_generation_agent.script_writer import validate_dialogue
 from script_generation_agent.slang import find_slang
-from script_generation_agent.storyboard_example import EXAMPLE, SEGMENT_KEYS
+from script_generation_agent.storyboard_example import EXAMPLES, SEGMENT_KEYS, render_example
 from syllabyte_common.models import KnowledgeUnit, RenderSegment
 
 KU = KnowledgeUnit(id="ku-x", title="X", summary="s", bloom_level="understand", cognitive_load="low",
@@ -27,12 +27,13 @@ REFS = [{"deck_name": "d", "slide_number": 1}]
 ARR = 'a = ArrayBars(values=[1, 3, 4, 7, 9])'
 
 
-def example_board(plan=None, **changes):
-    plan = plan or storyboard.skeleton(2)
-    data = {"title": EXAMPLE["title"], "colour_key": EXAMPLE["colour_key"]}
+def example_board(plan=None, level=2, **changes):
+    plan = plan or storyboard.skeleton(level)
+    example = EXAMPLES[level][1]
+    data = {"title": example["title"], "colour_key": example["colour_key"]}
     for key in SEGMENT_KEYS:
         seg = {"source_refs": REFS, "sketches": []}
-        for field, draw, line in EXAMPLE[key]:
+        for field, draw, line in example[key]:
             seg[field] = {"draw": list(draw), "narration": line.format(explainer="Peter", peer="Stewie")}
         data[key] = seg
     data.update(changes)
@@ -69,16 +70,27 @@ def test_every_planned_beat_is_a_required_field():
         storyboard.storyboard_model(storyboard.skeleton(2)).model_validate(data)
 
 
-def test_the_example_matches_the_plan_and_needs_no_fixing():
-    plan = storyboard.skeleton(2)
+@pytest.mark.parametrize("level", [1, 2, 3])
+def test_each_example_matches_its_plan_and_needs_no_fixing(level):
+    plan = storyboard.skeleton(level)
     for seg in plan:
-        assert [f for f, *_ in EXAMPLE[seg.key]] == [b.key(k) for k, b in enumerate(seg.beats, 1)]
-    script = storyboard.assemble(example_board(plan), plan, KU)
+        assert [f for f, *_ in EXAMPLES[level][1][seg.key]] == [b.key(k) for k, b in enumerate(seg.beats, 1)]
+    script = storyboard.assemble(example_board(plan, level), plan, KU)
     assert storyboard.fix_slang(script, plan) == []
     assert validate_dialogue(script) == []
+    for seg, sp in zip(script.segments, plan):  # every line within its word range, give or take two
+        for beat, bp in zip(seg.beats, sp.beats):
+            assert bp.words[0] - 2 <= len(beat.narration.split()) <= bp.words[1] + 2, (beat.narration, bp.words)
     lines = [[b.narration for b in seg.beats] for seg in script.segments]
     fixed = normalize_script(script_segments(script), lines)
     assert fixed.log == [] and fixed.left == []
+    assert all(not b.draw or "area" not in c for seg in script.segments for b in seg.beats for c in b.draw)
+
+
+def test_each_level_gets_its_own_example():
+    texts = {level: render_example(explainer="Peter", peer="Stewie", level=level) for level in (1, 2, 3)}
+    assert "matrix by a vector" in texts[1] and "Linear search" in texts[2] and "Insertion sort" in texts[3]
+    assert all("{peer}" not in t and "Stewie" in t for t in texts.values())
 
 
 def test_slang_goes_where_the_plan_says():
@@ -93,6 +105,11 @@ def test_slang_goes_where_the_plan_says():
     assert script.segments[4].beats[0].narration == "Linear search checks each cell once."
     assert script.segments[2].beats[1].narration == "Just one: we jump straight to seven."  # minimum reached
     assert len(log) == 2
+    named = storyboard.assemble(example_board(plan), plan, KU)
+    named.segments[0].beats[0].narration = "Peter, how does a program find one number?"
+    named.segments[2].beats[1].narration = "Just one: we jump straight to seven."
+    storyboard.fix_slang(named, plan, ("Peter", "Stewie"))
+    assert named.segments[0].beats[0].narration == "Lowkey, Peter, how does a program find one number?"
 
 
 # --------------------------------------------------------------------------
@@ -198,12 +215,13 @@ def test_render_segments_carry_the_calls_before_them():
 
 
 @pytest.mark.skipif(not os.environ.get("SYLLABYTE_RENDER_TESTS"), reason="set SYLLABYTE_RENDER_TESTS=1 to render")
-def test_a_carried_picture_renders_with_no_layout_findings(tmp_path):
+@pytest.mark.parametrize("level", [1, 2, 3])
+def test_a_carried_picture_renders_with_no_layout_findings(tmp_path, level):
     from animation_agent.layout import BEATS_FILE
     from animation_agent.renderer import _try_render
 
-    plan = storyboard.skeleton(2)
-    script = storyboard.finish(storyboard.assemble(example_board(plan), plan, KU), ku_id="ku-x")
+    plan = storyboard.skeleton(level)
+    script = storyboard.finish(storyboard.assemble(example_board(plan, level), plan, KU), ku_id="ku-x")
     seg = _render_segment_for(script, 3)
     code = build_spec_scene(seg, "Seg3")
     durations = [2.5] * len(seg.beats)

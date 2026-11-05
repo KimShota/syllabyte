@@ -133,19 +133,25 @@ def skeleton(level: int, has_prereqs: bool = False) -> list[SegmentPlan]:
     return _budget(plan)
 
 
+SLANG_WORDS = 2  # a casual phrase ("not gonna lie") takes words of its own
+
+
 def _budget(plan: list[SegmentPlan]) -> list[SegmentPlan]:
-    """Each line's word range from its step, scaled so the whole script lands inside the word limits with room."""
+    """Each line's word range from its step (a little longer where it carries a casual phrase), scaled so the
+    ranges sum to about 225 words: room under the 250-word limit for writers who run long, without squeezing
+    lines below natural speech (tests check the worked examples keep to these ranges)."""
+    def base(b: BeatPlan) -> tuple[int, int]:
+        lo, hi = STEP_WORDS[b.step]
+        return (lo, hi + SLANG_WORDS) if b.slang else (lo, hi)
+
     beats = [b for seg in plan for b in seg.beats]
-    lo_total = sum(STEP_WORDS[b.step][0] for b in beats)
-    hi_total = sum(STEP_WORDS[b.step][1] for b in beats)
-    # Writers run long (the first storyboards came to 255 and 280 words against ranges summing to 235), so the
-    # ranges sum to well under the limit.
+    lo_total = sum(base(b)[0] for b in beats)
+    hi_total = sum(base(b)[1] for b in beats)
     lo_f = max(1.0, (DIALOGUE_MIN_WORDS + 5) / lo_total)
-    hi_f = min(1.0, (DIALOGUE_MAX_WORDS - 45) / hi_total)
+    hi_f = min(1.0, (DIALOGUE_MAX_WORDS - 25) / hi_total)
     for seg in plan:
         seg.beats = [BeatPlan(b.speaker, b.step, b.does, b.misconception, b.slang,
-                              (round(STEP_WORDS[b.step][0] * lo_f),
-                               max(round(STEP_WORDS[b.step][0] * lo_f) + 2, int(STEP_WORDS[b.step][1] * hi_f))))
+                              (round(base(b)[0] * lo_f), max(round(base(b)[0] * lo_f) + 2, int(base(b)[1] * hi_f))))
                      for b in seg.beats]
     return plan
 
@@ -232,9 +238,10 @@ def _colour_key(terms: list[TermColour]) -> list[TermColour]:
 OPENERS = ["Lowkey", "Not gonna lie", "For real", "No cap"]
 
 
-def fix_slang(script: TemplatedDialogueScript, plan: list[SegmentPlan]) -> list[str]:
+def fix_slang(script: TemplatedDialogueScript, plan: list[SegmentPlan], names: tuple[str, ...] = ()) -> list[str]:
     """Puts the casual phrases where the plan says, in code: a slot without one gets an opener, a line that may
-    not have one loses it, and none goes past the cap. Returns what changed."""
+    not have one loses it, and none goes past the cap. `names` (the cast's) keep their capital after an opener.
+    Returns what changed."""
     from script_generation_agent.slang import _pattern
 
     log = []
@@ -246,7 +253,9 @@ def fix_slang(script: TemplatedDialogueScript, plan: list[SegmentPlan]) -> list[
         if p.slang and not found and used < MIN_SLANG:  # only up to the minimum: every phrase adds words
             used += 1
             line = beat.narration
-            rest = line if line.startswith(("I ", "I'", "I’")) else line[:1].lower() + line[1:]
+            first = line.split(" ", 1)[0].strip(",.!?;:")
+            keep = first in ("I", "I'm", "I'd", "I’m", "I’d") or first in names or first.startswith(("I'", "I’"))
+            rest = line if keep else line[:1].lower() + line[1:]
             beat.narration = f"{next(openers)}, {rest}"
             log.append(f"added a casual phrase: {beat.narration!r}")
         elif found and (p.step in NO_SLANG_STEPS or not p.slang):
@@ -387,10 +396,10 @@ def _close_enough(problem: str, script) -> bool:
     return problem.startswith("word_count=") and script.word_count <= DIALOGUE_MAX_WORDS + WORD_SLACK
 
 
-def _example(explainer: str, peer: str) -> str:
+def _example(explainer: str, peer: str, level: int) -> str:
     from script_generation_agent.storyboard_example import render_example
 
-    return render_example(explainer=explainer, peer=peer)
+    return render_example(explainer=explainer, peer=peer, level=level)
 
 
 def write_storyboard(
@@ -415,7 +424,7 @@ def write_storyboard(
     plan = skeleton(level, bool(prereq_titles))
     system = storyboard_system_prompt(level, prereq_titles, explainer=cast.explainer.name, peer=cast.peer.name,
                                       lexicon=lexicon_for_prompt(), example=_example(cast.explainer.name,
-                                                                                     cast.peer.name))
+                                                                                     cast.peer.name, level))
     prompt = build_script_prompt(ku, text_context).replace(
         "Write the 5-segment CLT-bLM script for this Knowledge Unit now.",
         "Fill in the storyboard for this Knowledge Unit now: every beat's picture, then its line.")
@@ -428,7 +437,7 @@ def write_storyboard(
                            stage=f"storyboard_l{level}", ku_id=ku.id, model=model, effort=STORYBOARD_EFFORT,
                            max_tokens=16000, manifest=manifest)
         script = assemble(board, plan, ku)
-        for line in fix_slang(script, plan):
+        for line in fix_slang(script, plan, (cast.explainer.name, cast.peer.name)):
             print(f"[storyboard] {ku.id}: {line}", file=sys.stderr, flush=True)
         problems = [p for p in validate_dialogue(script) if not _close_enough(p, script)]
         if not problems:
