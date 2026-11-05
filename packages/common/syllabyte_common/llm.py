@@ -23,11 +23,13 @@ from __future__ import annotations
 
 import base64
 import os
+import sys
 import time
 from pathlib import Path
 from typing import TypeVar
 
 import anthropic
+import httpx
 from anthropic.lib._parse._transform import transform_schema
 from dotenv import load_dotenv
 from pydantic import BaseModel, TypeAdapter
@@ -181,6 +183,36 @@ def get_client() -> anthropic.Anthropic:
     return _client
 
 
+# The SDK's own retries (above) span about 20 s and don't cover a stream cut off midway. In the course test
+# (runs/course-test-1) a network outage outlasted them and failed 3 of 48 videos, one with "peer closed connection
+# without sending complete message body". So a call that fails like that is made again after each of these waits
+# (about 3.5 minutes in all) before it gives up.
+OUTAGE_WAITS: tuple[float, ...] = (10, 30, 60, 120)
+TRANSIENT_ERRORS = (
+    anthropic.APIConnectionError,  # includes timeouts
+    anthropic.InternalServerError,
+    anthropic.OverloadedError,
+    anthropic.ServiceUnavailableError,
+    anthropic.RateLimitError,
+    httpx.TransportError,  # a stream cut off midway (RemoteProtocolError, ReadError)
+)
+
+
+def _final_message(kwargs: dict, *, stage: str, ku_id: str | None):
+    """One streamed request's final message, made again after each of OUTAGE_WAITS if it fails transiently."""
+    for wait in (*OUTAGE_WAITS, None):
+        try:
+            with get_client().messages.stream(**kwargs) as stream:
+                return stream.get_final_message()
+        except TRANSIENT_ERRORS as e:
+            if wait is None:
+                raise
+            print(f"[llm] {stage} ({ku_id}): {type(e).__name__}: {e}; trying again in {wait:g}s",
+                  file=sys.stderr, flush=True)
+            time.sleep(wait)
+    raise AssertionError("unreachable")
+
+
 # --------------------------------------------------------------------------
 # Content block builders
 # --------------------------------------------------------------------------
@@ -298,8 +330,7 @@ def structured(
         kwargs["system"] = system
 
     start = time.monotonic()
-    with get_client().messages.stream(**kwargs) as stream:
-        response = stream.get_final_message()
+    response = _final_message(kwargs, stage=stage, ku_id=ku_id)
     wall_seconds = time.monotonic() - start
 
     _record_usage(
@@ -354,8 +385,7 @@ def text(
     # Streamed so callers can give thinking a large max_tokens: the SDK
     # refuses non-streaming requests big enough to risk an HTTP timeout.
     start = time.monotonic()
-    with get_client().messages.stream(**kwargs) as stream:
-        response = stream.get_final_message()
+    response = _final_message(kwargs, stage=stage, ku_id=ku_id)
     wall_seconds = time.monotonic() - start
 
     if response.stop_reason == "refusal":
@@ -376,8 +406,6 @@ def text(
 
 
 if __name__ == "__main__":
-    import sys
-
     if "--ping" in sys.argv:
 
         class _Ping(BaseModel):

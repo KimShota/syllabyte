@@ -411,13 +411,11 @@ def finish(script: TemplatedDialogueScript, *, ku_id: str, model: str = DEFAULT_
 # --------------------------------------------------------------------------
 
 
-# The word limit keeps a video at 70-100 seconds. A storyboard a few words over it is not worth a 13 s rewrite
-# (one pilot came back at 251 words), so up to this many over passes.
-WORD_SLACK = 10
-
-
-def _close_enough(problem: str, script) -> bool:
-    return problem.startswith("word_count=") and script.word_count <= DIALOGUE_MAX_WORDS + WORD_SLACK
+# A storyboard over the word limit is kept, only logged: a longer video beats a 13 s rewrite, and in the
+# 48-video course test (runs/course-test-1) 24 first drafts ran 264-319 words, 3 of them still over after the
+# rewrite, so those KUs got no video at all. Too short still gets a rewrite.
+def _over_limit(problem: str, script) -> bool:
+    return problem.startswith("word_count=") and script.word_count > DIALOGUE_MAX_WORDS
 
 
 def _example(explainer: str, peer: str, level: int) -> str:
@@ -466,7 +464,11 @@ def write_storyboard(
         script = assemble(board, plan, ku)
         for line in fix_slang(script, plan, (cast.explainer.name, cast.peer.name)):
             print(f"[storyboard] {ku.id}: {line}", file=sys.stderr, flush=True)
-        problems = [p for p in validate_dialogue(script) if not _close_enough(p, script)]
+        found = validate_dialogue(script)
+        problems = [p for p in found if not _over_limit(p, script)]
+        if len(problems) < len(found):
+            print(f"[storyboard] {ku.id}: kept at {script.word_count} words, over the {DIALOGUE_MAX_WORDS}-word "
+                  "limit", file=sys.stderr, flush=True)
         if not problems:
             break
         print(f"[storyboard] {ku.id}: rejected: {'; '.join(problems)}", file=sys.stderr, flush=True)

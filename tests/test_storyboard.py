@@ -233,15 +233,19 @@ def test_a_carried_picture_renders_with_no_layout_findings(tmp_path, level):
     assert layout.findings == [], layout.findings
 
 
-def test_a_few_words_over_the_limit_is_not_a_rewrite():
+def test_over_the_word_limit_is_kept_but_too_short_is_not():
     plan = storyboard.skeleton(2)
-    for over, passes in ((storyboard.WORD_SLACK, True), (storyboard.WORD_SLACK + 1, False)):
-        script = storyboard.assemble(example_board(plan), plan, KU)
-        extra = storyboard.DIALOGUE_MAX_WORDS + over - script.word_count
-        script.segments[3].beats[0].narration += " word" * extra
-        assert script.word_count == storyboard.DIALOGUE_MAX_WORDS + over
-        word = [p for p in validate_dialogue(script) if p.startswith("word_count=")]
-        assert word and storyboard._close_enough(word[0], script) is passes
+    script = storyboard.assemble(example_board(plan), plan, KU)
+    script.segments[3].beats[0].narration += " word" * (storyboard.DIALOGUE_MAX_WORDS + 70 - script.word_count)
+    word = [p for p in validate_dialogue(script) if p.startswith("word_count=")]
+    assert word and storyboard._over_limit(word[0], script)
+
+    short = storyboard.assemble(example_board(plan), plan, KU)
+    for seg in short.segments:
+        for beat in seg.beats:
+            beat.narration = "Yes."
+    word = [p for p in validate_dialogue(short) if p.startswith("word_count=")]
+    assert word and not storyboard._over_limit(word[0], short)
 
 
 @pytest.mark.parametrize("line, phrase, expected", [

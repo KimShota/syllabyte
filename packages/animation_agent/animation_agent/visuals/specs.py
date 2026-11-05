@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 # Bump when a template draws differently (or the call language changes): it is part of the cache key of every
 # video drawn with templates (syllabyte_common.video_jobs.video_key), so those videos are made again.
-TEMPLATES_VERSION = "4"  # 4: ghost outlines clear of notes; show_matrix backing (3: storyboards)
+TEMPLATES_VERSION = "5"  # 5: overlapping formula pieces, doubled backslashes, a failed action skipped (4: ghost outlines clear of notes; show_matrix backing; 3: storyboards)
 
 # --------------------------------------------------------------------------
 # Shared vocabulary

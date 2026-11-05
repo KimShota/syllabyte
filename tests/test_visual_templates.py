@@ -252,3 +252,54 @@ def test_early_voices_are_used_only_for_the_same_lines(tmp_path, monkeypatch):
     rewritten.segments[0].beats[0].narration = "New words."
     assert voices.take(rewritten) is None
     voices.close()
+
+
+# --------------------------------------------------------------------------
+# Render crashes found by the course test (runs/course-test-1)
+# --------------------------------------------------------------------------
+
+
+def test_a_doubled_backslash_before_a_letter_is_read_as_one():
+    call = parse_call(r'eq.then(tex="A = U\\Sigma V^T \\ x")', {"eq": "EquationSteps"})
+    assert call.args["tex"] == r"A = U\Sigma V^T \\ x"  # a doubled one before a non-letter stays
+    call = parse_call(r'eq = EquationSteps(tex="\\frac{1}{2}", colours=[{"part": "\\frac", "colour": "GOLD"}])', {})
+    assert call.args["tex"] == r"\frac{1}{2}" and call.args["colours"][0]["part"] == r"\frac"
+
+
+def test_a_failing_action_is_skipped_and_the_segment_goes_on(capsys):
+    from manim import VGroup
+
+    from animation_agent.visuals.runner import SpecRunner
+
+    class Broken:
+        group = VGroup()
+
+        def box(self, args):
+            raise ValueError("no such piece")
+            yield
+
+    runner = SpecRunner(SimpleNamespace(mobjects=[]))
+    runner.objects["eq"] = Broken()
+    runner._run(parse_call('eq.box(colour="GOLD")', {"eq": "EquationSteps"}), 1.0)
+    assert "skipped eq.box: ValueError: no such piece" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(not os.environ.get("SYLLABYTE_RENDER_TESTS"), reason="set SYLLABYTE_RENDER_TESTS=1 to render")
+@pytest.mark.parametrize("beats", [
+    # A piece inside a coloured piece (the XOR video): MathTex can't isolate both.
+    [['eq = EquationSteps(tex="w_1 x_1 + w_2 x_2 + b", colours=[{"part": "w_1 x_1 + w_2 x_2 + b", '
+      '"colour": "TEAL"}], area="top_third")', 'eq.highlight(part="b")'],
+     ['eq.then(tex="\\Phi(w_1 x_1 + w_2 x_2 + b)")', 'eq.highlight(part="\\Phi")']],
+    # A doubled backslash with that piece highlighted (the SVD video): LaTeX couldn't convert it.
+    [['eq = EquationSteps(tex="A = U \\\\Sigma V^T", area="top_third")', 'eq.highlight(part="\\Sigma")']],
+])
+def test_course_test_formulas_render(beats, tmp_path):
+    from animation_agent.layout import BEATS_FILE
+    from animation_agent.renderer import _try_render
+
+    code = build_spec_scene(segment(*beats), "Seg0")
+    durations = [2.5] * len(beats)
+    (tmp_path / BEATS_FILE).write_text(json.dumps(durations))
+    ok, error, _, _ = _try_render(Path(tmp_path), code, "Seg0", "low", len(durations), sum(durations),
+                                  check_formulas=False, frame="dialogue")
+    assert ok, error

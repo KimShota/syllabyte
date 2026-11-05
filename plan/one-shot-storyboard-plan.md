@@ -71,8 +71,8 @@ Three causes:
 | Storyboard, tighter word budgets (`runs/storyboard-2`) | 48 s | 37 s | 3-4 | $0.10-0.13 | 6, 6, 6, 5 / 6, 7, 6, 5 |
 
 - Every segment was drawn from templates. No segment fell back to LLM code.
-- The 48 s eigenvectors video includes one rewrite of about 13 s, for a script at 251 words. A script up to
-  `WORD_SLACK` (10) words over the limit now passes.
+- The 48 s eigenvectors video includes one rewrite of about 13 s, for a script at 251 words. A script over the
+  limit is now kept and logged, not rewritten (see the course test below); too short is still rewritten.
 - **Not passing yet: the critic scores.** The remaining issues are about content, not bookkeeping:
   - a picture showing the answer before its line (or before the predict line);
   - shallow questions;
@@ -110,3 +110,32 @@ Three causes:
 - Back on Sonnet at medium (`STORYBOARD_MODEL`, `STORYBOARD_EFFORT`).
 - The Opus runs also exposed a bug: removing a casual phrase from a build line could break the sentence. Code now
   removes phrases only from objective and check lines, and only when the sentence stays whole.
+
+## Course test (2026-11-05, `runs/course-test-1`, 48 KUs at Level 2)
+
+All 38 KUs of the CS and Math decks, plus 10 from the coverage courses whose topics have no template (DFS,
+tangent line, substitution, sample means, resonance, Euclid, XOR, double integral, KL divergence, MLE).
+
+| | Result |
+|---|---|
+| Made | 42 of 48. Failed: 3 API connection drops, 3 scripts still over the word limit after the rewrite |
+| Time | median 43 s (29-91 s); 37 of 42 under a minute |
+| Cost | $5.06 in all; median $0.11 a video ($0.07-$0.41) |
+| Storyboard calls | 1 for 24 videos, 2 for 18 (every rewrite was for length); a fix call for 13 |
+| Video length | median 99 s (85-121 s) |
+| Critic | none passed (all four at 7+); visual alignment median 4, 12 videos at 2-3; the off-template KUs scored about the same as the rest |
+
+- **Word limit:** 24 first drafts ran 264-319 words. A storyboard over the limit is now kept and logged, not
+  rewritten (`storyboard._over_limit`); too short is still rewritten.
+- **Render bug:** `EquationSteps.highlight(part="b")` passed the checker but found no piece at render. Because the
+  picture carries over, every later segment replayed the call and crashed, so all 5 segments of the XOR video fell
+  back to generated code ($0.37). A LaTeX error did the same to segments of the SVD statement ($0.41).
+- **Fixed after the test** (no LLM spend; both videos' segments now render from their templates):
+  - a piece inside an isolated piece: the newest wins (`EquationSteps._part`), else the whole line is underlined;
+  - a doubled backslash before a letter (`\\Sigma`) is read as one (`calls._undouble`);
+  - an action that fails at render is skipped and logged, not fatal (`SpecRunner._run`), so a carried call can't
+    send every later segment to code; a create that fails still does;
+  - a call that fails on the network is made again after 10, 30, 60 and 120 s (`llm.OUTAGE_WAITS`), including a
+    stream cut off midway;
+  - `TEMPLATES_VERSION` 5, so cached videos drawn before the fixes are made again.
+- **Still open:** the visual-alignment scores.

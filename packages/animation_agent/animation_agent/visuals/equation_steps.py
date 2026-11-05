@@ -79,15 +79,26 @@ class EquationSteps(Template):
         line.move_to([self.bounds.center[0], self._y(k), 0])
         return line
 
+    def _rebuild_last(self) -> None:
+        new = self._build(self.texs[-1], len(self.lines) - 1)
+        self.swap_in(self.lines[-1], new)
+        self.lines[-1] = new
+
     def _part(self, part: str):
-        """The current line's mobject for `part`, rebuilding the line first if the part isn't isolated yet."""
+        """The current line's mobject for `part`, rebuilding the line first if the part isn't isolated yet; None
+        when the line can't show it as a piece."""
         if part not in self.isolate:
             self.isolate.append(part)
-            k = len(self.lines) - 1
-            new = self._build(self.texs[-1], k)
-            self.swap_in(self.lines[-1], new)
-            self.lines[-1] = new
-        return self.lines[-1].get_part_by_tex(part)
+            self._rebuild_last()
+        found = self.lines[-1].get_part_by_tex(part)
+        overlapping = [p for p in self.isolate if p != part and (part in p or p in part)]
+        if found is None and overlapping:
+            # MathTex can't isolate a piece inside another isolated piece (colours=["w_1 x_1 + b"], then
+            # highlight "b": runs/course-test-1, the XOR video), so the newest piece wins.
+            self.isolate = [p for p in self.isolate if p not in overlapping]
+            self._rebuild_last()
+            found = self.lines[-1].get_part_by_tex(part)
+        return found
 
     def move(self, a) -> Steps:
         """Rebuild the formulas in the new area at full size, keeping the latest lines that fit."""
@@ -157,7 +168,7 @@ class EquationSteps(Template):
     def highlight(self, a) -> Steps:
         # Colour the piece and underline it below the whole line: a box around a piece in the middle of a
         # formula would run through its neighbours.
-        mob = self._part(a.part)
+        mob = self._part(a.part) or self.lines[-1]  # a piece the line can't isolate: underline the whole line
         c = colour(a.colour)
         y = self.lines[-1].get_bottom()[1] - 0.08
         underline = Line([mob.get_left()[0], y, 0], [mob.get_right()[0], y, 0], color=c, stroke_width=5)

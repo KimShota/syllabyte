@@ -55,6 +55,23 @@ def _as_raw_strings(text: str) -> str:
     return tokenize.untokenize(out)
 
 
+_DOUBLED = re.compile(r"\\\\(?=[A-Za-z])")
+
+
+def _undouble(value):
+    """Strings are read raw, but a model writing calls inside JSON sometimes doubles a backslash ("\\\\Sigma").
+    In TeX that is a line break followed by the word "Sigma", and isolating the piece "\\Sigma" in it then
+    splits the two backslashes, which LaTeX can't convert (runs/course-test-1, the SVD video). A formula here
+    is one line, so a doubled backslash before a letter is always that mistake."""
+    if isinstance(value, str):
+        return _DOUBLED.sub(r"\\", value)
+    if isinstance(value, list):
+        return [_undouble(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _undouble(v) for k, v in value.items()}
+    return value
+
+
 def _kwargs(node: ast.Call, where: str) -> dict:
     if node.args:
         raise CallError(f"{where}: use keyword arguments only (name=value)")
@@ -63,7 +80,7 @@ def _kwargs(node: ast.Call, where: str) -> dict:
         if kw.arg is None:
             raise CallError(f"{where}: no **kwargs")
         try:
-            args[kw.arg] = ast.literal_eval(kw.value)
+            args[kw.arg] = _undouble(ast.literal_eval(kw.value))
         except (ValueError, SyntaxError) as e:
             raise CallError(f"{where}: {kw.arg}= must be a plain value (number, string, list, dict)") from e
     return args

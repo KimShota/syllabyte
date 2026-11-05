@@ -9,6 +9,8 @@ default. end_beat (called by the scene) then waits out the rest of the sentence.
 
 from __future__ import annotations
 
+import sys
+
 from manim import FadeOut
 
 from animation_agent.visuals.array_bars import ArrayBars
@@ -65,6 +67,21 @@ class SpecRunner:
             self._run(call, duration * scale)
 
     def _run(self, call, seconds: float, instant: bool = False) -> None:
+        """Plays one call. An action that fails is skipped, not fatal: the segment then misses one highlight
+        instead of falling back to LLM-written code, and, because later segments replay this one's calls, so do
+        they (runs/course-test-1: one failed highlight sent all five segments of a video to code). A create that
+        fails still fails the segment, since nothing after it could draw."""
+        if call.action is None:
+            self._play(call, seconds, instant)
+            return
+        try:
+            self._play(call, seconds, instant)
+        except Exception as e:  # noqa: BLE001 - any drawing error: skip the call, keep the picture
+            print(f"[spec] skipped {call.target}.{call.action}: {type(e).__name__}: {e}", file=sys.stderr,
+                  flush=True)
+            self._tidy()
+
+    def _play(self, call, seconds: float, instant: bool) -> None:
         spec = REGISTRY[call.template]
         if call.action is None:
             if (old := self.objects.pop(call.target, None)) is not None:  # creating a name again replaces it
