@@ -181,4 +181,26 @@ KUs), Graph (graph, 6%). With them, the families drawn by a template are the mai
 study's 207 KUs, up from 22% (merge sort KUs were classified before the merge_sort family existed, so slightly
 more).
 
-Not measured yet: whether the critic's visual alignment scores rise. That needs a run (`runs/course-test-2`).
+Measured on 12 of the 48 KUs (`runs/course-test-2`, 2026-11-06, $1.20): mostly the worst scorers and those that had
+borrowed a template, re-run once each. Visual alignment rose from a mean of 3.25 to 4.25; the three that had borrowed
+a template rose most (DFS 2 to 5, merge sort 2 to 5, growth classes 2 to 4). None passed (every score at least 7).
+The two "controls" got new pictures too (sample means is now a FunctionPlot, Euclid formulas only), so this run
+can't separate the gain from the critic's noise (about a point between runs).
+
+### Lines that match the picture (2026-11-06)
+
+The merge-step video in that run drew 1, 5, 6, 8, 9 and 2, 3, 4, 7 while every line said the slide's numbers ("twelve
+beats seventeen"): the slide's ten two-digit numbers don't fit MergeSort (rendered: they overlap in the vertical
+frame, so the cap stays), the fix call swapped in smaller ones, and the lines were already final. And a merge_step
+that set up a question ("the result holds one; now, five or two?") was moved by hold_reveals to the answer, so the
+picture ran a step behind the lines from there on.
+
+| | Now |
+|---|---|
+| A line names a number that no call of its segment writes, while a list or merge is on screen | problem `unshown_number` (counts like "four checks", numbers up to the list's length, arithmetic lines and years pass) |
+| A line compares two of a merge's values that aren't the fronts as it starts or ends, nor a pair the segment compared | problem `wrong_front` |
+| Either, or a rejected creation call, in the first draft | the storyboard is written once more with them (before the lines are final); a redo that breaks the dialogue keeps the first draft |
+| Left over after that | the fix call, told the lines are final |
+| hold_reveals | doesn't make a move that adds a `wrong_front` line |
+
+Over the 54 finished scripts of both runs, the checks flag 5 lines, all real (both merge-step videos).

@@ -202,3 +202,107 @@ def test_reveal_flags_are_declared_for_results():
         assert REGISTRY[name].all_actions()[action].reveals, (name, action)
     assert not REGISTRY["ArrayBars"].all_actions()["highlight"].reveals
     assert parse_call('a.highlight(indices=[0])', {"a": "ArrayBars"}).action == "highlight"
+
+
+# --------------------------------------------------------------------------
+# The numbers a line says are on screen, and a merge line compares the fronts the picture compares
+# --------------------------------------------------------------------------
+
+MERGE = ['ms = MergeSort(runs=[[1, 5, 6, 8, 9], [2, 3, 4, 7]])']
+
+
+def _kinds(draws, lines):
+    return [(p.kind, p.beat) for p in check_script([draws], [lines])
+            if p.kind in ("unshown_number", "wrong_front")]
+
+
+def test_a_line_naming_numbers_the_picture_lacks_is_flagged():
+    # runs/course-test-2: the fix call drew smaller numbers, and the lines kept the slide's
+    draws = [MERGE, ["ms.merge_step()"], ["ms.merge()"]]
+    lines = ["Two sorted lists.", "Twelve beats seventeen, so twelve moves.", "Copy eighteen, nineteen, twenty."]
+    assert _kinds(draws, lines) == [("unshown_number", 2), ("unshown_number", 3)]
+
+
+@pytest.mark.parametrize("line", [
+    "That took twelve comparisons in all.",  # a count
+    "Four plus six is ten, halved is five.",  # working something out
+    "Two lists, and the first one is longer.",  # small numbers: counts, positions
+    "In 1945 von Neumann wrote it down.",  # a year
+    "Now search for 15.",  # a target the picture draws later in the segment
+])
+def test_numbers_that_are_not_values_pass(line):
+    draws = [['a = ArrayBars(values=[1, 3, 4, 6, 8, 9, 12])'], [], ['a.scan(index=6, target=15)']]
+    assert _kinds(draws, ["A sorted list.", line, "Every cell checked."]) == []
+
+
+def test_a_merge_line_compares_the_fronts_on_screen():
+    draws = [MERGE, [], ["ms.merge_step()"], ["ms.merge_step()"], []]
+    lines = ["Two sorted lists.",
+             "The result holds one. Now we compare five and two.",  # nothing has moved: the fronts are 1 and 2
+             "One is smaller than two, so one moves.",
+             "Two beats five, so two moves.",
+             "We compared one and two, then five and two."]  # a recap of this segment's steps
+    assert _kinds(draws, lines) == [("wrong_front", 2)]
+
+
+def test_a_merge_step_that_sets_up_the_question_stays_in_it():
+    segments = [[MERGE, ["ms.merge_step()"], ["ms.merge_step()"]]]
+    steps = [[("build", False), ("question", False), ("answer", False)]]
+    lines = [["Two lists.", "The result holds one. Now we compare five and two. Which moves?",
+              "Two is smaller than five, so two moves."]]
+    out, log = hold_reveals(segments, steps, lines)
+    assert out == segments and "kept" in log[0]
+    out, _ = hold_reveals(segments, steps)  # without the lines it would move, and the line would run ahead
+    assert out[0][1] == []
+
+
+def _board_with_line(segment: str, field: str, line: str):
+    from test_storyboard import example_board
+
+    board = example_board()
+    beat = getattr(getattr(board, segment), field)
+    beat.narration = line
+    return board
+
+
+def test_a_storyboard_whose_lines_and_picture_disagree_is_written_again(monkeypatch):
+    from script_generation_agent import storyboard
+    from test_storyboard import KU, example_board
+
+    sent = []
+    boards = [_board_with_line("deliver_1", "b5_explainer_build", "Right, not seventeen: seven matched after four checks."),
+              example_board()]
+
+    def fake(**kw):
+        sent.append(kw["content"][0]["text"])
+        return boards[len(sent) - 1]
+
+    monkeypatch.setattr(storyboard, "structured", fake)
+    monkeypatch.setattr("script_generation_agent.script_writer.gather_source_material", lambda c, k: ("slides", []))
+    picture = PicturePlan(family="array_bars", also=[], reason="a list searched cell by cell")
+    script = storyboard.write_storyboard(KU, None, level=2, picture=picture)
+    assert len(sent) == 2 and "lines and the pictures disagree" in sent[1] and "17" in sent[1]
+    assert "seventeen" not in " ".join(b.narration for s in script.segments for b in s.beats)
+
+
+def test_the_first_draft_is_kept_when_the_redo_breaks_the_dialogue(monkeypatch):
+    from script_generation_agent import script_writer, storyboard
+    from test_storyboard import KU
+
+    first = _board_with_line("deliver_1", "b5_explainer_build", "Right, not seventeen: seven matched after four checks.")
+    calls = []
+
+    def fake(**kw):
+        if kw["stage"] == "storyboard_fix":  # the line left over still goes to the fix call
+            raise RuntimeError("no network in tests")
+        calls.append(1)
+        return first
+
+    monkeypatch.setattr(storyboard, "structured", fake)
+    monkeypatch.setattr(script_writer, "gather_source_material", lambda c, k: ("slides", []))
+    real = script_writer.validate_dialogue
+    monkeypatch.setattr(script_writer, "validate_dialogue",
+                        lambda s: real(s) if len(calls) == 1 else ["segment 2 is too short"])
+    picture = PicturePlan(family="array_bars", also=[], reason="a list searched cell by cell")
+    script = storyboard.write_storyboard(KU, None, level=2, picture=picture)
+    assert len(calls) == 2 and "seventeen" in " ".join(b.narration for s in script.segments for b in s.beats)

@@ -286,12 +286,14 @@ def normalize_script(segments: list[list[list[str]] | None], lines: list[list[st
 ASKING_STEPS = ("question", "predict")
 
 
-def hold_reveals(segments: list[list[list[str]] | None],
-                 steps: list[list[tuple[str, bool]]]) -> tuple[list[list[list[str]] | None], list[str]]:
+def hold_reveals(segments: list[list[list[str]] | None], steps: list[list[tuple[str, bool]]],
+                 lines: list[list[str]] | None = None) -> tuple[list[list[list[str]] | None], list[str]]:
     """Moves every call that shows a result (ActionSpec.reveals) out of a question or predict line, to the front of
     the next line in its segment that answers (not a question, not the peer's wrong idea); with no such line, the
-    call is dropped. `steps` gives each beat's (step, is the wrong idea), per segment. Returns the calls and a
-    log."""
+    call is dropped. `steps` gives each beat's (step, is the wrong idea), per segment. With `lines`, a move that
+    would leave a line comparing a merge's values the picture doesn't (wrong_front) is not made: there the call
+    sets up the question rather than answering it ("the result holds one; now, five or two?"). Returns the calls
+    and a log."""
     flags = reveal_flags(segments)
     out = [None if d is None else [list(b) for b in d] for d in segments]
     log: list[str] = []
@@ -304,6 +306,7 @@ def hold_reveals(segments: list[list[list[str]] | None],
             held = [c for c, f in zip(calls, flags[s][b]) if f]
             if not held:
                 continue
+            before = [list(beat) for beat in draws]
             draws[b] = [c for c, f in zip(calls, flags[s][b]) if not f]
             answer = next((k for k in range(b + 1, len(draws))
                            if steps[s][k][0] not in ASKING_STEPS and not steps[s][k][1]), None)
@@ -311,7 +314,18 @@ def hold_reveals(segments: list[list[list[str]] | None],
                 log.append(f"segment {s} beat {b + 1} ({steps[s][b][0]}): dropped {held}, which would show the answer")
                 continue
             draws[answer] = held + draws[answer]
+            if lines is not None and _out_of_step(out, lines, s) > _out_of_step(
+                    [*out[:s], before, *out[s + 1:]], lines, s):
+                draws[:] = before  # in place: the loop is walking this segment
+                log.append(f"segment {s} beat {b + 1} ({steps[s][b][0]}): kept {held}, which sets up the question "
+                           "the line asks")
+                continue
             flags[s][answer] = [True] * len(held) + flags[s][answer]
             log.append(f"segment {s} beat {b + 1} ({steps[s][b][0]}): moved {held} to beat {answer + 1}, the line "
                        "that answers")
     return out, log
+
+
+def _out_of_step(segments, lines, s: int) -> int:
+    """How many lines of segment `s` compare a merge's values that its picture doesn't."""
+    return sum(1 for p in simulate_script(segments, lines).problems if p.segment == s and p.kind == "wrong_front")

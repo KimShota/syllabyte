@@ -156,7 +156,8 @@ _KINDS = [
     ("overlaps", "layout"), ("needs at least half", "layout"), ("objects on screen", "layout"),
     ("calls; at most", "too_many_calls"), ("repeats the line", "echo"), ("only put text", "text_only"),
     ("only Notes", "notes_only"), ("the line says", "count"), ("names none of the", "unmentioned"),
-    ("doesn't draw this idea", "wrong_template"),
+    ("doesn't draw this idea", "wrong_template"), ("isn't on screen", "unshown_number"),
+    ("the line compares", "wrong_front"),
 ]
 
 
@@ -295,6 +296,7 @@ def simulate_script(segments: list[list[list[str]] | None], lines: list[list[str
     problems: list[Problem] = []
     said: list[list[str]] = []
     live: dict[str, _Live] = {}
+    seen_numbers: set[float] = set()  # every number a call has written (values, notes, formulas)
     for s, draws in enumerate(segments):
         if draws is None:
             said.append([])
@@ -303,6 +305,11 @@ def simulate_script(segments: list[list[list[str]] | None], lines: list[list[str
         seg_lines = lines[s] if lines is not None and s < len(lines) else None
         shown = {o.template for o in live.values()}
         seg_said = []
+        seg_pairs = {name: len(o.state["ms"].get("pairs", [])) for name, o in live.items()
+                     if o.template == "MergeSort"}
+        # A number any call of this segment writes counts as on screen: a line may name a search target the
+        # picture draws a line later.
+        seen_numbers.update(_call_numbers([text for calls in draws for text in calls]))
 
         def flag(beat: int, call: int | None, message: str) -> None:
             if report:
@@ -311,6 +318,7 @@ def simulate_script(segments: list[list[list[str]] | None], lines: list[list[str
         if report and not live and (not draws or not draws[0]):
             flag(1, None, "beat 1 has no calls: the segment's first beat must create what it shows")
         for b, calls in enumerate(draws, 1):
+            fronts_before = _merge_fronts(live)
             if report and len(calls) > MAX_CALLS_PER_BEAT:
                 flag(b, None, f"beat {b}: {len(calls)} calls; at most {MAX_CALLS_PER_BEAT} per beat")
             words = []
@@ -337,7 +345,9 @@ def simulate_script(segments: list[list[list[str]] | None], lines: list[list[str
             seg_said.append(sentence[0].upper() + sentence[1:] if words else "The picture stays as it is.")
             if seg_lines is not None and b <= len(seg_lines) and report:
                 for message, c in (_count_problems(b, seg_lines[b - 1], live)
-                                   + _echo_problems(b, seg_lines[b - 1], calls)):
+                                   + _echo_problems(b, seg_lines[b - 1], calls)
+                                   + _number_problems(b, seg_lines[b - 1], live, seen_numbers)
+                                   + _front_problems(b, seg_lines[b - 1], live, fronts_before, seg_pairs)):
                     flag(b, c, message)
                 if calls and all(_only_text(text) for text in calls):
                     flag(b, None, f"beat {b}: its calls only put text on screen (a note, a cleared highlight); the "
@@ -349,6 +359,135 @@ def simulate_script(segments: list[list[list[str]] | None], lines: list[list[str
                           "formula), and a Note is a label or a question beside it")
         said.append(seg_said)
     return Simulation(problems, said)
+
+
+# --------------------------------------------------------------------------
+# The numbers a line says are the numbers on screen
+# --------------------------------------------------------------------------
+# In runs/course-test-2 the merge-step video's first storyboard used the slide's ten two-digit numbers, which don't
+# fit; the fix call swapped in one-digit ones, and every line still said "twelve beats seventeen" over a picture
+# comparing 6 and 7. And a line asked "now we compare five and two" while the fronts on screen were 1 and 2.
+
+_UNITS = ("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen "
+          "seventeen eighteen nineteen").split()
+_TENS = {w: 10 * k for k, w in enumerate("_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()) if k > 1}
+# A number before one of these counts something (cells, checks, steps), so it needn't be a value on screen.
+_COUNT_NOUNS = set("""cell cells value values number numbers item items element elements entry entries box boxes slot
+slots bar bars comparison comparisons compare compares check checks step steps swap swaps move moves pass passes
+time times level levels operation operations call calls pair pairs round rounds list lists half halves run runs
+position positions place places digit digits node nodes vertex vertices edge edges more less fewer percent
+seconds second minute minutes""".split())
+# A line working something out ("four plus six is ten", "the mean is 16.3") says numbers the picture needn't hold.
+_ARITHMETIC = set("plus minus times divided halved sum total average mean median squared doubled".split())
+
+
+def _number_tokens(line: str) -> list[str | float]:
+    """The line's words, with each number (digits, or words up to ninety-nine) as a float."""
+    out: list[str | float] = []
+    for t in re.findall(r"\d+(?:\.\d+)?|[a-z]+", line.lower().replace(",", "")):
+        if t[0].isdigit():
+            out.append(float(t))
+        elif t in _UNITS:
+            if out and isinstance(out[-1], float) and out[-1] in _TENS.values() and _UNITS.index(t) < 10:
+                out[-1] += _UNITS.index(t)  # twenty-five
+            else:
+                out.append(float(_UNITS.index(t)))
+        elif t in _TENS:
+            out.append(float(_TENS[t]))
+        else:
+            out.append(t)
+    return out
+
+
+def _call_numbers(calls: list[str]) -> set[float]:
+    return {float(n) for text in calls for n in re.findall(r"(?<![\w.])-?\d+(?:\.\d+)?", text)}
+
+
+def _fmt_num(n: float) -> str:
+    return str(int(n)) if float(n).is_integer() else str(n)
+
+
+def _list_values(live: dict[str, _Live]) -> dict[str, list]:
+    return {name: (o.state["values"] if o.template == "ArrayBars" else o.state["ms"]["values"])
+            for name, o in live.items() if o.template in ("ArrayBars", "MergeSort")}
+
+
+def _number_problems(b: int, line: str, live: dict[str, _Live], seen: set[float]) -> list[tuple[str, int | None]]:
+    """While a list or merge is on screen, a number the line says that no call has put on screen: the line and the
+    picture name different numbers. Counts ("four checks"), small numbers (a count, an index or a position, at most
+    the list's length) and years are not values, so they pass."""
+    lists = _list_values(live)
+    if not lists:
+        return []
+    longest = max(len(v) for v in lists.values())
+    on_screen = set(seen) | {float(x) for v in lists.values() for x in v if isinstance(x, int | float)}
+    tokens = _number_tokens(line)
+    if _ARITHMETIC & {t for t in tokens if isinstance(t, str)}:
+        return []
+    missing = []
+    for k, t in enumerate(tokens):
+        if not isinstance(t, float) or t <= longest or t >= 1000 or t in on_screen:
+            continue
+        after = [w for w in tokens[k + 1:k + 3] if isinstance(w, str)]
+        if any(w in _COUNT_NOUNS for w in after) and not (after and after[0] in ("and", "or", "vs", "versus")):
+            continue
+        if t not in missing:
+            missing.append(t)
+    if not missing:
+        return []
+    said = ", ".join(_fmt_num(n) for n in missing)
+    shown = "; ".join(f"{name} holds {', '.join(_fmt_num(x) for x in v)}" for name, v in lists.items())
+    return [(f"beat {b}: the line names {said}, which isn't on screen ({shown}); the line and the picture must name "
+             "the same numbers, so say the numbers the picture shows (or draw the ones the line names, if they fit)",
+             None)]
+
+
+_COMPARING = [re.compile(p) for p in (
+    r"#(\S+) (?:is |are )?(?:smaller|less|bigger|larger|greater|lower|higher) than #(\S+)",
+    r"#(\S+) (?:beats|vs|versus|against|or) #(\S+)",
+    r"compar\w* #(\S+) (?:and|with|to|against|vs|versus) #(\S+)",
+    r"#(\S+) (?:is |gets )?compared (?:with|to|against) #(\S+)",
+)]
+
+
+def _compared_pairs(line: str) -> list[tuple[float, float]]:
+    text = " ".join(f"#{_fmt_num(t)}" if isinstance(t, float) else t for t in _number_tokens(line))
+    return [(float(m[1]), float(m[2])) for p in _COMPARING for m in p.finditer(text)]
+
+
+def _merge_fronts(live: dict[str, _Live]) -> dict[str, tuple | None]:
+    from animation_agent.visuals.specs import ms_fronts
+
+    return {name: ms_fronts(o.state["ms"]) for name, o in live.items() if o.template == "MergeSort"}
+
+
+def _front_problems(b: int, line: str, live: dict[str, _Live], before: dict[str, tuple | None],
+                    seg_pairs: dict[str, int]) -> list[tuple[str, int | None]]:
+    """A line that compares two of a merge's values the merge doesn't compare here: not the fronts on screen as the
+    line starts or ends, nor a pair this segment's merge steps compared (a line may recap those)."""
+    from animation_agent.visuals.specs import ms_fronts
+
+    out = []
+    for name, o in live.items():
+        if o.template != "MergeSort":
+            continue
+        st = o.state["ms"]
+        start, end = before.get(name), ms_fronts(st)
+        compared = st.get("pairs", [])[seg_pairs.setdefault(name, 0):]
+        if start is None and end is None and not compared:
+            continue  # no merge going on: a comparison while splitting is about something else
+        ok = {frozenset(map(float, p)) for p in (start, end, *compared) if p is not None}
+        values = {float(x) for x in st["values"]}
+        for x, y in _compared_pairs(line):
+            if x == y or x not in values or y not in values or frozenset((x, y)) in ok:
+                continue
+            fronts = start or end
+            where = (f"the fronts on screen are {_fmt_num(fronts[0])} and {_fmt_num(fronts[1])}" if fronts
+                     else "no merge step compares them here")
+            out.append((f"beat {b}: the line compares {_fmt_num(x)} and {_fmt_num(y)}, but {where}; say the fronts "
+                        "the picture shows, or add the merge steps that bring these two to the front first", None))
+            break
+    return out
 
 
 def _count_problems(b: int, line: str, live: dict[str, _Live]) -> list[tuple[str, int | None]]:

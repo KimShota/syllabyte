@@ -18,6 +18,7 @@ because the writer never saw how it would be scored. So here:
 
 from __future__ import annotations
 
+import re
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -340,8 +341,8 @@ def _fix_calls(script, segments, problems, *, ku_id: str, model: str, manifest, 
     listing = (_calls_listing(script, segments) + "\n\nProblems an automatic checker found (what is on screen carries "
                "over between segments; code places every object, so give no areas):\n"
                + "\n".join(f"  - segment {p.segment}: {p.message}" for p in problems)
-               + f"\n\nReturn corrected `draw` lists for segments {bad} only, one entry per beat, changing only "
-                 "what you must.")
+               + f"\n\nThe lines are final (their voices are recorded), so make the pictures match them. Return "
+                 f"corrected `draw` lists for segments {bad} only, one entry per beat, changing only what you must.")
     print(f"[storyboard] {ku_id}: fixing calls in segments {bad}: {'; '.join(p.message for p in problems)[:500]}",
           file=sys.stderr, flush=True)
     try:
@@ -407,7 +408,7 @@ def finish(script: TemplatedDialogueScript, *, ku_id: str, model: str = DEFAULT_
              for seg in script.segments]
 
     def held(segs):
-        segs, moved = hold_reveals(segs, steps)
+        segs, moved = hold_reveals(segs, steps, lines)
         for line in moved:
             print(f"[storyboard] {ku_id}: {line}", file=sys.stderr, flush=True)
         return segs
@@ -436,6 +437,38 @@ def finish(script: TemplatedDialogueScript, *, ku_id: str, model: str = DEFAULT_
 # --------------------------------------------------------------------------
 # The whole step
 # --------------------------------------------------------------------------
+
+
+# Where the lines and the picture disagree, only a new storyboard helps: the lines are final once they pass (the
+# voices start), and the fix call can change only the calls. In runs/course-test-2 the merge-step video's slide
+# example (ten two-digit numbers) didn't fit MergeSort; the fix call swapped in smaller numbers, and every line
+# still said the slide's. So a first draft with a line naming numbers that aren't on screen, a line comparing a
+# merge's values the picture doesn't, or a rejected creation call (the fix call would change what it draws) is
+# written once more, with those problems.
+_REDO_KINDS = ("unshown_number", "wrong_front")
+_CREATES = re.compile(r"\s*\w+\s*=\s*[A-Z]\w*\(")
+
+
+def _redo_problems(script, allowed: set[str] | None) -> list:
+    from animation_agent.visuals.calls import check_script, script_segments
+
+    segments = script_segments(script)
+    lines = [[b.narration for b in seg.beats] for seg in script.segments]
+    out = []
+    for p in check_script(segments, lines, allowed):
+        call = segments[p.segment][p.beat - 1][p.call] if p.call is not None else ""
+        if p.kind in _REDO_KINDS or (p.kind in ("other", "wrong_template") and _CREATES.match(call)):
+            out.append(p)
+    return out
+
+
+def _redo_feedback(problems) -> str:
+    return ("\n\nIn your previous storyboard the lines and the pictures disagree (an automatic checker found these):\n"
+            + "\n".join(f"  - segment {p.segment}, {p.message}" for p in problems)
+            + "\nWrite it again with the lines and the pictures together: every number a line names is on screen, "
+              "every comparison a line makes is the one the picture makes at that moment, and every template gets "
+              "values it accepts. If the slide's example doesn't fit a template, use a smaller example and say its "
+              "numbers in the lines.")
 
 
 # A storyboard over the word limit is kept, only logged: a longer video beats a 13 s rewrite, and in the
@@ -486,7 +519,8 @@ def write_storyboard(
 
     problems: list[str] = []
     feedback = ""
-    for _ in range(2):  # the plan makes a rejected script rare; one retry with the checker's findings
+    first = None  # a first draft whose only problem is between its lines and its picture
+    for attempt in range(2):  # the plan makes a rejected script rare; one retry with the checker's findings
         board = structured(schema=schema, content=[text_block(prompt + feedback), *image_blocks], system=system,
                            stage=f"storyboard_l{level}", ku_id=ku.id, model=writer_model,
                            effort=STORYBOARD_EFFORT,
@@ -500,8 +534,19 @@ def write_storyboard(
             print(f"[storyboard] {ku.id}: kept at {script.word_count} words, over the {DIALOGUE_MAX_WORDS}-word "
                   "limit", file=sys.stderr, flush=True)
         if not problems:
-            break
+            redo = _redo_problems(script, set(picture.templates)) if attempt == 0 else []
+            if not redo:
+                break
+            first = script
+            print(f"[storyboard] {ku.id}: lines and picture disagree, writing it again: "
+                  f"{'; '.join(p.message for p in redo)[:500]}", file=sys.stderr, flush=True)
+            feedback = _redo_feedback(redo)
+            continue
         print(f"[storyboard] {ku.id}: rejected: {'; '.join(problems)}", file=sys.stderr, flush=True)
+        if first is not None:
+            print(f"[storyboard] {ku.id}: keeping the first draft", file=sys.stderr, flush=True)
+            script = first
+            break
         feedback = ("\n\nYour previous storyboard was rejected by the automatic checker: " + "; ".join(problems)
                     + ". Fix these.")
     else:

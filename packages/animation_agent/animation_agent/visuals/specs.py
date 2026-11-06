@@ -681,7 +681,7 @@ def ms_new(values: list | None, runs: list[list] | None) -> dict:
     else:
         vals = list(values or [])
         root = _ms_leaf(0, len(vals), len(vals) < 2)
-    return {"values": vals, "tree": root, "merge": None, "comparisons": 0, "splittable": runs is None}
+    return {"values": vals, "tree": root, "merge": None, "comparisons": 0, "pairs": [], "splittable": runs is None}
 
 
 def ms_leaves(node: dict) -> list[dict]:
@@ -773,6 +773,7 @@ def ms_merge_step(st: dict, among: list[dict] | None = None) -> dict | str:
     if has_l and has_r:
         a, b = v[m["i"]], v[m["j"]]
         st["comparisons"] += 1
+        st.setdefault("pairs", []).append((a, b))
         ev["compared"], ev["pair"] = (m["i"], m["j"]), (a, b)
         side = "i" if a <= b else "j"
         ev["took"] = [m[side]]
@@ -791,6 +792,20 @@ def ms_merge_step(st: dict, among: list[dict] | None = None) -> dict | str:
         node["kids"], node["sorted"], node["merged"] = None, True, True
         st["merge"] = None
     return ev
+
+
+def ms_fronts(st: dict) -> tuple | None:
+    """The two front values the next merge step compares (the merge in progress, or the next one ready), or None
+    when no comparison is next (nothing ready to merge, or a run is used up and the rest is copied)."""
+    v, m = st["values"], st["merge"]
+    if m is not None:
+        left, right = m["node"]["kids"]
+        return (v[m["i"]], v[m["j"]]) if m["i"] < left["hi"] and m["j"] < right["hi"] else None
+    ready = _ms_ready(st)
+    if not ready or not all(k["sorted"] for k in ready[0]["kids"]):
+        return None
+    left, right = ready[0]["kids"]
+    return v[left["lo"]], v[right["lo"]]
 
 
 def ms_merge(st: dict, whole_level: bool = False) -> list[dict] | str:
