@@ -26,51 +26,14 @@ from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from animation_agent.visuals.specs import REGISTRY  # noqa: E402
+from animation_agent.visuals.families import DRAWN_BY, FAMILIES  # noqa: E402
 from syllabyte_common.llm import DEFAULT_MODEL, structured, text_block  # noqa: E402
 from syllabyte_common.models import KUList, RunManifest  # noqa: E402
 
-# The plan's families (plan/visual-template-library-plan.md, "Template families"), with what each draws.
-FAMILIES: dict[str, str] = {
-    # CS
-    "array_bars": "a list/array as cells or bars: searching, sorting, pointers, halves, swaps",
-    "code_trace": "code with a line-by-line highlight and a panel of variable values",
-    "call_tree": "recursion trees, the call stack, memoisation",
-    "growth_curves": "growth of running time: O(1)..O(c^n) curves, operation counters, Big-O comparison",
-    "linked_list": "linked lists: nodes and next-pointers, insert, delete, reverse",
-    "stack_queue": "stacks and queues: push/pop, enqueue/dequeue",
-    "hash_table": "hash tables: buckets, hashing, collisions, chaining, probing",
-    "tree": "trees as data structures: BST, heap, trie; insert, search, traversals",
-    "graph": "graphs: nodes and edges, BFS, DFS, shortest paths, spanning trees, topological sort",
-    "dp_table": "a dynamic-programming table filled in order, with arrows to the cells each depends on",
-    "memory_refs": "variables, references, aliasing, mutation, memory boxes",
-    "state_machine": "state machines and automata: states, transitions, DFAs, regular expressions",
-    "bits_logic": "binary and hex numbers, bitwise operations, logic gates, circuits, truth tables",
-    "flowchart": "boxes and arrows: pipelines, control flow, system or process diagrams",
-    "ml_basics": "machine-learning pictures: network diagram, loss curve with gradient descent, decision boundary, clusters",
-    # Mathematics
-    "equation_steps": "a derivation or calculation shown one formula per step",
-    "number_line": "a number line: intervals, inequalities, points, sequences converging",
-    "function_plot": "axes with plotted functions: transformations, limits, tangents, areas, Riemann sums",
-    "linear_map_2d": "a 2D coordinate grid with vectors transformed by a matrix: linear maps, eigenvectors, bases",
-    "vectors_3d": "3D vectors, planes, surfaces, cross products, span in 3D",
-    "matrix_ops": "matrices written out: multiplication, row operations, block matrices, factorisations",
-    "series": "sequences and series: partial sums, convergence",
-    "probability": "probability: trees, sample spaces, distributions, sampling, Bayes",
-    "stats_plots": "data plots: histograms, scatter plots, regression lines, confidence intervals",
-    "counting": "counting: grids of outcomes, Pascal's triangle, permutations, combinations",
-    "proof_steps": "a proof's structure: induction steps, contradiction, chains of implications",
-    "sets_logic": "sets and logic: Venn diagrams, set operations, quantifiers",
-    "geometry": "geometric figures: constructions, triangles, circles, angles, transformations",
-    "complex_plane": "the complex plane: complex numbers as points, roots of unity",
-    "polar_parametric": "polar and parametric curves",
-    "slope_field": "differential equations: slope fields and solution curves",
-    "bar_meter": "a bar chart, meter or dial for a few quantities",
-    "note": "only words: a key term, a list of points, a question (no diagram)",
-}
+# The families and what each draws: one list, shared with the picture plan (animation_agent.visuals.families).
 Family = Literal[tuple(FAMILIES) + ("none",)]  # type: ignore[valid-type]
 
-BUILT = {spec.family for spec in REGISTRY.values()}
+BUILT = set(DRAWN_BY)
 BATCH = 15
 SAMPLE = 50
 

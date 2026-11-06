@@ -25,6 +25,7 @@ from animation_agent.visuals.calls import (
     CallError,
     Problem,
     parse_call,
+    reveal_flags,
     simulate_script,
 )
 from animation_agent.visuals.specs import AREAS, REGISTRY, areas_overlap
@@ -175,8 +176,9 @@ def lay_out(segments: list[list[list[str]] | None]) -> list[list[list[str]] | No
 # Fixing what the simulation finds
 # --------------------------------------------------------------------------
 
-# Problems fixed by dropping the call: what it adds is a note, or nothing the viewer could see.
-_DROP = {"echo", "zero_vector", "hidden_ghost", "not_created"}
+# Problems fixed by dropping the call: what it adds is a note, a highlight the line doesn't name, or nothing the
+# viewer could see.
+_DROP = {"echo", "zero_vector", "hidden_ghost", "not_created", "unmentioned"}
 
 
 @dataclass
@@ -234,14 +236,15 @@ def _drop_title(text: str) -> str | None:
     return None
 
 
-def normalize_script(segments: list[list[list[str]] | None], lines: list[list[str]] | None = None) -> Fixed:
+def normalize_script(segments: list[list[list[str]] | None], lines: list[list[str]] | None = None,
+                     allowed: set[str] | None = None) -> Fixed:
     """The calls laid out by code, with every problem it can fix fixed (module docstring). `lines` are each
-    beat's narration, for the checks against the words."""
+    beat's narration, for the checks against the words; `allowed`, the templates the KU's picture plan chose."""
     segs = segments
     log: list[str] = []
     for _ in range(MAX_PASSES):
         segs = lay_out(segs)  # again after every fix: a dropped note frees room
-        problems = simulate_script(segs, lines).problems
+        problems = simulate_script(segs, lines, allowed=allowed).problems
         changed = False
         # Highest call first within a beat, so dropping a call doesn't shift the next one's index.
         for p in sorted(problems, key=lambda p: (p.segment, p.beat, -(p.call if p.call is not None else -1))):
@@ -271,4 +274,44 @@ def normalize_script(segments: list[list[list[str]] | None], lines: list[list[st
         if not changed:
             return Fixed(segs, problems, log)
     segs = lay_out(segs)
-    return Fixed(segs, simulate_script(segs, lines).problems, log)
+    return Fixed(segs, simulate_script(segs, lines, allowed=allowed).problems, log)
+
+
+# --------------------------------------------------------------------------
+# A question or predict line doesn't show its own answer
+# --------------------------------------------------------------------------
+
+# The course test's most common picture issue (51 of 299, in 31 of 42 videos): the picture gave the answer away
+# during the line that asks for it, e.g. a scan reaching the target while the line says "pause: how many checks?".
+ASKING_STEPS = ("question", "predict")
+
+
+def hold_reveals(segments: list[list[list[str]] | None],
+                 steps: list[list[tuple[str, bool]]]) -> tuple[list[list[list[str]] | None], list[str]]:
+    """Moves every call that shows a result (ActionSpec.reveals) out of a question or predict line, to the front of
+    the next line in its segment that answers (not a question, not the peer's wrong idea); with no such line, the
+    call is dropped. `steps` gives each beat's (step, is the wrong idea), per segment. Returns the calls and a
+    log."""
+    flags = reveal_flags(segments)
+    out = [None if d is None else [list(b) for b in d] for d in segments]
+    log: list[str] = []
+    for s, draws in enumerate(out):
+        if draws is None:
+            continue
+        for b, calls in enumerate(draws):
+            if b >= len(steps[s]) or steps[s][b][0] not in ASKING_STEPS:
+                continue
+            held = [c for c, f in zip(calls, flags[s][b]) if f]
+            if not held:
+                continue
+            draws[b] = [c for c, f in zip(calls, flags[s][b]) if not f]
+            answer = next((k for k in range(b + 1, len(draws))
+                           if steps[s][k][0] not in ASKING_STEPS and not steps[s][k][1]), None)
+            if answer is None:
+                log.append(f"segment {s} beat {b + 1} ({steps[s][b][0]}): dropped {held}, which would show the answer")
+                continue
+            draws[answer] = held + draws[answer]
+            flags[s][answer] = [True] * len(held) + flags[s][answer]
+            log.append(f"segment {s} beat {b + 1} ({steps[s][b][0]}): moved {held} to beat {answer + 1}, the line "
+                       "that answers")
+    return out, log

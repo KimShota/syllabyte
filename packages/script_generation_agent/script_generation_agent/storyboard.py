@@ -30,6 +30,7 @@ from script_generation_agent.prompts import (
     build_script_prompt,
     storyboard_system_prompt,
 )
+from script_generation_agent.picture_plan import PicturePlan, plan_picture
 from script_generation_agent.slang import MIN_SLANG, find_slang, lexicon_for_prompt, max_slang
 from syllabyte_common.llm import DEFAULT_MODEL, structured, text_block
 from syllabyte_common.models import (
@@ -357,12 +358,12 @@ def _fix_calls(script, segments, problems, *, ku_id: str, model: str, manifest, 
     return out
 
 
-def _drop_broken(segments, lines):
+def _drop_broken(segments, lines, allowed=None):
     """Last resort, in code: drop every call the checker still rejects, so what renders is always valid."""
     from animation_agent.visuals.calls import MAX_CALLS_PER_BEAT, simulate_script
 
-    for _ in range(60):
-        problems = [p for p in simulate_script(segments, lines).problems if p.call is not None
+    for _ in range(80):
+        problems = [p for p in simulate_script(segments, lines, allowed=allowed).problems if p.call is not None
                     or p.kind == "too_many_calls"]
         if not problems:
             break
@@ -375,27 +376,53 @@ def _drop_broken(segments, lines):
     return segments
 
 
+def _missing_main(segments, main: str | None):
+    """A problem when the template that draws the KU's main picture is never created."""
+    from animation_agent.visuals.calls import Problem, _call_name
+
+    if main is None:
+        return []
+    for draws in segments:
+        for calls in draws or []:
+            if any(_call_name(text)[1] == main for text in calls):
+                return []
+    return [Problem(0, 1, None, "missing_picture",
+                    f"no segment draws {main}, and this idea's main picture is drawn with it: create it where the "
+                    "idea is first shown (by the deliver segment at the latest) and keep acting on it")]
+
+
 def finish(script: TemplatedDialogueScript, *, ku_id: str, model: str = DEFAULT_MODEL,
-           manifest: RunManifest | None = None, system: str = "") -> TemplatedDialogueScript:
-    """The storyboard's calls made safe to render and its visual sentences written: code fixes (normalize), one
-    fix call for what code can't fix, then code drops whatever is still rejected. Each drawn beat's `visual` is
-    then what its calls show."""
+           manifest: RunManifest | None = None, system: str = "", allowed: set[str] | None = None,
+           main: str | None = None) -> TemplatedDialogueScript:
+    """The storyboard's calls made safe to render and its visual sentences written: code fixes (a result shown
+    during a question or predict line moves to the line that answers; normalize), one fix call for what code
+    can't fix (including a template the picture plan didn't choose, `allowed`, or its main template, `main`, never
+    drawn), then code drops whatever is still rejected. Each drawn beat's `visual` is then what its calls show."""
     from animation_agent.visuals.calls import describe_script, script_segments
-    from animation_agent.visuals.normalize import normalize_script
+    from animation_agent.visuals.normalize import hold_reveals, normalize_script
 
     segments = script_segments(script)
     lines = [[b.narration for b in seg.beats] for seg in script.segments]
-    fixed = normalize_script(segments, lines)
+    steps = [[(getattr(b, "step", ""), bool(getattr(b, "misconception", False))) for b in seg.beats]
+             for seg in script.segments]
+
+    def held(segs):
+        segs, moved = hold_reveals(segs, steps)
+        for line in moved:
+            print(f"[storyboard] {ku_id}: {line}", file=sys.stderr, flush=True)
+        return segs
+
+    fixed = normalize_script(held(segments), lines, allowed)
     for line in fixed.log:
         print(f"[storyboard] {ku_id}: {line}", file=sys.stderr, flush=True)
     segments = fixed.segments
     # Only problems that break or contradict the picture are worth a call; a segment showing only notes or a
     # count the words don't match is left to the critic.
-    worth = [p for p in fixed.left if p.kind not in ("notes_only", "count")]
+    worth = [p for p in fixed.left if p.kind not in ("notes_only", "count")] + _missing_main(segments, main)
     if worth:
         segments = _fix_calls(script, segments, worth, ku_id=ku_id, model=model, manifest=manifest, system=system)
-        segments = normalize_script(segments, lines).segments
-    segments = _drop_broken(segments, lines)
+        segments = normalize_script(held(segments), lines, allowed).segments
+    segments = _drop_broken(segments, lines, allowed)
     said = describe_script(segments)
     data = script.model_dump(mode="json")
     for seg, draws, seg_said in zip(data["segments"], segments, said):
@@ -434,10 +461,11 @@ def write_storyboard(
     manifest: RunManifest | None = None,
     on_lines_ready: Callable | None = None,
     writer_model: str = STORYBOARD_MODEL,
+    picture: PicturePlan | None = None,
 ) -> TemplatedDialogueScript:
     """A dialogue script with its template calls, from one storyboard call (on `writer_model`; `model` makes
-    the fix call). `on_lines_ready` gets the script as soon as its lines are final (before the calls are checked),
-    so the voices can start."""
+    the fix call and, when `picture` isn't given, the picture plan that picks the templates). `on_lines_ready` gets
+    the script as soon as its lines are final (before the calls are checked), so the voices can start."""
     from script_generation_agent.script_writer import ScriptValidationError, gather_source_material, validate_dialogue
     from syllabyte_common.cast import load_cast
 
@@ -445,10 +473,12 @@ def write_storyboard(
     if not text_context:
         raise ScriptValidationError(f"KU {ku.id} cites slides that don't resolve in the corpus: {ku.source_refs}")
     cast = load_cast()
+    picture = picture or plan_picture(ku, model=model, manifest=manifest)
     plan = skeleton(level, bool(prereq_titles))
     system = storyboard_system_prompt(level, prereq_titles, explainer=cast.explainer.name, peer=cast.peer.name,
                                       lexicon=lexicon_for_prompt(), example=_example(cast.explainer.name,
-                                                                                     cast.peer.name, level))
+                                                                                     cast.peer.name, level),
+                                      templates=picture.templates, family=picture.family)
     prompt = build_script_prompt(ku, text_context).replace(
         "Write the 5-segment CLT-bLM script for this Knowledge Unit now.",
         "Fill in the storyboard for this Knowledge Unit now: every beat's picture, then its line.")
@@ -478,7 +508,8 @@ def write_storyboard(
         raise ScriptValidationError(f"KU {ku.id}: {'; '.join(problems)}")
     if on_lines_ready is not None:
         on_lines_ready(script)
-    return finish(script, ku_id=ku.id, model=model, manifest=manifest, system=system)
+    return finish(script, ku_id=ku.id, model=model, manifest=manifest, system=system,
+                  allowed=set(picture.templates), main=picture.main)
 
 
 __all__ = ["BeatPlan", "SegmentPlan", "assemble", "finish", "fix_slang", "skeleton", "storyboard_model",

@@ -37,7 +37,7 @@ def segment(*beats: list[str]):
 def test_every_action_has_a_method_and_back(name):
     cls, spec = CLASSES[name], REGISTRY[name]
     methods = {n for n, f in inspect.getmembers(cls, inspect.isfunction)
-               if inspect.isgeneratorfunction(f) and n != "create"}
+               if inspect.isgeneratorfunction(f) and n != "create" and not n.startswith("_")}
     assert methods == set(spec.all_actions())
 
 

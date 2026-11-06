@@ -27,7 +27,7 @@ from animation_agent.visuals.base import (
     colour,
     text,
 )
-from animation_agent.visuals.specs import ARRAY_BARS, _fmt, bisect_next
+from animation_agent.visuals.specs import ARRAY_BARS, _fmt, bisect_next, sort_events
 
 INDEX_ROW = 0.36
 ARROW_LEN = 0.3
@@ -41,7 +41,9 @@ BAR_MAX = 1.6
 class ArrayBars(Template):
     spec = ARRAY_BARS
     durations = {"create": 0.8, "swap": 0.9, "bisect_check": 1.0, "bisect_discard": 1.0, "bisect_step": 1.8,
-                 "ghost": 0.8, "scan": 0.7}
+                 "ghost": 0.8, "scan": 0.7, "bubble_step": 1.0, "bubble_pass": 2.4, "selection_step": 1.2,
+                 "insertion_step": 1.2}
+    SORT_ACTIONS = ("bubble_step", "bubble_pass", "selection_step", "insertion_step")
 
     def __init__(self, scene, params, uses=None):
         super().__init__(scene, params, uses)
@@ -57,6 +59,7 @@ class ArrayBars(Template):
         self.ghost_mob = None
         self.note_spec = None  # (text, colour) of the note on screen
         self.bisect = None
+        self.sort = None  # a sort's progress (specs.new_sort)
         self._layout()
 
     # ---- layout ---------------------------------------------------------
@@ -67,11 +70,12 @@ class ArrayBars(Template):
         box = self.bounds
         self.cell_w = min(MAX_CELL, box.width / self.n)
         note = NOTE_ROW if self.p.title or self.will(
-            "note", "compare", "found", "ghost", "bisect_check", "bisect_discard", "bisect_step") else 0.0
+            "note", "compare", "found", "ghost", "bisect_check", "bisect_discard", "bisect_step",
+            *self.SORT_ACTIONS) else 0.0
         index = INDEX_ROW if self.p.show_indices or self.p.style == "bars" else 0.05
         bisects = self.will("bisect_check", "bisect_step")
         pointers = ARROW_LEN + SLOT * (2 if bisects else 1) if self.will("point", "scan") or bisects else 0.0
-        counter = COUNTER_ROW if self.will("counter", "scan") else 0.0
+        counter = COUNTER_ROW if self.will("counter", "scan", *self.SORT_ACTIONS) else 0.0
         rest = note + index + pointers + counter
         if self.p.style == "cells":
             self.cell_h = min(self.cell_w, max(box.height - rest, 0.3))
@@ -360,6 +364,69 @@ class ArrayBars(Template):
             yield Step(step.anims, step.share / 2)
         for step in self.bisect_discard(a):
             yield Step(step.anims, step.share / 2)
+
+    # ---- sorts (computed by specs.sort_step, the same steps the checker counts) ----
+
+    def _move_cells(self, order: list[int]) -> list:
+        """Moves the cells so that slot k shows the cell now at order[k]; values and states follow."""
+        anims = []
+        for k, i in enumerate(order):
+            if k != i:
+                anims.append(self.cells[i].animate.shift([self.xs[k] - self.xs[i], 0, 0]))
+        self.cells = [self.cells[i] for i in order]
+        self.values = [self.values[i] for i in order]
+        self.cell_state = [self.cell_state[i] for i in order]
+        return anims
+
+    def _sorted(self, kind: str, whole_pass: bool = False) -> Steps:
+        self.sort, events = sort_events(list(self.values), self.sort, kind, whole_pass)
+        share = 1 / max(1, len(events))
+        for ev in events:
+            if kind == "bubble":
+                (i, j), (x, y) = ev["compared"], ev["values"]
+                verdict = (f"{_fmt(x)} > {_fmt(y)}: swap" if ev["swapped"]
+                           else f"{_fmt(x)} {'=' if x == y else '<'} {_fmt(y)}: keep")
+                yield Step(self._restyle([i, j], "YELLOW").anims + self._note(verdict), share * 0.5)
+                order = list(range(self.n))
+                if ev["swapped"]:
+                    order[i], order[j] = j, i
+                anims = self._move_cells(order)
+                after = {i: "base", j: "base"} | {k: "GREEN" for k in ev["placed"]}
+            elif kind == "selection":
+                m, k = ev["min"], ev["into"]
+                yield Step(self._restyle([m], "YELLOW").anims + self._note(f"smallest: {_fmt(ev['value'])}"),
+                           share * 0.45)
+                order = list(range(self.n))
+                order[k], order[m] = m, k
+                anims = self._move_cells(order)
+                after = {k: "GREEN" for k in ev["placed"]}
+            else:
+                src, dst = ev["from"], ev["to"]
+                yield Step(self._restyle([src], "YELLOW").anims + self._note(f"insert {_fmt(ev['value'])}"),
+                           share * 0.45)
+                order = list(range(self.n))
+                order.insert(dst, order.pop(src))
+                anims = self._move_cells(order)
+                after = {dst: "base"} | ({k: "GREEN" for k in range(self.n)} if ev["done"] else {})
+            if anims:
+                yield Step(anims, share * 0.3)
+            restyle = []
+            for k, state in after.items():
+                restyle += self._restyle([k], state).anims
+            self.counters["comparisons"] = self.sort["comparisons"]
+            yield Step(restyle + self._counter(), share * 0.25)
+
+    def bubble_step(self, a) -> Steps:
+        yield from self._sorted("bubble")
+
+    def bubble_pass(self, a) -> Steps:
+        yield from self._sorted("bubble", whole_pass=True)
+
+    def selection_step(self, a) -> Steps:
+        yield from self._sorted("selection")
+
+    def insertion_step(self, a) -> Steps:
+        yield from self._sorted("insertion")
 
 
 __all__ = ["ArrayBars", "DOWN", "UP"]

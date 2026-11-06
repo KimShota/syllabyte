@@ -1,0 +1,204 @@
+"""The right picture for each idea (plan/one-shot-storyboard-plan.md, "Pictures that fit"): code picks the templates,
+computes the algorithms, and keeps a question or predict line from showing its answer. No LLM calls."""
+
+from __future__ import annotations
+
+import random
+
+import pytest
+
+from animation_agent.visuals.calls import check_script, check_segment, describe_segment, parse_call
+from animation_agent.visuals.families import DRAWN_BY, FAMILIES, templates_for
+from animation_agent.visuals.normalize import hold_reveals, normalize_script
+from animation_agent.visuals.specs import (
+    REGISTRY,
+    bfs_new,
+    bfs_next,
+    dfs_new,
+    dfs_next,
+    graph_adjacency,
+    ms_merge,
+    ms_new,
+    ms_split,
+    parse_fn,
+    sort_events,
+)
+from script_generation_agent.picture_plan import PicturePlan
+from script_generation_agent.prompts import picture_brief, storyboard_system_prompt
+
+# --------------------------------------------------------------------------
+# Algorithms are computed, so the picture is always what they really do
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("kind", ["bubble", "selection", "insertion"])
+def test_every_sort_ends_sorted_and_counts_comparisons(kind):
+    rng = random.Random(1)
+    for _ in range(50):
+        values = [rng.randint(0, 9) for _ in range(rng.randint(2, 8))]
+        row, sort, steps = list(values), None, 0
+        while sort is None or not sort["done"]:
+            sort, events = sort_events(row, sort, kind)
+            steps += len(events)
+            assert steps < 100
+        assert row == sorted(values)
+        assert sort["comparisons"] <= len(values) * (len(values) - 1) // 2
+
+
+def test_bubble_marks_the_largest_in_place_at_the_end_of_a_pass():
+    row = [3, 5, 2, 6, 4]
+    sort, events = sort_events(row, None, "bubble", whole_pass=True)
+    assert row == [3, 2, 5, 4, 6] and events[-1]["pass_done"] and events[-1]["placed"] == [4]
+
+
+def test_a_sort_step_reads_what_it_did():
+    draws = [["a = ArrayBars(values=[3, 1, 2])"], ["a.selection_step()"]]
+    assert check_segment(draws) == []
+    said = describe_segment(draws)[1]
+    assert "smallest unsorted value, 1" in said and "row reads 1, 3, 2" in said
+
+
+def test_merge_sort_counts_its_comparisons():
+    st = ms_new([5, 2, 4, 7, 1, 3, 8, 6], None)
+    while ms_split(st) is None:
+        pass
+    while not isinstance(events := ms_merge(st, whole_level=True), str):
+        assert events
+    assert st["values"] == [1, 2, 3, 4, 5, 6, 7, 8] and st["comparisons"] == 16
+
+
+def test_merging_needs_sorted_runs():
+    draws = [["ms = MergeSort(values=[5, 2, 4, 7])"], ["ms.split()", "ms.merge_step()"]]
+    assert any("isn't sorted" in p for p in check_segment(draws))
+    two = [["ms = MergeSort(runs=[[1, 5, 12], [2, 3, 17]])"], ["ms.merge()"]]
+    assert check_segment(two) == [] and "1, 2, 3, 5, 12, 17" in describe_segment(two)[1]
+
+
+def test_dfs_and_bfs_follow_the_algorithm():
+    adj = graph_adjacency(["s", "a", "b", "c", "d"], [["s", "a"], ["s", "b"], ["a", "c"], ["b", "c"], ["c", "d"]],
+                          directed=False)
+    st, order = dfs_new("s"), []
+    while not st["done"]:
+        if (ev := dfs_next(adj, st))["visit"]:
+            order.append(ev["visit"])
+    assert order == ["s", "a", "c", "b", "d"]
+    st, levels = bfs_new("s"), []
+    while not st["done"]:
+        if (ev := bfs_next(adj, st))["level"] is not None:
+            levels.append(ev["nodes"])
+    assert levels == [["s"], ["a", "b"], ["c"], ["d"]]
+
+
+def test_a_graph_lesson_cannot_draw_an_edge_that_is_not_there():
+    draws = [['g = Graph(nodes=["s", "a"], edges=[["s", "a"]])'], ['g.path(nodes=["a", "s", "a", "b"])']]
+    assert any("no node 'b'" in p for p in check_segment(draws))
+
+
+@pytest.mark.parametrize("expr", ["__import__('os')", "x.real", "open('f')", "[x]", "lambda: 1", "x if x else 1"])
+def test_a_formula_is_parsed_never_run(expr):
+    with pytest.raises(ValueError):
+        parse_fn(expr)
+
+
+def test_plot_values_are_computed():
+    draws = [['p = FunctionPlot(x_range=[0, 4], y_range=[0, 5], curves=[{"name": "L", "fn": "4*x - x^2"}])'],
+             ['p.tangent(curve="L", x=1)', 'p.peak(curve="L")', 'p.shade(curve="L", a=0, b=3)']]
+    assert check_segment(draws) == []
+    said = describe_segment(draws)[1]
+    assert "slope 2" in said and "x = 2, L = 4" in said and "about 9" in said
+
+
+def test_a_point_off_the_axes_is_rejected():
+    peak = [['p = FunctionPlot(x_range=[0, 4], y_range=[0, 10], curves=[{"name": "f", "fn": "x^2"}])'],
+            ['p.peak(curve="f")']]
+    assert any("off the axes" in p for p in check_segment(peak))  # x^2 reaches 16 at x = 4
+    curve = [['p = FunctionPlot(x_range=[0, 10], y_range=[0, 5], curves=[{"name": "g", "fn": "x^3"}])']]
+    assert any("off the axes" in p for p in check_segment(curve))  # on the axes for under a fifth of x
+
+
+# --------------------------------------------------------------------------
+# Code picks the templates
+# --------------------------------------------------------------------------
+
+
+def test_every_template_draws_a_family_and_every_drawn_family_has_a_template():
+    drawn = {t for names in DRAWN_BY.values() for t in names}
+    assert drawn == set(REGISTRY)
+    assert set(DRAWN_BY) <= set(FAMILIES)
+
+
+def test_a_dfs_lesson_gets_the_graph_not_the_list():
+    plan = PicturePlan(family="graph", also=["equation_steps"], reason="DFS on a graph")
+    assert plan.templates == ["Graph", "EquationSteps", "Note"] and plan.main == "Graph"
+    system = storyboard_system_prompt(2, None, explainer="P", peer="S", lexicon="-", example="",
+                                      templates=plan.templates, family=plan.family)
+    assert "Graph(" in system and "ArrayBars(" not in system and "LinearMap2D(" not in system
+    assert "main picture is graphs" in system
+
+
+def test_a_missing_template_is_said_and_nothing_is_borrowed():
+    assert templates_for("probability") == ["EquationSteps", "Note"]
+    brief = picture_brief("probability", templates_for("probability"))
+    assert "No template draws" in brief and "wrong picture" in brief
+
+
+def test_a_template_the_plan_did_not_choose_is_rejected():
+    segments = [[['a = ArrayBars(values=[1, 2, 3])']]]
+    problems = check_script(segments, allowed={"Graph", "EquationSteps", "Note"})
+    assert [p.kind for p in problems] == ["wrong_template"]
+
+
+def test_finish_asks_for_the_main_picture_when_it_is_missing(monkeypatch):
+    from script_generation_agent import storyboard
+    from test_storyboard import KU, example_board
+
+    sent = []
+
+    def fake(**kw):
+        sent.append(kw["content"][0]["text"])
+        raise RuntimeError("no network in tests")
+
+    monkeypatch.setattr(storyboard, "structured", fake)
+    plan = storyboard.skeleton(2)
+    script = storyboard.assemble(example_board(plan), plan, KU)  # linear search, drawn with ArrayBars
+    storyboard.finish(script, ku_id="ku-x", allowed={"ArrayBars", "Graph", "EquationSteps", "Note"}, main="Graph")
+    assert sent and "no segment draws Graph" in sent[0]
+
+
+# --------------------------------------------------------------------------
+# A question or predict line doesn't show its answer; a highlight shows what the line names
+# --------------------------------------------------------------------------
+
+
+def test_a_result_moves_from_the_predict_line_to_the_answer():
+    segments = [[['a = ArrayBars(values=[4, 9, 2, 7])'],
+                 ['a.scan(index=0, target=7)', 'a.scan(index=3, target=7)'],
+                 ['a.note(text="4 checks")']]]
+    steps = [[("build", False), ("predict", False), ("build", False)]]
+    out, log = hold_reveals(segments, steps)
+    assert out[0][1] == ["a.scan(index=0, target=7)"]  # a scan that misses gives nothing away
+    assert out[0][2] == ["a.scan(index=3, target=7)", 'a.note(text="4 checks")'] and log
+
+
+def test_the_wrong_idea_line_never_gets_the_answer():
+    segments = [[['g = LinearMap2D(matrix=[[2, 0], [0, 1]])'], ["g.apply()"], [], ["g.reset()"]]]
+    steps = [[("build", False), ("question", False), ("answer", True), ("feedback", False)]]
+    out, _ = hold_reveals(segments, steps)
+    assert out[0][1] == [] and out[0][2] == [] and out[0][3] == ["g.apply()", "g.reset()"]
+
+
+def test_a_highlight_the_line_never_names_is_dropped():
+    segments = [[['a = ArrayBars(values=[4, 9, 2, 7])'], ['a.highlight(indices=[1])'], ['a.highlight(indices=[2])']]]
+    lines = [["Here is a list.", "You'll be able to count checks.", "Two is the one we want."]]
+    fixed = normalize_script(segments, lines)
+    calls = [c for beat in fixed.segments[0] for c in beat]
+    assert not any("indices=[1]" in c for c in calls) and any("indices=[2]" in c for c in calls)
+
+
+def test_reveal_flags_are_declared_for_results():
+    for name, action in (("ArrayBars", "found"), ("ArrayBars", "bubble_step"), ("MergeSort", "merge_step"),
+                         ("Graph", "dfs_step"), ("FunctionPlot", "peak"), ("LinearMap2D", "apply"),
+                         ("EquationSteps", "uncover")):
+        assert REGISTRY[name].all_actions()[action].reveals, (name, action)
+    assert not REGISTRY["ArrayBars"].all_actions()["highlight"].reveals
+    assert parse_call('a.highlight(indices=[0])', {"a": "ArrayBars"}).action == "highlight"

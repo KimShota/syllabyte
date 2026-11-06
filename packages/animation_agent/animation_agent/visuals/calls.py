@@ -155,7 +155,8 @@ _KINDS = [
     ("zero vector", "zero_vector"), ("off the grid", "off_grid"), ("sits exactly", "hidden_ghost"),
     ("overlaps", "layout"), ("needs at least half", "layout"), ("objects on screen", "layout"),
     ("calls; at most", "too_many_calls"), ("repeats the line", "echo"), ("only put text", "text_only"),
-    ("only Notes", "notes_only"), ("the line says", "count"),
+    ("only Notes", "notes_only"), ("the line says", "count"), ("names none of the", "unmentioned"),
+    ("doesn't draw this idea", "wrong_template"),
 ]
 
 
@@ -169,14 +170,15 @@ class Simulation:
     said: list[list[str]]  # per segment, per beat: what the beat's calls show, in words
 
 
-def check_script(segments: list[list[list[str]] | None], lines: list[list[str]] | None = None) -> list[Problem]:
+def check_script(segments: list[list[list[str]] | None], lines: list[list[str]] | None = None,
+                 allowed: set[str] | None = None) -> list[Problem]:
     """Problems with a whole script's calls (per segment, per beat), simulated in order. What a segment leaves on
     screen stays on screen into the next one (the renderer replays it), so a later segment can keep acting on it;
     creating a name that is on screen replaces that object. A segment given as None is drawn by LLM code and is
     skipped. With `lines` (each beat's narration), the calls are also checked against the words, as the script
     critic would: every segment shows a diagram, a line that counts cells has that many, notes don't repeat the
     line, and no beat puts only text on screen."""
-    return simulate_script(segments, lines).problems
+    return simulate_script(segments, lines, allowed=allowed).problems
 
 
 def describe_script(segments: list[list[list[str]] | None]) -> list[list[str]]:
@@ -215,10 +217,81 @@ def _counts(line: str) -> list[tuple[int, str]]:
     return out
 
 
+def reveal_flags(segments: list[list[list[str]] | None]) -> list[list[list[bool]] | None]:
+    """Per segment, per beat, per call: whether the call shows a result (ActionSpec.reveals), judged from what is on
+    screen just before it. normalize.hold_reveals moves these out of question and predict lines."""
+    out: list[list[list[bool]] | None] = []
+    live: dict[str, _Live] = {}
+    for draws in segments:
+        if draws is None:
+            out.append(None)
+            continue
+        seg = []
+        for calls in draws:
+            beat = []
+            for text in calls:
+                flag = False
+                try:
+                    call = parse_call(text, {n: o.template for n, o in live.items()})
+                    if call.action is not None and call.target in live:
+                        action = REGISTRY[call.template].all_actions()[call.action]
+                        reveals = action.reveals
+                        if callable(reveals):
+                            reveals = reveals(live[call.target].state, action.args.model_validate(call.args))
+                        flag = bool(reveals)
+                    _check(call, live)
+                except Exception:  # noqa: BLE001 - a broken call reveals nothing; the checker reports it
+                    pass
+                beat.append(flag)
+            seg.append(beat)
+        out.append(seg)
+    return out
+
+
+# Words that point at cells without naming their values ("the first two", "every cell", "the smaller front").
+_POINTING = set("""all every each both whole these those this that rest first last middle front fronts end left
+right half halves smallest smaller largest larger biggest bigger minimum maximum min max sorted unsorted target
+next pair neighbour neighbor""".split())
+
+
+def _mentions_values(line: str, values: list) -> bool:
+    spoken = set(_words(line))
+    if spoken & _POINTING:
+        return True
+    for v in values:
+        tokens = _words(str(v if not isinstance(v, float) or not v.is_integer() else int(v)))
+        if tokens and all(t in spoken for t in tokens):
+            return True
+        if isinstance(v, int | float) and float(v).is_integer() and 0 <= v < len(_SPOKEN_NUMBERS):
+            if _SPOKEN_NUMBERS[int(v)] in spoken:
+                return True
+    return False
+
+
+_SPOKEN_NUMBERS = ("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
+                   "sixteen seventeen eighteen nineteen twenty").split()
+
+
+def _unmentioned(b: int, text: str, call: Call, live: dict[str, _Live], line: str) -> str | None:
+    """A highlight on cells the line never names: the course test's critic marked these down as "visuals not tied
+    to the line" (an objective line lighting up a cell for no reason)."""
+    if call.action != "highlight" or call.template not in ("ArrayBars", "MergeSort") or call.target not in live:
+        return None
+    state = live[call.target].state
+    values = state["values"] if call.template == "ArrayBars" else state["ms"]["values"]
+    picked = [values[i] for i in call.args.get("indices", []) if isinstance(i, int) and 0 <= i < len(values)]
+    if not picked or _mentions_values(line, picked):
+        return None
+    shown = ", ".join(str(v) for v in picked)
+    return (f"beat {b}, `{text}`: the line names none of the cells it highlights ({shown}); highlight what the "
+            "line talks about, or leave the picture as it is")
+
+
 def simulate_script(segments: list[list[list[str]] | None], lines: list[list[str]] | None = None, *,
-                    report_from: int = 0) -> Simulation:
+                    report_from: int = 0, allowed: set[str] | None = None) -> Simulation:
     """The simulation behind check_script; problems in segments before `report_from` are not reported (they are
-    the carried calls of check_segment)."""
+    the carried calls of check_segment). With `allowed`, creating a template not in it is a problem (the KU's
+    picture plan chose which templates draw it: script_generation_agent.picture_plan)."""
     problems: list[Problem] = []
     said: list[list[str]] = []
     live: dict[str, _Live] = {}
@@ -244,9 +317,16 @@ def simulate_script(segments: list[list[list[str]] | None], lines: list[list[str
             for c, text in enumerate(calls):
                 try:
                     call = parse_call(text, {n: o.template for n, o in live.items()})
-                    problem, what = _check(call, live)
+                    if allowed is not None and call.action is None and call.template not in allowed:
+                        problem, what = (f"{call.template} doesn't draw this idea's picture; use "
+                                         f"{', '.join(sorted(allowed))}"), None
+                    else:
+                        problem, what = _check(call, live)
                     if call.action is None and not problem:
                         shown.add(call.template)
+                    if not problem and seg_lines is not None and b <= len(seg_lines) and report:
+                        if mention := _unmentioned(b, text, call, live, seg_lines[b - 1]):
+                            flag(b, c, mention)
                 except CallError as e:
                     problem, what = str(e), None
                 if problem:

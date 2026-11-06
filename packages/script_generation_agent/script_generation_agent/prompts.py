@@ -511,11 +511,17 @@ dicts, True/False/None):
   - What is on screen stays on screen, from one segment into the next, until you remove it. Create a diagram \
 once and keep acting on it; creating a name again replaces that object. Where things sit is worked out for you: \
 give no areas.
-  - 1-3 calls per beat; [] keeps the picture as it is (fine for a short reply). At most one diagram (a list or a \
-grid) and one formula or note on screen at a time.
-  - Every beat's picture moves: highlight, point, scan, swap, grey out, apply, add a vector, write or rewrite a \
-formula. A beat whose only calls change text (a note, a counter, clear) counts as text on screen. A note adds \
-what the voice doesn't say (a value, a label, a question); it never repeats the line.
+  - 1-3 calls per beat; [] keeps the picture as it is (fine for a short reply). At most one diagram (a list, \
+runs, a graph, a plot or a grid) and one formula or note on screen at a time.
+  - Every beat's picture moves: highlight, point, scan, a sort or merge step, a search step, plot a curve, \
+apply, add a vector, write or rewrite a formula. A beat whose only calls change text (a note, a counter, clear) \
+counts as text on screen. A note adds what the voice doesn't say (a value, a label, a question); it never repeats \
+the line.
+  - An algorithm runs itself: a sort (bubble_step, selection_step, insertion_step), a merge (merge_step, merge), \
+a search (scan, bisect_step, dfs_step, bfs_level) and a curve's tangent, area or maximum are computed. Call the \
+step and say what it shows; never act out an algorithm with swap or set_value, which is how the order goes wrong.
+  - A highlight lights up what its own line names (say the values, or "the front", "the first two"); a cell \
+lit up on a line that never mentions it reads as noise.
   - Pick values that make the idea easy to see: 5-8 small numbers in a list; small whole-number 2x2 matrices whose \
 vectors stay on a grid of -3..3. Notes and titles: about 20 characters. Formulas: about 20 symbols, TeX with single \
 backslashes (tex="(A - \\lambda I) v = 0").
@@ -525,18 +531,49 @@ for other meanings.
 formula step (EquationSteps.then); the feedback line clears it, or crosses the step out (EquationSteps.cross_out) \
 and writes the right one.
   - A question or predict line points at what is asked about without giving the answer away (highlight it, or \
-EquationSteps.cover); the line that answers shows the answer.
+EquationSteps.cover); the line that answers shows the answer. A result shown during a question or predict line \
+(a step of a sort, merge or search, a match found, a transform, an uncovered piece) is moved by code to the next \
+line that answers, so put it there yourself and write that line about it.
   - If no template can draw a segment's idea at all, leave its calls empty and write `sketches`: one sentence per \
 beat saying what an animator should draw. Otherwise `sketches` is [].
 
-The templates
+{picture}The templates
 {cards}
 
 """
 
 
+def picture_brief(family: str | None, templates: list[str]) -> str:
+    """What the storyboard is told about its picture: which kind the idea needs, and what draws it."""
+    from animation_agent.visuals.families import ALWAYS, FAMILIES, is_gap, main_template
+
+    if family is None:
+        return ""
+    what = FAMILIES.get(family, "")
+    main = main_template(family)
+    if main is not None:
+        line = (f"This idea's main picture is {what}. Draw it with {main}, created early and kept on screen as the "
+                "picture the video keeps coming back to; formulas (EquationSteps) and short notes (Note) can sit "
+                "beside it. Use only the templates below.")
+    elif family in ("equation_steps", "proof_steps", "matrix_ops"):
+        line = (f"This idea's main picture is {what}: draw it with EquationSteps, each step a formula being "
+                "written, rewritten, highlighted or boxed. Use only the templates below.")
+    elif is_gap(family):
+        line = (f"No template draws this idea's main picture ({what}) yet. Show the idea with formulas being "
+                f"written, rewritten, highlighted and boxed (EquationSteps) and short notes beside them. Use only "
+                f"{' and '.join(t for t in templates if t in ALWAYS)}: a template drawn for something else (a "
+                "list of cells, a grid of vectors) would show the wrong picture.")
+    else:
+        line = ("No diagram fits this idea: show it with formulas (EquationSteps) and short notes. Use only the "
+                "templates below.")
+    return "This idea's picture\n" + line + "\n\n"
+
+
 def storyboard_system_prompt(level: int, prereq_titles: list[str] | None, *, explainer: str, peer: str,
-                             lexicon: str, example: str, frame: str = "dialogue") -> str:
+                             lexicon: str, example: str, frame: str = "dialogue",
+                             templates: list[str] | None = None, family: str | None = None) -> str:
+    """`templates` (the KU's picture plan: picture_plan.PicturePlan.templates) limits the cards the writer sees;
+    None shows every template."""
     from animation_agent.visuals.specs import template_cards
 
     prereqs = "; ".join(f"“{t}”" for t in prereq_titles or [])
@@ -549,9 +586,12 @@ def storyboard_system_prompt(level: int, prereq_titles: list[str] | None, *, exp
         + "The viewer's level\n" + LEVEL_BRIEF[level].format(prereq_line=prereq_line) + "\n"
         + _DIALOGUE_LEVEL_RULES.replace("Give the video a `colour_key`", "As above, give the video a `colour_key`")
         + _STORYBOARD_SLANG.format(lexicon=lexicon)
-        + _STORYBOARD_DRAWING.replace("{cards}", template_cards(auto_layout=True))
+        + _STORYBOARD_DRAWING.replace("{picture}", picture_brief(family, templates or []))
+                             .replace("{cards}", template_cards(templates, auto_layout=True))
         + SHARED_RUBRIC + "\n"
-        + STORYBOARD_EXAMPLE_NOTE + example
+        + STORYBOARD_EXAMPLE_NOTE
+        + ("Its templates may not be yours: draw only with the templates listed above.\n" if templates else "")
+        + example
     )
 
 

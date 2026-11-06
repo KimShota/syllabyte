@@ -12,9 +12,10 @@ import pytest
 from pydantic import ValidationError
 
 from animation_agent.visuals.calls import check_script, describe_script, script_segments
-from animation_agent.visuals.normalize import lay_out, normalize_script
+from animation_agent.visuals.normalize import hold_reveals, lay_out, normalize_script
 from animation_agent.visuals.scene_code import build_spec_scene
 from script_generation_agent import storyboard
+from script_generation_agent.picture_plan import PicturePlan
 from script_generation_agent.script_writer import validate_dialogue
 from script_generation_agent.slang import find_slang
 from script_generation_agent.storyboard_example import EXAMPLES, SEGMENT_KEYS, render_example
@@ -82,6 +83,8 @@ def test_each_example_matches_its_plan_and_needs_no_fixing(level):
         for beat, bp in zip(seg.beats, sp.beats):
             assert bp.words[0] - 2 <= len(beat.narration.split()) <= bp.words[1] + 2, (beat.narration, bp.words)
     lines = [[b.narration for b in seg.beats] for seg in script.segments]
+    steps = [[(b.step, b.misconception) for b in seg.beats] for seg in script.segments]
+    assert hold_reveals(script_segments(script), steps)[1] == []  # no question or predict line shows its answer
     fixed = normalize_script(script_segments(script), lines)
     assert fixed.log == [] and fixed.left == []
     assert all(not b.draw or "area" not in c for seg in script.segments for b in seg.beats for c in b.draw)
@@ -190,7 +193,8 @@ def test_write_storyboard_is_one_call(monkeypatch):
 
     monkeypatch.setattr(storyboard, "structured", fake)
     monkeypatch.setattr("script_generation_agent.script_writer.gather_source_material", lambda c, k: ("slides", []))
-    script = storyboard.write_storyboard(KU, None, level=2, on_lines_ready=ready.append)
+    picture = PicturePlan(family="array_bars", also=[], reason="a list searched cell by cell")
+    script = storyboard.write_storyboard(KU, None, level=2, on_lines_ready=ready.append, picture=picture)
     assert stages == ["storyboard_l2"] and len(ready) == 1
     assert script.visuals == "templates" and all(s.drawn_by == "templates" for s in script.segments)
     assert script.segments[0].beats[0].visual.startswith("A row of 6 blue cells")

@@ -139,3 +139,46 @@ tangent line, substitution, sample means, resonance, Euclid, XOR, double integra
     stream cut off midway;
   - `TEMPLATES_VERSION` 5, so cached videos drawn before the fixes are made again.
 - **Still open:** the visual-alignment scores.
+
+## Pictures that fit (2026-11-05)
+
+What the critic said about the course test's pictures (299 picture issues in 42 videos, grouped by keyword):
+
+| Issue | Issues | Videos |
+|---|---|---|
+| the picture shows the answer before or during the line that asks | 51 | 31 |
+| something the line talks about is never drawn | 50 | 29 |
+| the picture's state is wrong (a sort's row, a merge) | 42 | 25 |
+| text instead of a picture | 28 | 23 |
+| a highlight the line never mentions | 27 | 21 |
+
+The cause is the same as before the storyboards: the model was left to do what code can guarantee.
+
+1. **It picked the template.** It saw every template and, when none fitted, borrowed one: DFS as a row of cells, XOR's
+   points as vectors on a linear-map grid, "recursive thinking" as a rotation matrix. It never used its way out
+   (sketches). Videos whose picture had a template scored 4.5 on visual alignment on average; those without, 3.8.
+2. **It ran the algorithms by hand,** with swap and set_value, and lost track: selection sort swapped the wrong cells;
+   bubble sort called a pass done with 5 before 2. Bisection was right every time, because code computes it.
+3. **Nothing kept a question line from showing its answer.**
+4. **The worked examples taught some of it:** the Level 2 objective lit up two cells the line never named, and the
+   Level 3 example ran insertion sort with compare and swap.
+
+What changed:
+
+| | Before | Now |
+|---|---|---|
+| Which templates | the writer picks from all of them | code: one classifier call per KU (`picture_plan.plan_picture`, the coverage study's classifier, cached in `runs/picture-plans.json`) picks the family; the storyboard sees only the templates that draw it, plus EquationSteps and Note (`families.templates_for`). Another template is a problem for the fix call, then dropped; the main template never drawn is a problem too |
+| No template for the family | the writer borrows one | the prompt says so and gives formulas and notes only; the gap is logged |
+| Sorts, merges, searches | swap and set_value by hand | computed steps: `bubble_step`, `bubble_pass`, `selection_step`, `insertion_step` (ArrayBars), `split`/`merge_step`/`merge`/`merge_level` (MergeSort), `dfs_step`/`bfs_level` (Graph), with the checker and the drawing running the same functions |
+| Plots | none | FunctionPlot: curves from formulas (parsed, never run), dots, tangents and slopes, areas, maxima, a sliding dot, data points, lines |
+| A result during a question or predict line | allowed | code moves it to the next line that answers (`normalize.hold_reveals`, from `ActionSpec.reveals`) |
+| A highlight the line doesn't name | allowed | dropped by code (ArrayBars, MergeSort) |
+| Worked examples | the habits above | rewritten: the objective's highlight matches its words; Level 3 uses insertion_step |
+
+New templates, by the families of the course test's KUs that had none: MergeSort (6 of the CS deck's 23 KUs are
+merge sort), FunctionPlot (function_plot, growth_curves, stats_plots and ml_basics: 15% of the coverage study's
+KUs), Graph (graph, 6%). With them, the families drawn by a template are the main picture of 51% of the coverage
+study's 207 KUs, up from 22% (merge sort KUs were classified before the merge_sort family existed, so slightly
+more).
+
+Not measured yet: whether the critic's visual alignment scores rise. That needs a run (`runs/course-test-2`).
