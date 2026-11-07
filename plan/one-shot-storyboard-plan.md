@@ -411,3 +411,31 @@ counts fell for the controls too. No KU passes all four at 7. Two template bugs 
 that grew to fit two lines pushed into the title row, so box heights now come from the labels, and the marker
 sits below a box's corner; a curve name too wide for the right margin was shrunk to font 13, and now goes inside
 the plot beside its curve at full size). Not re-run.
+
+### Plan, then write (2026-11-07, `storyboard_plan.py`, `SYLLABYTE_STORYBOARD=plan`)
+
+The storyboard in two calls, as Code2Video plans before it codes: a planner (the KU, slides, beat plan without
+word counts or casual phrases, drawing rules, module, template cards) writes each beat's calls and the point its
+line will make, and owns the title and colour key; code settles that picture (traced steps, reveals held,
+normalize, one fix call, broken calls dropped) and describes each beat's picture; a writer (dialogue rules,
+casual phrases, word ranges, level) sees each beat's computed picture and the planner's point and writes only the
+lines, once more if the dialogue checks reject them. Then as before: notes that echo the final line dropped (while
+the lines were only points they were kept), match_lines, the voices, the visuals. One call stays the default.
+
+Smoke test on two KUs (`runs/plan-smoke`): both render; potential outcomes 6, 6, 6, 5 (one call, modules) ->
+7, 7, 6, 5; selection-sort complexity 6, 6, 7, 5 -> 6, 6, 6, 4. LLM time per video about 12 s more (planner 16 s,
+writer 9 s, against 12-14 s for one call): 57 and 71 s per video against 56 and 59 s.
+
+The 12 KUs with plan-then-write (`runs/plan-1`, $1.79, against $1.49 for one call with modules), means over all 12:
+
+| | Baseline (one call) | + modules (one call) | + plan, then write |
+|---|---|---|---|
+| Pedagogical coherence | 5.83 | 5.67 | 6.25 (6 up, 1 down against modules) |
+| Conceptual accuracy | 6.17 | 6.08 | 5.92 (3 up, 4 down) |
+| Learner appropriateness | 6.08 | 6.08 | 6.00 |
+| Visual alignment | 4.25 | 4.58 | 4.83 (5 up, 2 down) |
+| Seconds per video | | 61.6 | 64.6 |
+
+A steady small rise in visual alignment over the three runs and a rise in coherence with the split, but each step
+is within the critic's noise (6 up and 1 down is p of about 0.13 by a sign test), the critic is the same model as
+the writer, and no video passes all four at 7. Cost about 20% more, 3 s more per video.

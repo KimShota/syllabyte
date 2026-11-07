@@ -396,7 +396,7 @@ def _missing_main(segments, main: str | None):
 
 def settle_picture(script: TemplatedDialogueScript, *, ku_id: str, model: str = DEFAULT_MODEL,
                    manifest: RunManifest | None = None, system: str = "", allowed: set[str] | None = None,
-                   main: str | None = None, trace=None) -> list:
+                   main: str | None = None, trace=None, keep_echo: bool = False) -> list:
     """The storyboard's calls made safe to render, per segment and beat: code fixes (a result shown during a
     question or predict line moves to the line that answers; normalize), one fix call for what code can't fix
     (including a template the picture plan didn't choose, `allowed`, or its main template, `main`, never drawn),
@@ -437,7 +437,7 @@ def settle_picture(script: TemplatedDialogueScript, *, ku_id: str, model: str = 
     # note-only beat there goes to the fix call (to be drawn) instead of being cleared.
     segments, filled = fill_still(highlighted(held(segments)), steps, lines)
     _log(ku_id, filled)
-    fixed = normalize_script(segments, lines, allowed, keep_text=point_beats(steps))
+    fixed = normalize_script(segments, lines, allowed, keep_text=point_beats(steps), keep_echo=keep_echo)
     _log(ku_id, fixed.log)
     segments = fixed.segments
     # Only problems that break or contradict the picture are worth a call; a segment showing only notes or a
@@ -454,8 +454,21 @@ def settle_picture(script: TemplatedDialogueScript, *, ku_id: str, model: str = 
         if trace is not None:
             segments, kept = keep_steps(before, segments, trace)
             _log(ku_id, kept)
-        segments = normalize_script(highlighted(held(segments)), lines, allowed).segments
+        segments = normalize_script(highlighted(held(segments)), lines, allowed, keep_echo=keep_echo).segments
     return _drop_broken(segments, lines, allowed)
+
+
+def drop_echoes(segments, lines, ku_id: str = ""):
+    """The calls without the notes that repeat their own line (a note adds what the voice doesn't say)."""
+    from animation_agent.visuals.calls import check_script
+
+    out = [None if d is None else [list(b) for b in d] for d in segments]
+    for p in sorted((p for p in check_script(out, lines) if p.kind == "echo" and p.call is not None),
+                    key=lambda p: (p.segment, p.beat, -p.call)):
+        calls = out[p.segment][p.beat - 1]
+        if p.call < len(calls):
+            _log(ku_id, [f"segment {p.segment} beat {p.beat}: dropped `{calls.pop(p.call)}` (echo of the line)"])
+    return out
 
 
 def _log(ku_id: str, entries) -> None:
@@ -744,8 +757,17 @@ def write_storyboard(
     with one short call unless given (None: no trace). `on_lines_ready` gets
     the script once its lines are final: after the picture is settled and the lines matched to it, so a fix to
     the picture can't leave a recorded line contradicting it."""
+    import os
+
     from script_generation_agent.script_writer import ScriptValidationError, gather_source_material, validate_dialogue
     from syllabyte_common.cast import load_cast
+
+    if os.environ.get("SYLLABYTE_STORYBOARD", "one_call") == "plan":  # plan, then write (storyboard_plan.py)
+        from script_generation_agent.storyboard_plan import write_storyboard_planned
+
+        return write_storyboard_planned(ku, corpus, level=level, prereq_titles=prereq_titles, model=model,
+                                        manifest=manifest, on_lines_ready=on_lines_ready, writer_model=writer_model,
+                                        picture=picture, example=example)
 
     text_context, image_blocks = gather_source_material(corpus, ku)
     if not text_context:

@@ -238,10 +238,12 @@ def _drop_title(text: str) -> str | None:
 
 def normalize_script(segments: list[list[list[str]] | None], lines: list[list[str]] | None = None,
                      allowed: set[str] | None = None, keep_text: set[tuple[int, int]] | frozenset = frozenset(),
-                     ) -> Fixed:
+                     keep_echo: bool = False) -> Fixed:
     """The calls laid out by code, with every problem it can fix fixed (module docstring). `lines` are each
     beat's narration, for the checks against the words; `allowed`, the templates the KU's picture plan chose.
-    A text-only beat in `keep_text` ((segment, 1-based beat)) is left for the fix call to draw, not cleared."""
+    A text-only beat in `keep_text` ((segment, 1-based beat)) is left for the fix call to draw, not cleared. With
+    `keep_echo` a note isn't dropped for repeating its line: the lines are only the planner's points
+    (storyboard_plan), and the real lines are checked for echoes once written."""
     segs = segments
     log: list[str] = []
     for _ in range(MAX_PASSES):
@@ -251,7 +253,7 @@ def normalize_script(segments: list[list[list[str]] | None], lines: list[list[st
         # Highest call first within a beat, so dropping a call doesn't shift the next one's index.
         for p in sorted(problems, key=lambda p: (p.segment, p.beat, -(p.call if p.call is not None else -1))):
             calls = segs[p.segment][p.beat - 1]
-            if p.kind in _DROP and p.call is not None and p.call < len(calls):
+            if p.kind in _DROP and not (keep_echo and p.kind == "echo") and p.call is not None and p.call < len(calls):
                 log.append(f"segment {p.segment} beat {p.beat}: dropped `{calls.pop(p.call)}` ({p.kind})")
                 changed = True
             elif p.kind == "text_only" and calls and (p.segment, p.beat) not in keep_text:
