@@ -475,10 +475,19 @@ _CHANGE_WORDS = {
     "grey_out": r"rule|discard|half|out|ignore|can't|cannot|not there|skip|in place|done", "split": r"split|half|halves",
     "merge": r"merg|front|smaller|moves? down|cop(y|ies)|result|combin", "dfs": r"visit|go|next|neighbo|back|deep",
     "bfs": r"level|distance|layer|neighbo|visit|ring",
+    "walk": r"\bgo|goes|move|next|then|follow|step|arriv|reach|jump|lands?\b",
+    "feed": r"read|symbol|input|letter|\bgo|goes|move|follow|state",
+    "set": r"grow|shrink|chang|becom|rise|drop|goes? (up|down)|now|tall|short",
+    "add_bar": r"add|new|another|bar|join",
+    "cumulative": r"running|total|sum|add (up|on)|cumulative|so far|partial",
+    "normalize": r"share|fraction|probab|divid|out of|relative|percent|proportion|frequenc",
+    "fill": r"fill|write|equal|becom|is \w+|=|add|sum|plus|times|result|gets",
+    "slide": r"slide|move|next|closer|jump|now|shift|guess",
 }
 STATE_CHANGES = {"swap", "set_value", "bubble_step", "bubble_pass", "selection_step", "insertion_step", "scan",
                  "bisect_check", "bisect_discard", "bisect_step", "found", "restore", "grey_out", "split",
-                 "merge_step", "merge", "merge_level", "dfs_step", "bfs_level"}
+                 "merge_step", "merge", "merge_level", "dfs_step", "bfs_level", "walk", "feed", "set", "add_bar",
+                 "cumulative", "normalize", "fill", "fill_next", "fill_row", "slide"}
 
 
 def _says_nodes(line: str, nodes: list[str]) -> bool:
@@ -508,9 +517,12 @@ def _unsaid_change(b: int, text: str, call: Call, what: str | None, live: dict[s
     if words and re.search(words, line, re.IGNORECASE):
         return None
     if call.template == "Graph" and call.target in live:
-        nodes = live[call.target].state["nodes"]
+        st = live[call.target].state
+        nodes = st["nodes"]
         if _says_nodes(line, [n for n in nodes if re.search(rf"\b{re.escape(n)}\b", what)]):
             return None
+        if any(f'"{w}"' in what and w.lower() in line.lower() for w in st.get("labels", {}).values()):
+            return None  # a box's words
     return (f"beat {b}, `{text}`: the picture changes ({what}) but the line doesn't say so; do this step in the "
             "beat whose line talks about it (or leave the picture as it is here), so the picture never runs ahead "
             "of the words")

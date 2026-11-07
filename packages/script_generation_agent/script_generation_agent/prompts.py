@@ -523,7 +523,9 @@ apply, add a vector, write or rewrite a formula. A beat whose only calls change 
 counts as text on screen. A note adds what the voice doesn't say (a value, a label, a question); it never repeats \
 the line.
   - An algorithm runs itself: a sort (bubble_step, selection_step, insertion_step), a merge (merge_step, merge), \
-a search (scan, bisect_step, dfs_step, bfs_level) and a curve's tangent, area or maximum are computed. Call the \
+a search (scan, bisect_step, dfs_step, bfs_level), a state machine reading its input (feed), a table built from a \
+rule (fill_next, fill_row), a sequence's terms, a chart's totals, shares and expected value, and a curve's \
+tangent, area or maximum are computed. Call the \
 step and say what it shows; never act out an algorithm with swap or set_value, which is how the order goes wrong.
   - A highlight lights up what its own line names (say the values, or "the front", "the first two"); a cell \
 lit up on a line that never mentions it reads as noise.

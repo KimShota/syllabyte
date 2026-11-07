@@ -40,6 +40,7 @@ from animation_agent.visuals.base import (
 from animation_agent.visuals.specs import (
     FUNCTION_PLOT,
     _num,
+    path_points,
     fn_extreme,
     fn_samples,
     fn_slope,
@@ -74,12 +75,20 @@ class FunctionPlot(Template):
         self.y_texts = [_num(self.yr[1]), _num(self.yr[0]), self.p.y_label]
         widths = [text(s, MIN_FONT).width for s in self.y_texts]
         self.ml = max(widths) + 0.14
-        labels = bool(self.p.curves) or self.will("plot")
+        labels = bool(self.p.curves) or self.will("plot", "parametric", "polar")
         self.mr = LABEL_MARGIN if labels else 0.2
         self.left, self.right = box.left + self.ml, box.right - self.mr
         self.top = box.top - NOTE_ROW - 0.08
         self.bottom = box.bottom + X_LABEL_ROW
         self.note_y = box.top - NOTE_ROW / 2
+        if self.p.equal_scale or self.will("polar", "parametric"):
+            # One unit is as long on both axes: the axes shrink along the roomier direction, centred.
+            (x0, x1), (y0, y1) = self.xr, self.yr
+            unit = min((self.right - self.left) / (x1 - x0), (self.top - self.bottom) / (y1 - y0))
+            w, h = unit * (x1 - x0), unit * (y1 - y0)
+            cx, cy = (self.left + self.right) / 2, (self.top + self.bottom) / 2
+            self.left, self.right = cx - w / 2, cx + w / 2
+            self.bottom, self.top = cy - h / 2, cy + h / 2
 
     def c2p(self, x: float, y: float) -> np.ndarray:
         (x0, x1), (y0, y1) = self.xr, self.yr
@@ -146,7 +155,8 @@ class FunctionPlot(Template):
 
     def _label_targets(self) -> dict[str, np.ndarray]:
         """Each curve's label beside its end, nudged apart so no two touch."""
-        items = sorted(((self._end_y(c["fn"]), name) for name, c in self.curves.items()), reverse=True)
+        items = sorted(((c["end_y"] if "end_y" in c else self._end_y(c["fn"]), name)
+                        for name, c in self.curves.items()), reverse=True)
         out, last = {}, None
         for y, name in items:
             h = self.curves[name]["label"].height
@@ -300,7 +310,100 @@ class FunctionPlot(Template):
         col = colour(a.colour)
         dots = [Dot(self.c2p(x, y), radius=DOT_R * 1.2, color=col) for x, y in zip(a.xs, a.ys)]
         self._mark(*dots)
-        yield Step([GrowFromCenter(d) for d in dots])
+        names = []
+        origin = self.c2p(min(max(0.0, self.xr[0]), self.xr[1]), min(max(0.0, self.yr[0]), self.yr[1]))
+        for k, lab in enumerate(a.labels or []):
+            name = text(lab, MIN_FONT, col)
+            names.append(self._beside(name, self.c2p(a.xs[k], a.ys[k]), origin))
+        self._mark(*names)
+        yield Step([GrowFromCenter(d) for d in dots] + [FadeIn(n) for n in names])
+
+    def _beside(self, label, p: np.ndarray, away_from: np.ndarray):
+        """The label next to the point p: on the side away from `away_from` if it fits there (clear of the tick
+        numbers and the note row, off the dot), else the next side round."""
+        d = p - away_from
+        d = np.array([1.0, 0.6, 0.0]) if np.linalg.norm(d[:2]) < 1e-6 else d / np.linalg.norm(d)
+        box = self.bounds
+        lo_x, hi_x = self.left + 0.05, box.right
+        lo_y, hi_y = self.bottom + 0.05, box.top - NOTE_ROW
+        best = None
+        for turn in (0, 1, -1, 2, -2, 4):
+            a = turn * np.pi / 4
+            v = np.array([d[0] * np.cos(a) - d[1] * np.sin(a), d[0] * np.sin(a) + d[1] * np.cos(a), 0.0])
+            label.move_to(p + v * (0.14 + 0.5 * (abs(v[0]) * label.width + abs(v[1]) * label.height)))
+            dx = max(0.0, lo_x - label.get_left()[0]) - max(0.0, label.get_right()[0] - hi_x)
+            dy = max(0.0, lo_y - label.get_bottom()[1]) - max(0.0, label.get_top()[1] - hi_y)
+            label.shift(np.array([dx, dy, 0.0]))
+            clear = (abs(label.get_center()[0] - p[0]) > label.width / 2 + DOT_R * 1.4
+                     or abs(label.get_center()[1] - p[1]) > label.height / 2 + DOT_R * 1.4)
+            if clear and dx == 0 and dy == 0:
+                return label
+            if clear and best is None:
+                best = label.get_center().copy()
+        if best is not None:
+            label.move_to(best)
+        return label
+
+    def _path(self, name: str, kind: str, f1: str, f2: str | None, t0: float, t1: float, col_name: str) -> list:
+        col = colour(col_name)
+        _, xs, ys = path_points(kind, f1, f2, t0, t1)
+        ok = np.isfinite(xs) & np.isfinite(ys) & (xs >= self.xr[0]) & (xs <= self.xr[1]) & self._inside(ys)
+        group, run = VGroup(), []
+        for x, y, good in zip(xs, ys, ok):
+            if good:
+                run.append(self.c2p(x, y))
+            elif run:
+                if len(run) > 1:
+                    group.add(VMobject(stroke_color=col, stroke_width=4).set_points_as_corners(run))
+                run = []
+        if len(run) > 1:
+            group.add(VMobject(stroke_color=col, stroke_width=4).set_points_as_corners(run))
+        label = fit_width(tex(name, LABEL_FONT, col), self.mr - 0.15)
+        end_y = float(ys[ok][np.argmax(xs[ok])]) if ok.any() else self.yr[1]
+        self.curves[name] = {"fn": None, "colour": col, "mob": group, "label": label,
+                             "end_y": float(self.c2p(0, end_y)[1]), "path": (kind, f1, f2)}
+        moves = []
+        for other, target in self._label_targets().items():
+            lab = self.curves[other]["label"]
+            if other == name:
+                lab.move_to(target)
+            else:
+                moves.append(lab.animate.move_to(target))
+        self.group.add(group, label)
+        return [Create(group), FadeIn(label)] + moves
+
+    def parametric(self, a) -> Steps:
+        yield Step(self._path(a.name, "parametric", a.x_t, a.y_t, a.t_from, a.t_to, a.colour))
+
+    def polar(self, a) -> Steps:
+        yield Step(self._path(a.name, "polar", a.r, None, a.t_from, a.t_to, a.colour))
+
+    def sector(self, a) -> Steps:
+        ts = np.linspace(a.t_from, a.t_to, 40)
+        outer = [self.c2p(a.r_to * np.cos(t), a.r_to * np.sin(t)) for t in ts]
+        inner = [self.c2p(a.r_from * np.cos(t), a.r_from * np.sin(t)) for t in ts[::-1]]
+        col = colour(a.colour)
+        shape = Polygon(*outer, *inner, color=col, stroke_width=3).set_fill(col, 0.45)
+        mobs = [mark_background(shape)]
+        if a.label:  # on the inner side, toward the origin (a curve at r_to would cross it outside)
+            mid_t = (a.t_from + a.t_to) / 2
+            inner_p = self.c2p(a.r_from * np.cos(mid_t), a.r_from * np.sin(mid_t))
+            outer_p = self.c2p(a.r_to * np.cos(mid_t), a.r_to * np.sin(mid_t))
+            mobs.append(self._beside(text(a.label, MIN_FONT, col), inner_p, outer_p))
+        self._mark(*mobs)
+        yield Step([FadeIn(m) for m in mobs])
+
+    def dot_t(self, a) -> Steps:
+        kind, f1, f2 = self.curves[a.curve]["path"]
+        _, xs, ys = path_points(kind, f1, f2, a.t, a.t, 1)
+        p = self.c2p(float(xs[0]), float(ys[0]))
+        d = Dot(p, radius=DOT_R * 1.2, color=colour(a.colour)).set_z_index(2)
+        mobs = [d]
+        if a.label:  # outside the curve: away from its middle
+            centre = self.curves[a.curve]["mob"].get_center()
+            mobs.append(self._beside(text(a.label, MIN_FONT, colour(a.colour)), p, centre))
+        self._mark(*mobs)
+        yield Step([GrowFromCenter(d)] + [FadeIn(m) for m in mobs[1:]])
 
     def line(self, a) -> Steps:
         kind = DashedLine if a.dashed else Line

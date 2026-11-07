@@ -301,3 +301,44 @@ rule's look into later segments), a still objective (a recolour to green then dr
 "i" left under the last cell, and an unexplained comparisons counter. Bisection unchanged at 6, 6, 6, 5: its
 complaints are a predict line naming the middle 35 while the check is held for the next line, the objective greying
 the left half before any comparison, and lo and mid drawn on the same cell at the end.
+
+### General-purpose templates (2026-11-07, branch `general-templates`)
+
+Students upload any CS or Math course, so templates are built by picture shape, not by topic, in the order the
+coverage study (`runs/visual-coverage`, 207 KUs, 12 courses) needs them. Each keeps the template contract: checked
+calls, sentences computed from the calls, computed steps where there is something to compute, and an example that
+renders in both frames with no layout findings.
+
+| Template | Draws (families) | Computed |
+|---|---|---|
+| Graph, extended: boxes with words (`labels`), edge labels, `tree` and `flow` layouts, loops, curved edges round nodes | flowchart, call_tree, tree, state_machine, linked_list | `walk` along edges; `feed` a symbol (a state machine run); DFS/BFS as before |
+| BarChart | bar_meter, probability, series | total, running totals, shares (`normalize`), mean, expected value, comparisons |
+| NumberLine | number_line, series | a sequence's terms from its formula; how many lie within eps of a limit |
+| Table | dp_table, code_trace, bits_logic, counting | truth tables, Pascal's triangle, grid paths, Fibonacci, filled in order with arrows from the cells each value came from |
+| FunctionPlot, extended: `polar`, `parametric`, `dot_t`, named points, `equal_scale` | polar_parametric, complex_plane | points on the curve at a given t |
+
+The portrait frame is 3.9 units wide, so the specs refuse what wouldn't read: at most 3 boxes side by side, two
+lines of words per box, 4 levels of boxes, 8 bars (labels shortened as bars are added), 7 table columns.
+
+Coverage of the study's KUs (main picture): drawn with a diagram template 69 (33%) -> 137 (66%); no template 77
+(37%) -> 9 (4%: sets 2, 3D vectors 4, geometry 3); formulas only 34 (16%) and metaphors 24 (12%) unchanged.
+"Drawn" means a template exists for the family; how well the writer uses each in real videos is still to test.
+
+First videos (`runs/general-1`, one per template, L2, $0.87 for six): the picture plan picked the intended template
+every time and the writer used it.
+
+| KU | Template | Scores (coherence, accuracy, appropriateness, visual) | What held the picture back |
+|---|---|---|---|
+| Euclid as a state machine | Graph (walk) + BarChart | 6, 6, 6, 4 | a walk on a missing edge (the fix call repaired it); the rule never drawn |
+| MDP trajectory and dynamics | Graph (boxes) | 6, 6, 6, 5 | "4 boxes side by side" and then "action" refused: the box limits were too strict, so the boxes read "act", "env" |
+| Blackjack probabilities | BarChart + EquationSteps | 4, 3, 5, 3 | 13 ranks but at most 8 bars, so "13 ranks, 8 shown"; the title ran off screen; 8 shares collided |
+| Discounted return | BarChart + EquationSteps | 6, 5, 6, 4 | the writer typed the discounted rewards by hand, wrong (8, 4, 4, 4 for 8, 4, 2, 1) |
+| Gridworld value function | Table | 7, 6, 6, 5 | a 4x3 corner instead of the slide's 5x5 grid: the cell limit refused "8.8" |
+| Polar area element | FunctionPlot (polar) | 6, 6, 6, 3 | no way to draw the polar cell the idea is about |
+
+Fixed since (no new videos yet): text widths estimated per letter, calibrated on measured Text widths ("-0.4" 0.63,
+"ABCDEF" 1.67), in place of 0.19 per character, for boxes, bar labels and table cells, and box widths computed from
+the same geometry the drawing uses; boxes round a `circle` for a loop of up to 5 steps; up to 13 bars (numbers left
+off past 8, said in the sentence); bar numbers staggered when they collide; the title dropped its y label when both
+don't fit; `BarChart.series` builds bars from a formula (so a discounted or geometric sequence is computed); and
+`FunctionPlot.sector` shades a polar cell with its sides and area computed.

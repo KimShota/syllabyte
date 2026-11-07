@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 # Bump when a template draws differently (or the call language changes): it is part of the cache key of every
 # video drawn with templates (syllabyte_common.video_jobs.video_key), so those videos are made again.
-TEMPLATES_VERSION = "6"  # 6: MergeSort, Graph, FunctionPlot, computed sorts, picture plans, reveals held (5: overlapping formula pieces, doubled backslashes, a failed action skipped; 4: ghost outlines clear of notes; 3: storyboards)
+TEMPLATES_VERSION = "7"  # 7: BarChart, NumberLine, Table, Graph boxes/edge labels/tree+flow/walk/feed, polar and parametric curves (6: MergeSort, Graph, FunctionPlot, computed sorts, picture plans, reveals held (5: overlapping formula pieces, doubled backslashes, a failed action skipped; 4: ghost outlines clear of notes; 3: storyboards)
 
 # --------------------------------------------------------------------------
 # Shared vocabulary
@@ -142,7 +142,7 @@ def _area_words(area: str) -> str:
 
 def _num(x) -> str:
     """A number as a visual sentence writes it: 3 not 3.0, two decimals at most."""
-    return f"{round(float(x), 2):g}" if isinstance(x, int | float) else str(x)
+    return f"{round(float(x), 2) + 0.0:g}" if isinstance(x, int | float) else str(x)  # + 0.0: never "-0"
 
 
 def _matrix_words(m: list[list[float]]) -> str:
@@ -1071,6 +1071,8 @@ class PlotParams(_Args):
     x_label: str = Field("x", description="at most 8 characters")
     y_label: str = Field("y", description="at most 8 characters")
     curves: list[CurveSpec] = Field(default_factory=list, description="0-3 curves drawn at the start")
+    equal_scale: bool = Field(False, description="the same unit on both axes, so a circle looks round: the complex "
+                                                 "plane, geometry (on with a polar or parametric curve)")
     title: str | None = Field(None, description="at most 24 characters")
     area: Area = "full"
 
@@ -1160,7 +1162,64 @@ class PeakArgs(_Args):
 class PointsArgs(_Args):
     xs: list[float] = Field(description="the points' x values")
     ys: list[float] = Field(description="their y values")
+    labels: list[str] | None = Field(None, description='a name beside each point, e.g. ["z", "1+2i"] (at most 6 '
+                                                       "characters each)")
     colour: Colour = "BLUE"
+
+
+MAX_PATH_SAMPLES = 241
+
+
+class ParametricArgs(_Args):
+    name: str = Field(description=r'its label in TeX (at most 12 characters), e.g. "c", "C_1"')
+    x_t: str = Field(description='x as a formula in t, e.g. "cos(t)"')
+    y_t: str = Field(description='y as a formula in t, e.g. "sin(2*t)"')
+    t_from: float = 0.0
+    t_to: float = Field(6.283185307179586, description="default 2 pi")
+    colour: Colour = "TEAL"
+
+    _name = field_validator("name")(_short(12))
+
+
+class PolarArgs(_Args):
+    name: str = Field(description=r'its label in TeX (at most 12 characters), e.g. "r", "r_1"')
+    r: str = Field(description='the radius as a formula in t (the angle), e.g. "1 + cos(t)", "sin(3*t)"')
+    t_from: float = 0.0
+    t_to: float = Field(6.283185307179586, description="default 2 pi")
+    colour: Colour = "TEAL"
+
+    _name = field_validator("name")(_short(12))
+
+
+class SectorArgs(_Args):
+    r_from: float = Field(description="inner radius (0 for a pie slice)")
+    r_to: float = Field(description="outer radius")
+    t_from: float = Field(description="first angle, radians")
+    t_to: float = Field(description="last angle, radians")
+    label: str | None = Field(None, description="at most 8 characters, e.g. \"dA\"")
+    colour: Colour = "GOLD"
+
+    _label = field_validator("label")(_short(8))
+
+
+class DotTArgs(_Args):
+    curve: str = Field(description="a parametric or polar curve's name")
+    t: float
+    label: str | None = Field(None, description="at most 8 characters")
+    colour: Colour = "YELLOW"
+
+    _label = field_validator("label")(_short(8))
+
+
+def path_points(kind: str, f1: str, f2: str | None, t0: float, t1: float, k: int = MAX_PATH_SAMPLES):
+    """(ts, xs, ys) along a parametric curve (x_t, y_t) or a polar one (r(t) at angle t)."""
+    import numpy as np
+
+    ts = np.linspace(t0, t1, k)
+    if kind == "polar":
+        r = parse_fn(f1)(ts)
+        return ts, r * np.cos(ts), r * np.sin(ts)
+    return ts, parse_fn(f1)(ts), parse_fn(f2)(ts)
 
 
 class SegmentArgs(_Args):
@@ -1318,12 +1377,84 @@ def _check_trace(state: dict, a: TraceArgs) -> str | None:
 def _check_points(state: dict, a: PointsArgs) -> str | None:
     if len(a.xs) != len(a.ys) or not a.xs:
         return "xs and ys must be the same length (1 or more)"
+    if a.labels is not None and (len(a.labels) != len(a.xs) or any(not 1 <= len(lab) <= 6 for lab in a.labels)):
+        return "labels: one name of 1-6 characters per point"
     if len(a.xs) > MAX_POINTS:
         return f"at most {MAX_POINTS} points"
     (xl, xh), (yl, yh) = state["x"], state["y"]
     for x, y in zip(a.xs, a.ys):
         if not (xl <= x <= xh and yl <= y <= yh):
             return f"the point ({_num(x)}, {_num(y)}) is off the axes"
+    return None
+
+
+def _check_path(kind: str):
+    def check(state: dict, a) -> str | None:
+        import numpy as np
+
+        if a.name in state["curves"] or a.name in state.setdefault("paths", {}):
+            return f"there is already a curve {a.name!r}"
+        if not a.t_from < a.t_to:
+            return "t_from is below t_to"
+        try:
+            f1, f2 = (a.r, None) if kind == "polar" else (a.x_t, a.y_t)
+            _, xs, ys = path_points(kind, f1, f2, a.t_from, a.t_to)
+        except ValueError as e:
+            return str(e).replace(" x (or n, t)", " t")
+        (xl, xh), (yl, yh) = state["x"], state["y"]
+        inside = np.isfinite(xs) & np.isfinite(ys) & (xs >= xl) & (xs <= xh) & (ys >= yl) & (ys <= yh)
+        if inside.mean() < 0.9:
+            return (f"the curve leaves the axes (x {_num(np.nanmin(xs))} to {_num(np.nanmax(xs))}, y "
+                    f"{_num(np.nanmin(ys))} to {_num(np.nanmax(ys))}): widen x_range or y_range")
+        state["paths"][a.name] = (kind, f1, f2, a.t_from, a.t_to)
+        return None
+    return check
+
+
+def _path_point(state: dict, name: str, t: float) -> tuple[float, float]:
+    kind, f1, f2, _, _ = state["paths"][name]
+    _, xs, ys = path_points(kind, f1, f2, t, t, 1)
+    return float(xs[0]), float(ys[0])
+
+
+def _check_sector(state: dict, a: SectorArgs) -> str | None:
+    import math
+
+    if not 0 <= a.r_from < a.r_to:
+        return "0 <= r_from < r_to"
+    if not 0 < a.t_to - a.t_from <= 2 * math.pi:
+        return "t_from < t_to, at most a full turn"
+    (xl, xh), (yl, yh) = state["x"], state["y"]
+    for t in (a.t_from, (a.t_from + a.t_to) / 2, a.t_to):
+        for r in (a.r_from, a.r_to):
+            x, y = r * math.cos(t), r * math.sin(t)
+            if not (xl <= x <= xh and yl <= y <= yh):
+                return f"the sector reaches ({_num(x)}, {_num(y)}), off the axes"
+    return None
+
+
+def _said_sector(state: dict, a: SectorArgs) -> str:
+    dt = a.t_to - a.t_from
+    area = (a.r_to ** 2 - a.r_from ** 2) / 2 * dt
+    mid = (a.r_from + a.r_to) / 2
+    return (f"the polar cell between r = {_num(a.r_from)} and {_num(a.r_to)} and angles {_num(a.t_from)} to "
+            f"{_num(a.t_to)} is shaded {a.colour.lower()}: its sides are dr = {_num(a.r_to - a.r_from)} and an arc "
+            f"r dtheta = {_num(mid * dt)} long, its area {_num(area)}"
+            + (f', labelled "{a.label}"' if a.label else ""))
+
+
+def _check_dot_t(state: dict, a: DotTArgs) -> str | None:
+    paths = state.get("paths", {})
+    if a.curve not in paths:
+        return (f"there is no parametric or polar curve {a.curve!r}"
+                + (f" (they are {', '.join(paths)})" if paths else ""))
+    _, _, _, t0, t1 = paths[a.curve]
+    if not t0 <= a.t <= t1:
+        return f"t = {_num(a.t)} is off the curve (t runs {_num(t0)} to {_num(t1)})"
+    x, y = _path_point(state, a.curve, a.t)
+    (xl, xh), (yl, yh) = state["x"], state["y"]
+    if not (xl <= x <= xh and yl <= y <= yh):
+        return f"at t = {_num(a.t)} the curve is at ({_num(x)}, {_num(y)}), off the axes"
     return None
 
 
@@ -1410,9 +1541,27 @@ FUNCTION_PLOT = TemplateSpec(
                                          f"{_num(a.x_to)}"),
         "vline": ActionSpec("A dashed vertical line at x.", VLineArgs, lambda s, a: _need_x(s, a.x),
                             lambda s, a: f"a dashed vertical line at x = {_num(a.x)}"),
-        "points": ActionSpec("Data points (a scatter), 1-12 of them.", PointsArgs, _check_points,
+        "points": ActionSpec("Data points (a scatter), 1-12 of them, optionally named (complex numbers on Re/Im "
+                             "axes: 1+2i at (1, 2)).", PointsArgs, _check_points,
                              lambda s, a: f"{len(a.xs)} {a.colour.lower()} point{'s' if len(a.xs) != 1 else ''} at "
-                                          + ", ".join(f"({_num(x)}, {_num(y)})" for x, y in zip(a.xs, a.ys))),
+                                          + ", ".join(f"({_num(x)}, {_num(y)})" + (f" named {a.labels[k]}"
+                                                                                     if a.labels else "")
+                                                      for k, (x, y) in enumerate(zip(a.xs, a.ys)))),
+        "parametric": ActionSpec("A curve (x(t), y(t)) for t from t_from to t_to: a path, a circle, a Lissajous "
+                                 "figure.", ParametricArgs, _check_path("parametric"),
+                                 lambda s, a: f"the curve {a.name}, (x, y) = ({a.x_t}, {a.y_t}) for t from "
+                                              f"{_num(a.t_from)} to {_num(a.t_to)}, is drawn in "
+                                              f"{a.colour.lower()}"),
+        "polar": ActionSpec("A polar curve r(t) at angle t, for t from t_from to t_to: a cardioid, a rose.",
+                            PolarArgs, _check_path("polar"),
+                            lambda s, a: f"the polar curve {a.name}, r = {a.r} for angle t from {_num(a.t_from)} to "
+                                         f"{_num(a.t_to)}, is drawn in {a.colour.lower()}"),
+        "sector": ActionSpec("Shade a polar cell: between radii r_from and r_to and angles t_from and t_to (a pie "
+                             "slice from r_from = 0); its sides and area are computed (area = (r_to^2 - r_from^2) / 2 "
+                             "x dtheta).", SectorArgs, _check_sector, _said_sector),
+        "dot_t": ActionSpec("A dot on a parametric or polar curve at parameter t (computed).", DotTArgs, _check_dot_t,
+                            lambda s, a: "a dot on {} at t = {}, the point ({}, {})".format(
+                                a.curve, _num(a.t), *(_num(v) for v in _path_point(s, a.curve, a.t)))),
         "line": ActionSpec("A straight line from (x1, y1) to (x2, y2): a boundary, a secant.", SegmentArgs,
                            _check_segment,
                            lambda s, a: f"a {'dashed ' if a.dashed else ''}{a.colour.lower()} line from "
@@ -1446,12 +1595,96 @@ MAX_NODES = 8
 MAX_EDGES = 12
 
 
+MAX_LABEL = 14  # a node's words, when it is a box
+MAX_EDGE_LABEL = 6
+# The video is portrait: 3.9 units of usable width, and a character at the smallest readable size is about 0.19
+# units wide. So at most three boxes sit side by side (a row in "layers"/"tree", the columns of "flow"), each
+# label wraps onto at most two lines, and a box diagram has at most four levels.
+MAX_BOXES_PER_ROW = 3
+MAX_BOX_LEVELS = 4
+SAFE_WIDTH = 3.9
+CHAR_W = 0.19
+
+
+_NARROW = set("ijlrtfI:;!'|()[] ")
+
+
+def _char_w(c: str) -> float:
+    if c in ".,":
+        return 0.07
+    if c in _NARROW:
+        return 0.11
+    if c in "mwMW":
+        return 0.27
+    if c.isupper():
+        return 0.26
+    if c.isdigit():
+        return 0.2
+    return 0.13 if c in "-+=" else 0.185
+
+
+def est_width(s: str) -> float:
+    """About how wide a line of text is at the smallest readable size (units; Text at font 30, measured: "start"
+    0.70, "print x" 1.05, "saw ab" 1.12, "merge halves" 2.19, "-0.4" 0.63, "8.8" 0.46, "ABCDEF" 1.67), with a 5%
+    margin."""
+    return 1.05 * sum(_char_w(c) for c in s)
+
+
+def label_lines(label: str, max_width: float) -> list[str] | None:
+    """The label wrapped onto lines at most `max_width` wide, or None if a single word is wider."""
+    lines: list[str] = []
+    for word in label.split():
+        if est_width(word) > max_width:
+            return None
+        if lines and est_width(lines[-1] + " " + word) <= max_width:
+            lines[-1] += " " + word
+        else:
+            lines.append(word)
+    return lines
+
+
+def box_share(layout: str) -> float:
+    """How much of the distance between two boxes in a row the boxes take: in "flow" and round a "circle" the
+    arrows between them need the rest; in "layers" and "tree" rows hold no arrows."""
+    return 0.62 if layout in ("flow", "circle") else 0.9
+
+
+def box_width(nodes: list[str], edges: list[list[str]], layout: str, directed: bool,
+              width: float = SAFE_WIDTH - 0.1) -> float:
+    """How wide each box is drawn (graph.py lays the boxes out the same way)."""
+    unit = graph_positions(nodes, edges, layout, directed)
+    if layout == "layers":
+        unit = spread_rows(unit)
+    rows: dict[float, list[float]] = {}
+    for x, y in unit.values():
+        rows.setdefault(round(y, 6), []).append(x)
+    gx = min([b - a for row in rows.values() for a, b in zip(sorted(row), sorted(row)[1:])] or [1.0])
+    share = box_share(layout)
+    return min(2.6, share * gx * width / (1 + share * gx))
+
+
+def box_chars(side_by_side: int) -> int:
+    """How many characters fit on one line of a box when this many boxes share a row."""
+    k = max(side_by_side, 1)
+    box = (SAFE_WIDTH - 0.12 * (k - 1)) / k if k > 1 else min(2.6, SAFE_WIDTH)
+    return int((box - 0.24) / CHAR_W)
+
+
 class GraphParams(_Args):
-    nodes: list[str] = Field(description='2-8 node names, at most 2 characters each, e.g. ["s", "a", "b"]')
-    edges: list[list[str]] = Field(description='pairs of node names, e.g. [["s", "a"], ["a", "b"]] (at most 12)')
+    nodes: list[str] = Field(description='2-8 node names, at most 2 characters each, e.g. ["s", "a", "b"]; with '
+                                         "labels they are only ids for the calls")
+    edges: list[list[str]] = Field(description='pairs of node names, e.g. [["s", "a"], ["a", "b"]] (at most 12); a '
+                                               'third item labels the edge, e.g. ["q0", "q1", "a"], ["d", "e", "yes"], '
+                                               '["r", "h", "0.3"] (at most 6 characters)')
     directed: bool = Field(False, description="arrows from the first node of each pair to the second")
-    layout: Literal["layers", "circle"] = Field(
-        "layers", description='"layers": rows by distance from the first node; "circle": nodes round a circle')
+    labels: dict[str, str] | None = Field(
+        None, description="words for the nodes, drawn as boxes: a flowchart's steps, a tree's or a call tree's "
+                          'entries, e.g. {"s": "start", "d": "x > 0?"} (at most 14 characters each; every node)')
+    layout: Literal["layers", "tree", "flow", "circle"] = Field(
+        "layers", description='"layers": rows by distance from the first node; "tree": the first node on top, each '
+                              'node centred over its children (trees, call trees, probability trees); "flow": '
+                              'columns left to right (pipelines, state machines, linked lists); "circle": round a '
+                              "circle (a loop of steps: up to 5 boxes)")
     title: str | None = Field(None, description="at most 24 characters")
     area: Area = "full"
 
@@ -1469,21 +1702,173 @@ class GraphParams(_Args):
             raise ValueError(f"{len(self.edges)} edges; at most {MAX_EDGES}")
         seen = set()
         for e in self.edges:
-            if len(e) != 2 or e[0] not in self.nodes or e[1] not in self.nodes:
-                raise ValueError(f"edge {e}: give two node names from nodes")
-            if e[0] == e[1]:
-                raise ValueError(f"edge {e}: a node can't link to itself")
-            key = tuple(e) if self.directed else tuple(sorted(e))
+            if len(e) not in (2, 3) or e[0] not in self.nodes or e[1] not in self.nodes:
+                raise ValueError(f"edge {e}: give two node names from nodes (and optionally a label)")
+            if e[0] == e[1] and not self.directed:
+                raise ValueError(f"edge {e}: a node can't link to itself (only in a directed graph: a loop)")
+            if len(e) == 3 and not 1 <= len(e[2]) <= MAX_EDGE_LABEL:
+                raise ValueError(f"edge {e}: its label is 1-{MAX_EDGE_LABEL} characters")
+            key = (e[0], e[1]) if self.directed else tuple(sorted(e[:2]))
             if key in seen:
-                raise ValueError(f"edge {e} is listed twice")
+                raise ValueError(f"edge {e[:2]} is listed twice")
             seen.add(key)
+        if self.labels is not None:
+            missing = [n for n in self.nodes if n not in self.labels]
+            extra = [n for n in self.labels if n not in self.nodes]
+            if missing or extra:
+                raise ValueError(f"labels needs exactly the nodes: missing {missing}, unknown {extra}")
+            long = [v for v in self.labels.values() if not 1 <= len(v) <= MAX_LABEL]
+            if long:
+                raise ValueError(f"label {long[0]!r}: 1-{MAX_LABEL} characters")
+            if self.layout == "circle" and len(self.nodes) > 5:
+                raise ValueError("at most 5 boxes round a circle")
+            rows = graph_rows(self.nodes, self.edges, self.layout, self.directed)
+            widest = max(rows)
+            if widest > MAX_BOXES_PER_ROW:
+                raise ValueError(f"{widest} boxes side by side; at most {MAX_BOXES_PER_ROW} fit on the portrait "
+                                 "screen (use fewer nodes, or short names in circles without labels)")
+            levels = len(rows) if self.layout != "flow" else max(
+                graph_rows(self.nodes, self.edges, "layers", self.directed))
+            if levels > MAX_BOX_LEVELS:
+                raise ValueError(f"{levels} levels of boxes; at most {MAX_BOX_LEVELS} fit")
+            # The words may fill the box but for a small margin (graph.py lets them shrink to 94%, still readable).
+            room = (box_width(self.nodes, self.edges, self.layout, self.directed) - 0.12) / 0.94
+            chars = int(room / 0.18)
+            for label in self.labels.values():
+                lines = label_lines(label, room)
+                if lines is None or len(lines) > 2:
+                    hint = ('; a loop of up to 5 steps fits better as layout "circle"' if self.layout == "flow"
+                            else "")
+                    raise ValueError(f"label {label!r} doesn't fit a box when {widest} share a row: at most two "
+                                     f"lines of about {chars} characters (shorter words, or fewer boxes side by side"
+                                     f"{hint})")
         return self
+
+
+def _levels(nodes: list[str], adj: dict[str, list[str]]) -> tuple[list[list[str]], dict[str, str | None]]:
+    """Breadth-first levels from the first node (then from each node not reached yet), and each node's parent."""
+    levels: list[list[str]] = []
+    parent: dict[str, str | None] = {}
+    for root in nodes:
+        if root in parent:
+            continue
+        parent[root] = None
+        frontier = [root]
+        while frontier:
+            levels.append(frontier)
+            nxt = []
+            for u in frontier:
+                for v in adj[u]:
+                    if v not in parent:
+                        parent[v] = u
+                        nxt.append(v)
+            frontier = nxt
+    return levels, parent
+
+
+def _layout_adjacency(nodes: list[str], edges: list[list[str]], directed: bool) -> dict[str, list[str]]:
+    """The neighbours a layout's levels follow: along the arrows in a directed graph (a chain reads left to right
+    even if its last node links back to the first), else both ways."""
+    return graph_adjacency(nodes, [e[:2] for e in edges if e[0] != e[1]], directed=directed)
+
+
+def graph_rows(nodes: list[str], edges: list[list[str]], layout: str, directed: bool = False) -> list[int]:
+    """How many nodes sit side by side in each row ("layers", "tree") or how many columns there are ("flow")."""
+    if layout == "circle":  # nodes at the same height share a row
+        rows: dict[float, int] = {}
+        for _, y in graph_positions(nodes, edges, "circle").values():
+            rows[round(y, 3)] = rows.get(round(y, 3), 0) + 1
+        return list(rows.values())
+    levels, _ = _levels(nodes, _layout_adjacency(nodes, edges, directed))
+    if layout == "flow":
+        return [len(levels)]
+    if layout == "tree":
+        return [len(level) for level in levels]
+    return [len(level) for level in levels]
+
+
+def graph_positions(nodes: list[str], edges: list[list[str]], layout: str,
+                    directed: bool = False) -> dict[str, tuple[float, float]]:
+    """Each node's place in the unit square (y up). "layers": a row per distance from the first node (other parts
+    below), each row ordered by where its neighbours above sit; "tree": the same rows, each node centred over its
+    children (leaves spaced evenly); "flow": "layers" turned on its side, columns left to right; "circle": evenly
+    round a circle."""
+    import math
+
+    if layout == "circle":
+        k = len(nodes)
+        return {n: (0.5 + 0.5 * math.sin(2 * math.pi * i / k), 0.5 + 0.5 * math.cos(2 * math.pi * i / k))
+                for i, n in enumerate(nodes)}
+    adj = _layout_adjacency(nodes, edges, directed)
+    levels, parent = _levels(nodes, adj)
+    adj = graph_adjacency(nodes, [e[:2] for e in edges if e[0] != e[1]], directed=False)  # for row order
+    rows = len(levels)
+    pos: dict[str, tuple[float, float]] = {}
+    if layout == "tree":
+        kids: dict[str, list[str]] = {n: [] for n in nodes}
+        for n in nodes:  # children in the order their edges are listed
+            if parent[n] is not None:
+                kids[parent[n]].append(n)
+        for n in kids:
+            kids[n].sort(key=lambda c: next(i for i, e in enumerate(edges) if c in e[:2] and n in e[:2]))
+        depth = {}
+        for li, level in enumerate(levels):
+            for n in level:
+                depth[n] = li
+        slot = [0]
+        xs: dict[str, float] = {}
+
+        def place(n: str) -> None:
+            if not kids[n]:
+                xs[n] = slot[0]
+                slot[0] += 1
+                return
+            for c in kids[n]:
+                place(c)
+            xs[n] = (xs[kids[n][0]] + xs[kids[n][-1]]) / 2
+
+        for n in nodes:
+            if parent[n] is None:
+                place(n)
+        width = max(slot[0] - 1, 1)
+        depths = max(depth.values()) if depth else 0
+        for n in nodes:
+            x = 0.5 if slot[0] == 1 else xs[n] / width
+            y = 0.5 if depths == 0 else 1 - depth[n] / depths
+            pos[n] = (x, y)
+        return pos
+    for li, level in enumerate(levels):
+        if li:  # order by the mean place of neighbours already placed (fewer crossings)
+            def key(n: str) -> float:
+                xs_ = [pos[m][0] for m in adj[n] if m in pos]
+                return sum(xs_) / len(xs_) if xs_ else 0.5
+            level = sorted(level, key=key)
+        y = 0.5 if rows == 1 else 1 - li / (rows - 1)
+        for i, n in enumerate(level):
+            pos[n] = ((i + 1) / (len(level) + 1), y)
+    if layout == "flow":  # rows become columns, left to right
+        return {n: (1 - y, x) for n, (x, y) in pos.items()}
+    return pos
+
+
+def spread_rows(pos: dict[str, tuple[float, float]]) -> dict[str, tuple[float, float]]:
+    """Each row's nodes spread from edge to edge (0..1) instead of (i + 1) / (k + 1): for boxes, which need the
+    width more than a margin."""
+    rows: dict[float, list[str]] = {}
+    for n, (x, y) in pos.items():
+        rows.setdefault(round(y, 6), []).append(n)
+    out = dict(pos)
+    for row in rows.values():
+        row.sort(key=lambda n: pos[n][0])
+        for i, n in enumerate(row):
+            out[n] = (0.5 if len(row) == 1 else i / (len(row) - 1), pos[n][1])
+    return out
 
 
 def graph_adjacency(nodes: list[str], edges: list[list[str]], directed: bool) -> dict[str, list[str]]:
     """Each node's neighbours, in the order the edges are listed (the order a search tries them)."""
     adj: dict[str, list[str]] = {n: [] for n in nodes}
-    for u, v in edges:
+    for u, v, *_ in edges:
         adj[u].append(v)
         if not directed:
             adj[v].append(u)
@@ -1570,9 +1955,68 @@ class GhostEdgeArgs(_Args):
     _text = field_validator("text")(_short(24))
 
 
+class WalkArgs(_Args):
+    to: str = Field(description="the node the marker moves to, along an edge (the first walk puts it there)")
+
+
+class FeedArgs(_Args):
+    symbol: str = Field(description="the input read: the marker follows the edge with this label")
+
+
 def _graph_state(p: GraphParams) -> dict:
     return {"adj": graph_adjacency(p.nodes, p.edges, p.directed), "nodes": list(p.nodes), "directed": p.directed,
-            "edges": {tuple(e) if p.directed else tuple(sorted(e)) for e in p.edges}, "search": None, "last": None}
+            "edges": {(e[0], e[1]) if p.directed else tuple(sorted(e[:2])) for e in p.edges}, "search": None,
+            "last": None, "labels": dict(p.labels or {}), "at": None, "walked": None, "read": "",
+            "edge_labels": {((e[0], e[1]) if p.directed else tuple(sorted(e[:2]))): e[2] for e in p.edges
+                            if len(e) == 3}}
+
+
+def _name(st: dict, n: str) -> str:
+    """A node as the sentences say it: its words if it is a box."""
+    return f'"{st["labels"][n]}"' if n in st["labels"] else n
+
+
+def _edge_label(st: dict, a: str, b: str) -> str | None:
+    return st["edge_labels"].get((a, b) if st["directed"] else tuple(sorted((a, b))))
+
+
+def _check_walk(state: dict, a: WalkArgs) -> str | None:
+    if problem := _need_nodes(state, a.to):
+        return problem
+    at = state["at"]
+    if at is not None and not _has_edge(state, at, a.to):
+        return f"there is no edge from {at} to {a.to}, so the marker can't go there"
+    state["walked"], state["at"] = (at, a.to), a.to
+    return None
+
+
+def _check_feed(state: dict, a: FeedArgs) -> str | None:
+    at = state["at"] if state["at"] is not None else state["nodes"][0]
+    out = [v for v in state["adj"][at] if _edge_label(state, at, v) == a.symbol and _has_edge(state, at, v)]
+    if not out:
+        labels = sorted({_edge_label(state, at, v) for v in state["adj"][at] if _has_edge(state, at, v)} - {None})
+        return (f"no edge out of {at} is labelled {a.symbol!r}" + (f" (its edges read {', '.join(labels)})"
+                                                                     if labels else ""))
+    if len(out) > 1:
+        return f"two edges out of {at} read {a.symbol!r}; the machine must have one"
+    state["walked"], state["at"] = (at, out[0]), out[0]
+    state["read"] += a.symbol
+    return None
+
+
+def _said_walk(state: dict, a) -> str:
+    frm, to = state["walked"]
+    if frm is None:
+        return f"a gold marker appears at {_name(state, to)}"
+    label = _edge_label(state, frm, to)
+    return (f"the marker moves from {_name(state, frm)} to {_name(state, to)}"
+            + (f' along the edge marked "{label}"' if label else ""))
+
+
+def _said_feed(state: dict, a) -> str:
+    frm, to = state["walked"]
+    return (f'reading "{a.symbol}", the marker follows the edge from {_name(state, frm)} to {_name(state, to)}; '
+            f'input read so far: "{state["read"]}"')
 
 
 def _has_edge(st: dict, a: str, b: str) -> bool:
@@ -1600,25 +2044,27 @@ def _check_search(kind: str):
 
 def _said_dfs(state: dict, a) -> str:
     ev, s = state["last"], state["search"]
-    back = f"it backs up from {', '.join(ev['finished'])}, then " if ev["finished"] else ""
+    nm = lambda ns: ", ".join(_name(state, n) for n in ns)  # noqa: E731
+    back = f"it backs up from {nm(ev['finished'])}, then " if ev["finished"] else ""
     if ev["visit"] is None:
         missed = [n for n in state["nodes"] if n not in s["visited"]]
-        out = f"{back}DFS from {s['start']} is done: it reached {', '.join(s['visited'])}"
-        return out + (f"; {', '.join(missed)} can't be reached" if missed else "")
+        out = f"{back}DFS from {_name(state, s['start'])} is done: it reached {nm(s['visited'])}"
+        return out + (f"; {nm(missed)} can't be reached" if missed else "")
     if ev["from"] is None:
-        return f"DFS starts at {ev['visit']}, which turns yellow: visited {ev['visit']}"
-    return (f"{back}DFS goes from {ev['from']} to {ev['visit']} along their edge; visited so far: "
-            f"{', '.join(s['visited'])}")
+        return f"DFS starts at {_name(state, ev['visit'])}, which turns yellow: visited {_name(state, ev['visit'])}"
+    return (f"{back}DFS goes from {_name(state, ev['from'])} to {_name(state, ev['visit'])} along their edge; "
+            f"visited so far: {nm(s['visited'])}")
 
 
 def _said_bfs(state: dict, a) -> str:
     ev, s = state["last"], state["search"]
     if ev["level"] is None:
         missed = [n for n in state["nodes"] if n not in s["dist"]]
-        return "BFS is done: no new nodes" + (f"; {', '.join(missed)} can't be reached" if missed else "")
+        return "BFS is done: no new nodes" + (f"; {', '.join(_name(state, n) for n in missed)} can't be reached"
+                                               if missed else "")
     if ev["level"] == 0:
-        return f"BFS starts at {ev['nodes'][0]}: distance 0"
-    reached = ", ".join(f"{v} (from {u})" for v, u in ev["from"].items())
+        return f"BFS starts at {_name(state, ev['nodes'][0])}: distance 0"
+    reached = ", ".join(f"{_name(state, v)} (from {_name(state, u)})" for v, u in ev["from"].items())
     return f"BFS reaches level {ev['level']}: {reached}, each labelled with distance {ev['level']}"
 
 
@@ -1641,17 +2087,24 @@ def _check_edge(state: dict, a: EdgeArgs) -> str | None:
 
 def _describe_graph(p: GraphParams) -> str:
     joiner = " -> " if p.directed else " - "
-    edges = ", ".join(joiner.join(e) for e in p.edges)
-    kind = "a directed graph" if p.directed else "a graph"
-    return f"{kind} with nodes {', '.join(p.nodes)} and edges {edges}" + (f', titled "{p.title}"' if p.title else "")
+    say = (lambda n: f'"{p.labels[n]}"') if p.labels else (lambda n: n)
+    edges = ", ".join(joiner.join(say(n) for n in e[:2]) + (f" ({e[2]})" if len(e) == 3 else "") for e in p.edges)
+    kind = {"tree": "a tree", "flow": "a flow"}.get(p.layout, "a graph")
+    kind = ("a directed " + kind[2:]) if p.directed and kind == "a graph" else kind
+    what = f"boxes {', '.join(say(n) for n in p.nodes)}" if p.labels else f"nodes {', '.join(p.nodes)}"
+    return f"{kind} of {what}, linked {edges}" + (f', titled "{p.title}"' if p.title else "")
 
 
 GRAPH = TemplateSpec(
     name="Graph",
     family="graph",
-    purpose="A graph of nodes and edges, with searches computed: dfs_step reaches one new node per call in DFS "
-            "order, bfs_level one whole level per call with distances; highlight nodes, edges or a path; a wrong "
-            "idea as a red dashed edge. Needs at least half the frame.",
+    purpose="Boxes and arrows: a graph, a tree, a call tree, a flowchart, a state machine, a linked list. Nodes are "
+            "circles with short names, or boxes with words (labels); edges can carry a label (a symbol, yes/no, a "
+            "probability). Searches are computed: dfs_step reaches one new node per call in DFS order (also the "
+            "order a recursion's calls run in), bfs_level one whole level per call. A gold marker walks along "
+            "edges (walk), or reads an input symbol and follows the edge it labels (feed, computed: a state "
+            "machine run). Highlight nodes, edges or a path; a wrong idea as a red dashed edge. Needs at least half "
+            "the frame.",
     params=GraphParams,
     min_rows=3,
     init_state=_graph_state,
@@ -1667,12 +2120,19 @@ GRAPH = TemplateSpec(
             "BFS, one level (computed): every node at the next distance from start turns teal, labelled with its "
             "distance, and the edges that reached them thicken.", StartArgs, _check_search("bfs"), _said_bfs,
             reveals=True),
+        "walk": ActionSpec("Move the gold marker along an edge to this node (the first walk puts it there): a "
+                           "flowchart's path, a step through a list or a machine.", WalkArgs, _check_walk, _said_walk,
+                           reveals=True),
+        "feed": ActionSpec("State machine (computed): read one input symbol and follow the edge out of the marker's "
+                           "node that it labels (from the first node if the marker isn't out yet).", FeedArgs,
+                           _check_feed, _said_feed, reveals=True),
         "highlight": ActionSpec("Colour these nodes.", NodesArgs, lambda s, a: _need_nodes(s, *a.nodes),
-                                lambda s, a: f"nodes {', '.join(a.nodes)} turn {a.colour.lower()}"),
+                                lambda s, a: f"{', '.join(_name(s, n) for n in a.nodes)} turn {a.colour.lower()}"),
         "highlight_edge": ActionSpec("Colour one edge.", EdgeArgs, _check_edge,
                                      lambda s, a: f"the edge {a.a}-{a.b} turns {a.colour.lower()}"),
         "path": ActionSpec("Colour a path: the edges between consecutive nodes.", NodesArgs, _check_path,
-                           lambda s, a: f"the path {' -> '.join(a.nodes)} lights up in {a.colour.lower()}",
+                           lambda s, a: f"the path {' -> '.join(_name(s, n) for n in a.nodes)} lights up in "
+                                        f"{a.colour.lower()}",
                            reveals=True),
         "ghost_edge": ActionSpec("A wrong idea: a red dashed edge (it may not exist), with the idea noted in red.",
                                  GhostEdgeArgs, lambda s, a: _need_nodes(s, a.a, a.b),
@@ -1681,8 +2141,8 @@ GRAPH = TemplateSpec(
                            says=lambda s, a: f'note above the graph: "{a.text}"'),
         "clear": ActionSpec("Remove highlights, the ghost and the note (a search's colours stay).",
                             says=lambda s, a: "the graph's highlights, ghost and note clear"),
-        "reset": ActionSpec("Clear everything, a search's colours too.",
-                            check=lambda s, a: s.update(search=None) or None,
+        "reset": ActionSpec("Clear everything, a search's colours and the marker too.",
+                            check=lambda s, a: s.update(search=None, at=None, read="") or None,
                             says=lambda s, a: "the graph is back to plain"),
     },
     example=[
@@ -2145,8 +2605,923 @@ NOTE = TemplateSpec(
 )
 
 
+# --------------------------------------------------------------------------
+# BarChart: a few quantities side by side, with totals, shares and averages computed
+# --------------------------------------------------------------------------
+# For the coverage study's bar_meter, probability and series pictures (27 of its 77 KUs with no template): counts,
+# frequencies, a distribution, partial sums. Totals, running sums, shares, the mean and an expected value are
+# computed from the bars, so they are always right.
+
+MAX_BARS = 13  # a deck's ranks; past 8 the bars are too narrow for their numbers
+MAX_BAR_LABEL = 8
+
+
+def nice_top(v: float) -> float:
+    """A round number a little above v, for the top of the axis: 1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10 x 10^k."""
+    import math
+
+    if v <= 0:
+        return 1.0
+    k = 10 ** math.floor(math.log10(v))
+    for m in (1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10):
+        if m * k >= v * 1.08:
+            return round(m * k, 10)
+    return round(10 * k, 10)
+
+
+def bar_slot(n: int) -> float:
+    """The width each bar's slot gets when n share the chart (bar_chart.py lays them out the same way)."""
+    return (SAFE_WIDTH - 0.1) / max(n, 1)
+
+
+def bar_label_fits(label: str, n: int) -> bool:
+    return est_width(label) <= bar_slot(n) * 0.95
+
+
+def bar_chars(n: int) -> int:
+    """About how many characters fit under one bar when n share the width."""
+    return max(1, int(bar_slot(n) * 0.95 / 0.18))
+
+
+class BarParams(_Args):
+    labels: list[str] = Field(description='1-13 bar names, left to right, e.g. ["H", "T"], ["1", "2", "3"], '
+                                          '["Mon", "Tue"]; short (with 8 bars about 2 characters, with 13 one)')
+    values: list[float] = Field(description="each bar's height, 0 or more (counts, amounts, probabilities)")
+    y_max: float | None = Field(None, description="the top of the scale; left out, it fits the bars (and grows if "
+                                                  "a bar outgrows it)")
+    y_label: str | None = Field(None, description='what the heights measure, e.g. "count", "P(x)" (at most 14 '
+                                                  "characters)")
+    colour: Colour = "BLUE"
+    title: str | None = Field(None, description="at most 24 characters")
+    area: Area = "full"
+
+    _title = field_validator("title")(_short(24))
+    _y_label = field_validator("y_label")(_short(14))
+
+    @model_validator(mode="after")
+    def _fits(self) -> BarParams:
+        n = len(self.labels)
+        if not 1 <= n <= MAX_BARS:
+            raise ValueError(f"{n} bars; use 1-{MAX_BARS}")
+        if len(self.values) != n:
+            raise ValueError(f"{n} labels but {len(self.values)} values: give one value per bar")
+        if len(set(self.labels)) != n:
+            raise ValueError("bar labels must differ")
+        long = [lab for lab in self.labels if not 1 <= len(lab) <= MAX_BAR_LABEL or not bar_label_fits(lab, n)]
+        if long:
+            raise ValueError(f"label {long[0]!r} is too wide under one of {n} bars (about {bar_chars(n)} characters "
+                             'fit; "T" for ten, "J" for jack)')
+        if any(v < 0 for v in self.values):
+            raise ValueError("bar heights are 0 or more")
+        if self.y_max is not None and self.y_max < max(self.values):
+            raise ValueError(f"y_max {self.y_max:g} is below the tallest bar ({max(self.values):g})")
+        return self
+
+
+class BarArgs(_Args):
+    label: str
+    value: float = Field(description="the new height, 0 or more")
+
+
+class BarLabelsArgs(_Args):
+    labels: list[str]
+    colour: Colour = "YELLOW"
+
+
+class BarPairArgs(_Args):
+    a: str
+    b: str
+
+
+class BarSeriesArgs(_Args):
+    fn: str = Field(description='the n-th bar\'s height as a formula in n, e.g. "8*0.5**(n-1)", "1/n**2", "n"')
+    n_from: int = Field(1, description="the first n")
+    n_to: int = Field(5, description="the last n (at most 13 bars)")
+    label: str = Field("n", description='each bar is named this followed by n, e.g. "R" gives R1, R2 ...; "n" '
+                                         "gives 1, 2 ...")
+
+
+class BarGhostArgs(_Args):
+    label: str
+    value: float = Field(description="the wrong height")
+    text: str = Field(description="the wrong idea, at most 24 characters")
+
+    _text = field_validator("text")(_short(24))
+
+
+def _bar_state(p: BarParams) -> dict:
+    return {"labels": list(p.labels), "values": [float(v) for v in p.values], "last": None,
+            "y_max": p.y_max or nice_top(max(p.values) or 1)}
+
+
+def _need_bars(st: dict, *labels: str) -> str | None:
+    bad = [lab for lab in labels if lab not in st["labels"]]
+    return f"there is no bar {bad[0]!r} (bars: {', '.join(st['labels'])})" if bad else None
+
+
+def _bar_value(st: dict, label: str) -> float:
+    return st["values"][st["labels"].index(label)]
+
+
+def _check_set_bar(st: dict, a: BarArgs) -> str | None:
+    if problem := _need_bars(st, a.label):
+        return problem
+    if a.value < 0:
+        return "a bar's height is 0 or more"
+    i = st["labels"].index(a.label)
+    st["last"] = (st["values"][i], a.value)
+    st["values"][i] = float(a.value)
+    st["y_max"] = max(st["y_max"], nice_top(a.value)) if a.value > st["y_max"] else st["y_max"]
+    return None
+
+
+def _check_add_bar(st: dict, a: BarArgs) -> str | None:
+    if a.label in st["labels"]:
+        return f"there is already a bar {a.label!r}: use set to change it"
+    n = len(st["labels"]) + 1
+    if n > MAX_BARS:
+        return f"at most {MAX_BARS} bars"
+    if not all(bar_label_fits(lab, n) for lab in st["labels"] + [a.label]):
+        return f"with {n} bars a label is at most about {bar_chars(n)} characters"
+    if a.value < 0:
+        return "a bar's height is 0 or more"
+    st["labels"].append(a.label)
+    st["values"].append(float(a.value))
+    st["y_max"] = max(st["y_max"], nice_top(a.value)) if a.value > st["y_max"] else st["y_max"]
+    return None
+
+
+def bar_series(a: BarSeriesArgs) -> tuple[list[str], list[float]]:
+    """The bars a formula gives: labels and heights, computed."""
+    import math
+
+    f = parse_fn(a.fn)
+    labels, values = [], []
+    for n in range(a.n_from, a.n_to + 1):
+        v = float(f(float(n)))
+        if not math.isfinite(v):
+            raise ValueError(f"{a.fn} isn't a number at n = {n}")
+        labels.append(str(n) if a.label == "n" else f"{a.label}{n}")
+        values.append(v)
+    return labels, values
+
+
+def _check_bar_series(st: dict, a: BarSeriesArgs) -> str | None:
+    if not 1 <= a.n_to - a.n_from + 1 <= MAX_BARS:
+        return f"1-{MAX_BARS} bars (n_from to n_to)"
+    try:
+        labels, values = bar_series(a)
+    except ValueError as e:
+        return str(e)
+    if any(v < 0 for v in values):
+        return "bar heights are 0 or more"
+    if not all(bar_label_fits(lab, len(labels)) for lab in labels):
+        return f"the bar names ({labels[-1]}) are too wide for {len(labels)} bars: a shorter label, or fewer bars"
+    st["labels"], st["values"] = labels, values
+    st["y_max"] = nice_top(max(values) or 1)
+    return None
+
+
+def _check_cumulative(st: dict, a) -> str | None:
+    total = 0.0
+    for i, v in enumerate(st["values"]):
+        total += v
+        st["values"][i] = total
+    if total > st["y_max"]:
+        st["y_max"] = nice_top(total)
+    return None
+
+
+def _check_normalize(st: dict, a) -> str | None:
+    total = sum(st["values"])
+    if total <= 0:
+        return "every bar is 0: there is no total to divide by"
+    st["values"] = [v / total for v in st["values"]]
+    st["y_max"] = nice_top(max(st["values"]))
+    return None
+
+
+def _check_expected(st: dict, a) -> str | None:
+    try:
+        xs = [float(lab) for lab in st["labels"]]
+    except ValueError:
+        return "an expected value needs numbers as the bar labels (the outcomes), e.g. 1, 2, 3"
+    total = sum(st["values"])
+    if total <= 0:
+        return "every bar is 0"
+    st["last"] = sum(x * v for x, v in zip(xs, st["values"])) / total
+    return None
+
+
+def _bars_words(st: dict) -> str:
+    return ", ".join(f"{lab}: {_num(v)}" for lab, v in zip(st["labels"], st["values"]))
+
+
+def _said_compare(st: dict, a: BarPairArgs) -> str:
+    va, vb = _bar_value(st, a.a), _bar_value(st, a.b)
+    rel = "taller than" if va > vb else "shorter than" if va < vb else "as tall as"
+    sign = ">" if va > vb else "<" if va < vb else "="
+    return (f"bars {a.a} and {a.b} light up: {a.a} ({_num(va)}) is {rel} {a.b} ({_num(vb)}), noted "
+            f'"{_num(va)} {sign} {_num(vb)}"')
+
+
+def _describe_bars(p: BarParams) -> str:
+    st = _bar_state(p)
+    narrow = "; the bars are too narrow to carry their numbers" if len(p.labels) > 8 else ""
+    return (f"a bar chart of {_bars_words(st)}" + (f" ({p.y_label})" if p.y_label else "") + narrow
+            + (f', titled "{p.title}"' if p.title else ""))
+
+
+BAR_CHART = TemplateSpec(
+    name="BarChart",
+    family="bar_meter",
+    purpose="A few quantities as bars side by side, each with its value on top: counts, amounts, frequencies, a "
+            "probability distribution, partial sums. Computed: a total, running totals (cumulative), each bar as "
+            "its share of the total (normalize), the mean, and an expected value (bars labelled with numbers). "
+            "Needs at least half the frame.",
+    params=BarParams,
+    min_rows=3,
+    init_state=_bar_state,
+    noun="bar chart",
+    describe=_describe_bars,
+    actions={
+        "set": ActionSpec("Change one bar's height (it grows or shrinks).", BarArgs, _check_set_bar,
+                          lambda s, a: f"bar {a.label} goes from {_num(s['last'][0])} to {_num(a.value)}",
+                          reveals=True),
+        "add_bar": ActionSpec("A new bar on the right.", BarArgs, _check_add_bar,
+                          lambda s, a: f"a new bar {a.label} rises to {_num(a.value)}", reveals=True),
+        "series": ActionSpec("Replace the bars with a formula's terms, n = n_from..n_to (computed): a geometric "
+                             "or discounted sequence, 1/n^2, then cumulative for its partial sums.", BarSeriesArgs,
+                             _check_bar_series,
+                             lambda s, a: f"the bars become the terms of {a.fn}: {_bars_words(s)}", reveals=True),
+        "highlight": ActionSpec("Colour these bars.", BarLabelsArgs, lambda s, a: _need_bars(s, *a.labels),
+                                lambda s, a: (f"bar {a.labels[0]} turns" if len(a.labels) == 1 else
+                                              f"bars {', '.join(a.labels)} turn") + f" {a.colour.lower()}"),
+        "compare": ActionSpec("Light up two bars and note which is taller (computed).", BarPairArgs,
+                              lambda s, a: _need_bars(s, a.a, a.b), _said_compare, reveals=True),
+        "total": ActionSpec("Note the sum of all the bars (computed).",
+                            says=lambda s, a: f"the total of the bars, {_num(sum(s['values']))}, is noted",
+                            reveals=True),
+        "cumulative": ActionSpec("Each bar becomes the running total up to it (computed): partial sums, a "
+                                 "cumulative distribution.", NoArgs, _check_cumulative,
+                                 lambda s, a: f"each bar becomes the running total: {_bars_words(s)}", reveals=True),
+        "normalize": ActionSpec("Each bar becomes its share of the total (computed): counts to relative "
+                                "frequencies or probabilities that add to 1.", NoArgs, _check_normalize,
+                                lambda s, a: f"each bar becomes its share of the total: {_bars_words(s)}",
+                                reveals=True),
+        "mean_line": ActionSpec("A dashed line across the chart at the bars' mean height (computed).",
+                                says=lambda s, a: "a dashed line at the mean height, "
+                                                  f"{_num(sum(s['values']) / len(s['values']))}", reveals=True),
+        "expected": ActionSpec("The expected value, sum of outcome x probability, noted (computed; the bar labels "
+                               "are the outcomes).", NoArgs, _check_expected,
+                               lambda s, a: f"the expected value, {_num(s['last'])}, is noted", reveals=True),
+        "ghost": ActionSpec("A wrong idea: a red dashed outline of a bar at the wrong height, noted in red.",
+                            BarGhostArgs, lambda s, a: _need_bars(s, a.label),
+                            lambda s, a: f'a wrong idea: a red dashed bar {a.label} at {_num(a.value)}, noted '
+                                         f'"{a.text}"'),
+        "note": ActionSpec("A short line of text above the bars.", NoteArgs,
+                           says=lambda s, a: f'note above the bars: "{a.text}"'),
+        "clear": ActionSpec("Remove highlights, the ghost, the mean line and the note.",
+                            says=lambda s, a: "the chart's highlights, ghost, line and note clear"),
+    },
+    example=[
+        ['bars = BarChart(labels=["1", "2", "3", "4", "5", "6"], values=[3, 5, 4, 2, 4, 6], y_label="count", '
+         'title="24 die rolls")'],
+        ['bars.highlight(labels=["6"], colour="GOLD")'],
+        ['bars.ghost(label="1", value=6, text="every face equal?")'],
+        ["bars.clear()", "bars.total()"],
+        ["bars.normalize()"],
+        ["bars.expected()"],
+        ['bars.compare(a="6", b="4")'],
+    ],
+)
+
+
+# --------------------------------------------------------------------------
+# NumberLine: points, jumps, intervals, a sequence's terms and an epsilon band on one axis
+# --------------------------------------------------------------------------
+# For the coverage study's number_line pictures (9 KUs) and series convergence: candidate guesses on a line,
+# inequalities as intervals, a sequence closing in on its limit. A sequence's terms, and how many of them lie
+# inside a band, are computed (parse_fn with n), so they are always right.
+
+MAX_NL_POINTS = 8
+MAX_TERMS = 12
+
+
+class NLPoint(_Args):
+    name: str = Field(description="at most 4 characters, e.g. \"a\", \"x0\", \"√2\"")
+    x: float
+    colour: Colour = "YELLOW"
+
+    _name = field_validator("name")(_short(4))
+
+
+class NumberLineParams(_Args):
+    x_range: list[float] = Field(description="[low, high]")
+    step: float | None = Field(None, description="the distance between ticks; left out, about 5-10 ticks")
+    points: list[NLPoint] = Field(default_factory=list, description="points to show at the start (at most 8)")
+    title: str | None = Field(None, description="at most 24 characters")
+    area: Area = "full"
+
+    _title = field_validator("title")(_short(24))
+    _range = field_validator("x_range")(_range_pair)
+
+    @model_validator(mode="after")
+    def _fits(self) -> NumberLineParams:
+        lo, hi = self.x_range
+        if self.step is not None and not 0 < self.step <= hi - lo:
+            raise ValueError("step is above 0 and at most the line's length")
+        if len(nl_ticks(lo, hi, self.step)) > 21:
+            raise ValueError("more than 21 ticks: use a larger step")
+        if len(self.points) > MAX_NL_POINTS:
+            raise ValueError(f"at most {MAX_NL_POINTS} points")
+        names = [p.name for p in self.points]
+        if len(set(names)) != len(names):
+            raise ValueError("point names must differ")
+        out = [p.name for p in self.points if not lo <= p.x <= hi]
+        if out:
+            raise ValueError(f"point {out[0]} is off the line ({_num(lo)} to {_num(hi)})")
+        return self
+
+
+def nl_ticks(lo: float, hi: float, step: float | None) -> list[float]:
+    """The tick positions: every `step`, or a round step giving about 5-10 ticks."""
+    import math
+
+    if step is None:
+        raw = (hi - lo) / 8
+        k = 10 ** math.floor(math.log10(raw))
+        step = next(m * k for m in (1, 2, 2.5, 5, 10) if m * k >= raw)
+    first = math.ceil(lo / step - 1e-9) * step
+    out, x = [], first
+    while x <= hi + 1e-9 and len(out) < 100:
+        out.append(round(x, 10))
+        x += step
+    return out
+
+
+class NLPointArgs(NLPoint):
+    pass
+
+
+class NLMoveArgs(_Args):
+    name: str
+    x: float
+
+
+class JumpArgs(_Args):
+    from_x: float
+    to_x: float
+    label: str | None = Field(None, description='e.g. "+3", "x2", "/2" (at most 6 characters)')
+    colour: Colour = "TEAL"
+
+    _label = field_validator("label")(_short(6))
+
+
+class IntervalArgs(_Args):
+    lo: float | None = Field(None, description="the left end; None: it runs off the left edge (to -infinity)")
+    hi: float | None = Field(None, description="the right end; None: to +infinity")
+    lo_closed: bool = Field(True, description="the left end included (filled dot) or not (hollow)")
+    hi_closed: bool = Field(True, description="the right end included or not")
+    colour: Colour = "TEAL"
+
+
+class SequenceArgs(_Args):
+    fn: str = Field(description='the n-th term as a formula in n, e.g. "1/n", "(1 + 1/n)**n", "sum" not allowed')
+    n_from: int = Field(1, description="the first n")
+    n_to: int = Field(6, description="the last n (at most 12 terms)")
+    colour: Colour = "YELLOW"
+
+
+class BandArgs(_Args):
+    center: float
+    eps: float = Field(description="the half-width: the band runs from center - eps to center + eps")
+
+
+class NLNamesArgs(_Args):
+    names: list[str]
+    colour: Colour = "YELLOW"
+
+
+class NLGhostArgs(_Args):
+    x: float
+    text: str = Field(description="the wrong idea, at most 24 characters")
+
+    _text = field_validator("text")(_short(24))
+
+
+def _nl_state(p: NumberLineParams) -> dict:
+    return {"range": tuple(p.x_range), "points": {q.name: q.x for q in p.points}, "terms": [], "last": None}
+
+
+def _on_line(st: dict, *xs: float | None) -> str | None:
+    lo, hi = st["range"]
+    bad = [x for x in xs if x is not None and not lo <= x <= hi]
+    return f"{_num(bad[0])} is off the line ({_num(lo)} to {_num(hi)})" if bad else None
+
+
+def _check_nl_point(st: dict, a: NLPointArgs) -> str | None:
+    if problem := _on_line(st, a.x):
+        return problem
+    if a.name not in st["points"] and len(st["points"]) >= MAX_NL_POINTS:
+        return f"at most {MAX_NL_POINTS} points"
+    st["last"] = st["points"].get(a.name)
+    st["points"][a.name] = a.x
+    return None
+
+
+def _check_nl_move(st: dict, a: NLMoveArgs) -> str | None:
+    if a.name not in st["points"]:
+        return f"there is no point {a.name!r} (points: {', '.join(st['points']) or 'none'})"
+    if problem := _on_line(st, a.x):
+        return problem
+    st["last"] = st["points"][a.name]
+    st["points"][a.name] = a.x
+    return None
+
+
+def _check_interval(st: dict, a: IntervalArgs) -> str | None:
+    if a.lo is None and a.hi is None:
+        return "give at least one end"
+    if a.lo is not None and a.hi is not None and not a.lo < a.hi:
+        return "lo is below hi"
+    return _on_line(st, a.lo, a.hi)
+
+
+def nl_terms(fn: str, n_from: int, n_to: int) -> list[tuple[int, float]]:
+    """(n, a_n) for each n, computed from the formula; terms that aren't finite are left out."""
+    import math
+
+    f = parse_fn(fn)
+    out = []
+    for n in range(n_from, n_to + 1):
+        v = float(f(float(n)))
+        if math.isfinite(v):
+            out.append((n, v))
+    return out
+
+
+def _check_sequence(st: dict, a: SequenceArgs) -> str | None:
+    if not 1 <= a.n_to - a.n_from + 1 <= MAX_TERMS:
+        return f"1-{MAX_TERMS} terms (n_from to n_to)"
+    try:
+        terms = nl_terms(a.fn, a.n_from, a.n_to)
+    except ValueError as e:
+        return str(e)
+    lo, hi = st["range"]
+    inside = [(n, v) for n, v in terms if lo <= v <= hi]
+    if not inside:
+        return "no term lands on the line: widen x_range"
+    st["terms"] = inside
+    st["last"] = [(n, v) for n, v in terms if not lo <= v <= hi]
+    return None
+
+
+def _check_band(st: dict, a: BandArgs) -> str | None:
+    if a.eps <= 0:
+        return "eps is above 0"
+    if problem := _on_line(st, a.center):
+        return problem
+    st["last"] = [n for n, v in st["terms"] if abs(v - a.center) < a.eps]
+    return None
+
+
+def _interval_words(a: IntervalArgs) -> str:
+    left = "(-∞" if a.lo is None else ("[" if a.lo_closed else "(") + _num(a.lo)
+    right = "∞)" if a.hi is None else _num(a.hi) + ("]" if a.hi_closed else ")")
+    return f"{left}, {right}"
+
+
+def _said_sequence(st: dict, a: SequenceArgs) -> str:
+    terms = ", ".join(_num(v) for _, v in st["terms"])
+    n0, n1 = st["terms"][0][0], st["terms"][-1][0]
+    out = f"the terms a_{n0} to a_{n1} of {a.fn} appear as dots at {terms}"
+    if st["last"]:
+        out += f"; {len(st['last'])} more fall off the line"
+    return out
+
+
+def _said_band(st: dict, a: BandArgs) -> str:
+    lo, hi = _num(a.center - a.eps), _num(a.center + a.eps)
+    out = f"a band from {lo} to {hi} (within {_num(a.eps)} of {_num(a.center)}) is shaded"
+    if st["terms"]:
+        inside = st["last"]
+        out += (f"; {len(inside)} of the {len(st['terms'])} terms lie inside"
+                + (f", every one from a_{inside[0]} on" if inside and inside == [n for n, _ in st["terms"]
+                                                                                  if n >= inside[0]] else ""))
+    return out
+
+
+def _describe_nl(p: NumberLineParams) -> str:
+    out = f"a number line from {_num(p.x_range[0])} to {_num(p.x_range[1])}"
+    if p.points:
+        out += " with points " + ", ".join(f"{q.name} at {_num(q.x)}" for q in p.points)
+    return out + (f', titled "{p.title}"' if p.title else "")
+
+
+NUMBER_LINE = TemplateSpec(
+    name="NumberLine",
+    family="number_line",
+    purpose="One axis with ticks: named points (and sliding them), jumps between numbers (an arc marked +3 or x2), "
+            "intervals for inequalities (filled or hollow ends, or running off to infinity), a sequence's terms "
+            "computed from its formula, and a band within eps of a number with the terms inside it counted "
+            "(convergence). Needs a third of the frame or more.",
+    params=NumberLineParams,
+    min_rows=2,
+    init_state=_nl_state,
+    noun="number line",
+    describe=_describe_nl,
+    actions={
+        "point": ActionSpec("Put a named point on the line (or move it there).", NLPointArgs, _check_nl_point,
+                            lambda s, a: (f"point {a.name} moves from {_num(s['last'])} to {_num(a.x)}"
+                                          if s["last"] is not None else f"point {a.name} at {_num(a.x)}")),
+        "slide": ActionSpec("Slide a point to a new place: the next guess, the next term.", NLMoveArgs,
+                           _check_nl_move, lambda s, a: f"point {a.name} slides from {_num(s['last'])} to {_num(a.x)}",
+                           reveals=True),
+        "jump": ActionSpec("An arc arrow from one number to another, with an optional label (+3, x2, /2).",
+                           JumpArgs, lambda s, a: _on_line(s, a.from_x, a.to_x),
+                           lambda s, a: f"an arrow jumps from {_num(a.from_x)} to {_num(a.to_x)}"
+                                        + (f', marked "{a.label}"' if a.label else ""), reveals=True),
+        "interval": ActionSpec("Shade an interval on the line: an inequality's solutions.", IntervalArgs,
+                               _check_interval,
+                               lambda s, a: f"the interval {_interval_words(a)} is shaded {a.colour.lower()}",
+                               reveals=True),
+        "sequence": ActionSpec("Dots at a sequence's terms a_n, computed from its formula.", SequenceArgs,
+                               _check_sequence, _said_sequence, reveals=True),
+        "band": ActionSpec("Shade the band within eps of a number; with a sequence shown, count the terms inside "
+                           "(computed).", BandArgs, _check_band, _said_band, reveals=True),
+        "highlight": ActionSpec("Colour these points.", NLNamesArgs,
+                                lambda s, a: next((f"there is no point {n!r}" for n in a.names if n not in s["points"]),
+                                                  None),
+                                lambda s, a: f"{'point' if len(a.names) == 1 else 'points'} {', '.join(a.names)} "
+                                             f"turn{'s' if len(a.names) == 1 else ''} {a.colour.lower()}"),
+        "ghost": ActionSpec("A wrong idea: a red dashed marker at a number, noted in red.", NLGhostArgs,
+                            lambda s, a: _on_line(s, a.x),
+                            lambda s, a: f'a wrong idea: a red dashed marker at {_num(a.x)}, noted "{a.text}"'),
+        "note": ActionSpec("A short line of text above the line.", NoteArgs,
+                           says=lambda s, a: f'note above the line: "{a.text}"'),
+        "clear": ActionSpec("Remove jumps, intervals, the band, the ghost and the note (points and terms stay).",
+                            says=lambda s, a: "the line's jumps, shading, ghost and note clear"),
+    },
+    example=[
+        ['line = NumberLine(x_range=[0, 1.2], step=0.2, title="a_n = 1/n")'],
+        ['line.sequence(fn="1/n", n_from=1, n_to=8)'],
+        ['line.ghost(x=0.1, text="stops at 0.1?")'],
+        ["line.clear()", "line.band(center=0, eps=0.15)"],
+        ['line.point(name="L", x=0, colour="GOLD")'],
+    ],
+)
+
+
+# --------------------------------------------------------------------------
+# Table: a grid of cells, filled by the writer or computed in order with arrows to what each cell came from
+# --------------------------------------------------------------------------
+# For the coverage study's dp_table and code_trace pictures, and truth tables, counting grids and Pascal's
+# triangle. A table built from a rule (pascal, grid_paths, fibonacci, truth_table) is filled by code, one cell (or
+# row) per call, each from the cells it depends on, so the numbers are always right.
+
+MAX_TABLE_ROWS = 8
+MAX_TABLE_COLS = 7
+TABLE_RULES = ("pascal", "grid_paths", "fibonacci", "truth_table")
+_TRUTH_VARS = ("A", "B", "C")
+
+
+def truth_fn(expr: str):
+    """A boolean expression in A, B, C with and, or, not, xor and brackets, as a function of a dict of 0/1 values.
+    Parsed, never executed as code. Raises ValueError with what to fix."""
+    import ast as _ast
+
+    source = re.sub(r"\bxor\b", "^", expr.strip())
+    try:
+        tree = _ast.parse(source, mode="eval")
+    except SyntaxError as e:
+        raise ValueError(f"{expr!r} isn't an expression: use A, B, C with and, or, not, xor and brackets") from e
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.Name) and node.id not in _TRUTH_VARS:
+            raise ValueError(f"{expr!r}: the variables are A, B and C")
+        if not isinstance(node, (_ast.Expression, _ast.BoolOp, _ast.And, _ast.Or, _ast.UnaryOp, _ast.Not,
+                                 _ast.BinOp, _ast.BitXor, _ast.Name, _ast.Load)):
+            raise ValueError(f"{expr!r}: only A, B, C, and, or, not, xor and brackets")
+    code = compile(tree, "<truth>", "eval")
+    used = sorted({n.id for n in _ast.walk(tree) if isinstance(n, _ast.Name)})
+    return (lambda env: int(bool(eval(code, {"__builtins__": {}}, {k: bool(v) for k, v in env.items()})))), used  # noqa: S307
+
+
+def table_cell_width(cols: int) -> float:
+    """The room for words in a cell when this many columns share the width (table.py: at most 1.3 wide)."""
+    return min(1.3, (SAFE_WIDTH - 0.1) / max(cols, 1)) * 0.9
+
+
+def table_cells(cols: int) -> int:
+    """About how many characters fit in a cell when this many columns share the width."""
+    return max(1, int(table_cell_width(cols) / 0.18))
+
+
+class TableParams(_Args):
+    columns: list[str] | None = Field(None, description='the column headers, e.g. ["i", "x", "total"] (1-7)')
+    rows: list[list[Value]] | None = Field(
+        None, description='the cells, row by row, "" for an empty cell to fill later (1-8 rows), e.g. '
+                          '[[0, 5, ""], [1, 3, ""]]')
+    row_labels: list[str] | None = Field(None, description="a label in front of each row (optional)")
+    rule: Literal["pascal", "grid_paths", "fibonacci", "truth_table"] | None = Field(
+        None, description='instead of rows, a table code fills (fill_next): "pascal" (Pascal\'s triangle, size=[n] '
+                          'rows), "grid_paths" (paths to each cell moving right or down, size=[rows, cols]), '
+                          '"fibonacci" (one row, size=[n]), "truth_table" (every row of 0/1 values for expr)')
+    size: list[int] | None = Field(None, description="for pascal and fibonacci [n]; for grid_paths [rows, cols]")
+    expr: str | None = Field(None, description='for truth_table: e.g. "A and not B", "(A or B) xor C"')
+    title: str | None = Field(None, description="at most 24 characters")
+    area: Area = "full"
+
+    _title = field_validator("title")(_short(24))
+
+    @model_validator(mode="after")
+    def _fits(self) -> TableParams:
+        if self.rule is None:
+            if not self.rows:
+                raise ValueError("give rows (or a rule for code to fill)")
+            width = len(self.rows[0])
+            if any(len(r) != width for r in self.rows):
+                raise ValueError("every row has the same number of cells")
+            if self.columns is not None and len(self.columns) != width:
+                raise ValueError(f"{len(self.columns)} headers for {width} columns")
+        elif self.rows is not None:
+            raise ValueError("give rows or a rule, not both")
+        nrows, ncols, _, cols = table_shape(self)
+        if not 1 <= nrows <= MAX_TABLE_ROWS:
+            raise ValueError(f"{nrows} rows; use 1-{MAX_TABLE_ROWS}")
+        total_cols = ncols + (1 if self.row_labels or self.rule == "fibonacci" else 0)
+        if not 1 <= total_cols <= MAX_TABLE_COLS:
+            raise ValueError(f"{total_cols} columns; use 1-{MAX_TABLE_COLS}")
+        if self.row_labels is not None and len(self.row_labels) != nrows:
+            raise ValueError(f"{len(self.row_labels)} row labels for {nrows} rows")
+        cell = table_cell_width(total_cols)
+        texts = [str(h) for h in cols or []] + [str(lab) for lab in self.row_labels or []]
+        texts += [_fmt(v) for row in self.rows or [] for v in row if v != ""]
+        long = [t for t in texts if est_width(t) > cell]
+        if long:
+            raise ValueError(f"{long[0]!r} doesn't fit a cell: with {total_cols} columns, about "
+                             f"{table_cells(total_cols)} characters (fewer columns, no row_labels, or rounder "
+                             "numbers)")
+        return self
+
+
+def table_shape(p: TableParams) -> tuple[int, int, list[list[str]], list[str] | None]:
+    """(rows, columns, the starting cells, the headers) of the table the parameters describe."""
+    if p.rule is None:
+        rows = [[_fmt(v) if v != "" else "" for v in r] for r in p.rows or []]
+        return len(rows), len(rows[0]) if rows else 0, rows, p.columns
+    size = p.size or []
+    if p.rule == "truth_table":
+        if not p.expr:
+            raise ValueError("a truth_table needs expr")
+        _, used = truth_fn(p.expr)
+        n = len(used)
+        rows = [[str((k >> (n - 1 - j)) & 1) for j in range(n)] + [""] for k in range(2 ** n)]
+        return len(rows), n + 1, rows, used + [p.expr if len(p.expr) <= 6 else "out"]
+    if p.rule == "grid_paths":
+        if len(size) != 2 or min(size) < 1:
+            raise ValueError("grid_paths needs size=[rows, cols]")
+        r, c = size
+        return r, c, [[""] * c for _ in range(r)], None
+    if len(size) != 1 or size[0] < 2:
+        raise ValueError(f"{p.rule} needs size=[n] (2 or more)")
+    n = size[0]
+    if p.rule == "pascal":
+        return n, n, [[""] * n for _ in range(n)], [str(k) for k in range(n)]
+    return 1, n, [[""] * n], [str(k) for k in range(n)]
+
+
+def table_next(st: dict) -> dict | None:
+    """The next cell a rule fills, its value and the cells it came from, or None when the table is full."""
+    rule, cells = st["rule"], st["cells"]
+    for r, row in enumerate(cells):
+        for c, v in enumerate(row):
+            if v != "" or (rule == "pascal" and c > r) or (rule == "truth_table" and c != len(row) - 1):
+                continue
+            if rule == "pascal":
+                frm = [] if c in (0, r) else [(r - 1, c - 1), (r - 1, c)]
+                value = 1 if not frm else sum(int(cells[a][b]) for a, b in frm)
+            elif rule == "grid_paths":
+                frm = [] if r == 0 or c == 0 else [(r - 1, c), (r, c - 1)]
+                value = 1 if not frm else sum(int(cells[a][b]) for a, b in frm)
+            elif rule == "fibonacci":
+                frm = [] if c < 2 else [(0, c - 2), (0, c - 1)]
+                value = c if not frm else sum(int(cells[a][b]) for a, b in frm)
+            else:
+                frm = [(r, j) for j in range(len(row) - 1)]
+                value = st["truth"]({st["vars"][j]: int(row[j]) for j in range(len(row) - 1)})
+            return {"cell": (r, c), "value": str(value), "from": frm}
+    return None
+
+
+class TableCellArgs(_Args):
+    row: int
+    col: int
+    value: Value
+
+    @model_validator(mode="after")
+    def _short_value(self) -> TableCellArgs:
+        if len(_fmt(self.value)) > 6:
+            raise ValueError("a cell holds at most 6 characters")
+        return self
+
+
+def _cell_fits(st: dict, value) -> str | None:
+    cols = st["ncols"] + (1 if st.get("lead") else 0)
+    if est_width(_fmt(value)) > table_cell_width(cols):
+        return f"{_fmt(value)!r} doesn't fit a cell: with {cols} columns, about {table_cells(cols)} characters"
+    return None
+
+
+class CellsArgs(_Args):
+    cells: list[list[int]] = Field(description="[row, col] pairs, e.g. [[0, 1], [2, 2]]")
+    colour: Colour = "YELLOW"
+
+
+class RowArgs(_Args):
+    row: int
+    colour: Colour = "YELLOW"
+
+
+class ColArgs(_Args):
+    col: int
+    colour: Colour = "YELLOW"
+
+
+class DependsArgs(_Args):
+    cell: list[int] = Field(description="[row, col] of the cell")
+    on: list[list[int]] = Field(description="the [row, col] cells it is worked out from")
+
+
+class TableGhostArgs(_Args):
+    row: int
+    col: int
+    value: Value
+    text: str = Field(description="the wrong idea, at most 24 characters")
+
+    _text = field_validator("text")(_short(24))
+
+
+def _table_state(p: TableParams) -> dict:
+    nrows, ncols, cells, cols = table_shape(p)
+    st = {"rule": p.rule, "cells": cells, "nrows": nrows, "ncols": ncols, "columns": cols, "last": None,
+          "lead": bool(p.row_labels or p.rule == "fibonacci")}
+    if p.rule == "truth_table":
+        st["truth"], st["vars"] = truth_fn(p.expr)
+    return st
+
+
+def _in_table(st: dict, *cells) -> str | None:
+    for cell in cells:
+        if len(cell) != 2:
+            return "a cell is [row, col]"
+        r, c = cell
+        if not (0 <= r < st["nrows"] and 0 <= c < st["ncols"]):
+            return f"cell [{r}, {c}] is outside the table ({st['nrows']} rows, {st['ncols']} columns, from 0)"
+    return None
+
+
+def _check_fill(st: dict, a: TableCellArgs) -> str | None:
+    if problem := _in_table(st, (a.row, a.col)):
+        return problem
+    if st["rule"] is not None:
+        return f"this table's cells are computed: call fill_next (its rule is {st['rule']})"
+    if problem := _cell_fits(st, a.value):
+        return problem
+    st["last"] = st["cells"][a.row][a.col]
+    st["cells"][a.row][a.col] = _fmt(a.value)
+    return None
+
+
+def _check_fill_next(st: dict, a) -> str | None:
+    if st["rule"] is None:
+        return "fill_next fills a table built from a rule; write this table's cells with fill"
+    ev = table_next(st)
+    if ev is None:
+        return "the table is full"
+    r, c = ev["cell"]
+    st["cells"][r][c] = ev["value"]
+    st["last"] = ev
+    return None
+
+
+def _check_fill_row(st: dict, a) -> str | None:
+    if st["rule"] is None:
+        return "fill_row fills a table built from a rule; write this table's cells with fill"
+    first = table_next(st)
+    if first is None:
+        return "the table is full"
+    events = []
+    while (ev := table_next(st)) is not None and ev["cell"][0] == first["cell"][0]:
+        r, c = ev["cell"]
+        st["cells"][r][c] = ev["value"]
+        events.append(ev)
+    st["last"] = events
+    return None
+
+
+def _cell_words(st: dict, r: int, c: int) -> str:
+    cols = st["columns"]
+    col = (f'"{cols[c]}"' if not cols[c].isdigit() else cols[c]) if cols else str(c)
+    return f"row {r}, column {col}"
+
+
+def _said_fill_next(st: dict, a) -> str:
+    ev = st["last"]
+    r, c = ev["cell"]
+    if not ev["from"]:
+        return f"{_cell_words(st, r, c)} is filled with {ev['value']}, a starting value"
+    if st["rule"] == "truth_table":
+        ins = ", ".join(f"{st['vars'][j]} = {st['cells'][r][j]}" for j in range(len(st["vars"])))
+        return f"for {ins}, the result {ev['value']} is filled in"
+    parts = " + ".join(st["cells"][x][y] for x, y in ev["from"])
+    return (f"{_cell_words(st, r, c)} is filled with {ev['value']} = {parts}, arrows from the "
+            f"cell{'s' if len(ev['from']) > 1 else ''} it adds")
+
+
+def _said_fill_row(st: dict, a) -> str:
+    events = st["last"]
+    r = events[0]["cell"][0]
+    if st["rule"] == "truth_table":
+        ins = ", ".join(f"{st['vars'][j]} = {st['cells'][r][j]}" for j in range(len(st["vars"])))
+        return f"for {ins}, the result {events[0]['value']} is filled in"
+    return f"row {r} is filled in: " + ", ".join(ev["value"] for ev in events)
+
+
+def _describe_table(p: TableParams) -> str:
+    nrows, ncols, cells, cols = table_shape(p)
+    kind = {"pascal": "Pascal's triangle to fill", "grid_paths": "a grid of path counts to fill",
+            "fibonacci": "a row of Fibonacci numbers to fill",
+            "truth_table": f"a truth table for {p.expr}"}.get(p.rule or "", "a table")
+    out = f"{kind}, {nrows} row{'s' if nrows != 1 else ''} by {ncols} column{'s' if ncols != 1 else ''}"
+    if cols:
+        out += " headed " + ", ".join(cols)
+    filled = [", ".join(v or "_" for v in row) for row in cells] if p.rule is None else []
+    if filled:
+        out += "; rows " + "; ".join(filled)
+    return out + (f', titled "{p.title}"' if p.title else "")
+
+
+TABLE = TemplateSpec(
+    name="Table",
+    family="dp_table",
+    purpose="A grid of cells: a table of values, a variable trace, a DP table, a truth table, Pascal's triangle. "
+            "Cells are filled by you (fill), or, for a table built from a rule, computed in order by code "
+            "(fill_next: one cell, with arrows from the cells it came from; fill_row: the rest of the row). "
+            "Highlight cells, rows or columns; draw arrows from the cells a value depends on. Needs at least half "
+            "the frame.",
+    params=TableParams,
+    min_rows=3,
+    init_state=_table_state,
+    noun="table",
+    describe=_describe_table,
+    actions={
+        "fill": ActionSpec("Write a value in a cell (row and col count from 0).", TableCellArgs, _check_fill,
+                           lambda s, a: f"{_cell_words(s, a.row, a.col)} is filled with {_fmt(a.value)}",
+                           reveals=True),
+        "fill_next": ActionSpec("Fill the next cell of a rule's table (computed), with arrows from the cells it "
+                                "came from.", NoArgs, _check_fill_next, _said_fill_next, reveals=True),
+        "fill_row": ActionSpec("Fill the rest of the current row (computed).", NoArgs, _check_fill_row,
+                               _said_fill_row, reveals=True),
+        "highlight": ActionSpec("Colour these cells.", CellsArgs, lambda s, a: _in_table(s, *a.cells),
+                                lambda s, a: ("the cells " if len(a.cells) > 1 else "the cell ")
+                                + "; ".join(_cell_words(s, r, c) for r, c in a.cells)
+                                + f" turn{'' if len(a.cells) > 1 else 's'} {a.colour.lower()}"),
+        "highlight_row": ActionSpec("Colour a whole row.", RowArgs, lambda s, a: _in_table(s, (a.row, 0)),
+                                    lambda s, a: f"row {a.row} turns {a.colour.lower()}"),
+        "highlight_col": ActionSpec("Colour a whole column.", ColArgs, lambda s, a: _in_table(s, (0, a.col)),
+                                    lambda s, a: f"column {_cell_words(s, 0, a.col).split(', column ')[1]} turns "
+                                                 f"{a.colour.lower()}"),
+        "depends": ActionSpec("Arrows from the cells a value is worked out from to that cell.", DependsArgs,
+                              lambda s, a: _in_table(s, a.cell, *a.on),
+                              lambda s, a: "arrows run from " + "; ".join(_cell_words(s, r, c) for r, c in a.on)
+                              + f" to {_cell_words(s, *a.cell)}"),
+        "ghost": ActionSpec("A wrong idea: a wrong value in an empty cell, in a red dashed box, noted in red.",
+                            TableGhostArgs,
+                            lambda s, a: _in_table(s, (a.row, a.col)) or (
+                                f"the cell holds {s['cells'][a.row][a.col]}; a wrong idea goes in an empty cell"
+                                if s["cells"][a.row][a.col] else None),
+                            lambda s, a: f"a wrong idea: {_fmt(a.value)} in a red dashed box at "
+                                         f'{_cell_words(s, a.row, a.col)}, noted "{a.text}"'),
+        "note": ActionSpec("A short line of text above the table.", NoteArgs,
+                           says=lambda s, a: f'note above the table: "{a.text}"'),
+        "clear": ActionSpec("Remove highlights, arrows, the ghost and the note (values stay).",
+                            says=lambda s, a: "the table's highlights, arrows, ghost and note clear"),
+    },
+    example=[
+        ['t = Table(rule="grid_paths", size=[3, 4], title="paths to each cell")'],
+        ["t.fill_row()"],
+        ["t.fill_next()"],
+        ['t.ghost(row=1, col=1, value=1, text="still one way?")'],
+        ["t.clear()", "t.fill_next()"],
+        ["t.fill_row()"],
+        ["t.fill_row()", 't.highlight(cells=[[2, 3]], colour="GOLD")'],
+    ],
+)
+
+
 REGISTRY: dict[str, TemplateSpec] = {s.name: s for s in (
-    ARRAY_BARS, MERGE_SORT, GRAPH, FUNCTION_PLOT, LINEAR_MAP_2D, EQUATION_STEPS, NOTE)}
+    ARRAY_BARS, MERGE_SORT, GRAPH, BAR_CHART, NUMBER_LINE, TABLE, FUNCTION_PLOT, LINEAR_MAP_2D, EQUATION_STEPS, NOTE)}
 
 # Extra checks a template's parameters need beyond its model (the vectors fit the grid, the curves fit the axes).
 INIT_CHECKS: dict[str, Callable[[BaseModel], str | None]] = {"LinearMap2D": _init_map_check,

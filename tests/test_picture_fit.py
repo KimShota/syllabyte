@@ -137,8 +137,8 @@ def test_a_dfs_lesson_gets_the_graph_not_the_list():
 
 
 def test_a_missing_template_is_said_and_nothing_is_borrowed():
-    assert templates_for("probability") == ["EquationSteps", "Note"]
-    brief = picture_brief("probability", templates_for("probability"))
+    assert templates_for("vectors_3d") == ["EquationSteps", "Note"]
+    brief = picture_brief("vectors_3d", templates_for("vectors_3d"))
     assert "No template draws" in brief and "wrong picture" in brief
 
 

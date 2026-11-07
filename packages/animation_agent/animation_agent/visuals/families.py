@@ -56,6 +56,25 @@ FAMILIES: dict[str, str] = {
 DRAWN_BY: dict[str, tuple[str, ...]] = {
     "array_bars": ("ArrayBars",),
     "merge_sort": ("MergeSort",),
+    # Boxes and arrows (Graph with labels, edge labels, tree and flow layouts, walk and feed).
+    "flowchart": ("Graph",),
+    "call_tree": ("Graph",),
+    "tree": ("Graph",),
+    "state_machine": ("Graph",),
+    "linked_list": ("Graph",),
+    # Quantities as bars (totals, running totals, shares, the mean, an expected value computed).
+    "bar_meter": ("BarChart",),
+    "probability": ("BarChart",),
+    "series": ("BarChart", "NumberLine"),
+    "number_line": ("NumberLine",),
+    # Grids of cells (computed fills: truth tables, Pascal's triangle, grid paths, Fibonacci).
+    "dp_table": ("Table",),
+    "code_trace": ("Table",),
+    "bits_logic": ("Table",),
+    "counting": ("Table",),
+    # Axes with polar and parametric curves, named points, equal scale.
+    "polar_parametric": ("FunctionPlot",),
+    "complex_plane": ("FunctionPlot",),
     "growth_curves": ("FunctionPlot",),
     "function_plot": ("FunctionPlot",),
     "stats_plots": ("FunctionPlot",),
