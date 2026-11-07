@@ -16,3 +16,10 @@ def _no_picture_plan_calls(monkeypatch, tmp_path):
 
     monkeypatch.setattr(picture_plan, "structured", refuse)
     monkeypatch.setattr(picture_plan, "CACHE", tmp_path / "picture-plans.json")
+
+
+@pytest.fixture(autouse=True)
+def _one_call_storyboards_in_tests(monkeypatch):
+    """The storyboard tests fake the one-call stages (storyboard_l2, storyboard_fix, storyboard_lines), so they
+    run with one call; tests of plan, then write (the default) set SYLLABYTE_STORYBOARD themselves."""
+    monkeypatch.setenv("SYLLABYTE_STORYBOARD", "one_call")

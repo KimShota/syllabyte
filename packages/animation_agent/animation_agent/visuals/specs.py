@@ -2387,7 +2387,8 @@ GRAPH = TemplateSpec(
                            "node that it labels (from the first node if the marker isn't out yet).", FeedArgs,
                            _check_feed, _said_feed, reveals=True),
         "highlight": ActionSpec("Colour these nodes.", NodesArgs, lambda s, a: _need_nodes(s, *a.nodes),
-                                lambda s, a: f"{', '.join(_name(s, n) for n in a.nodes)} turn {a.colour.lower()}"),
+                                lambda s, a: f"{', '.join(_name(s, n) for n in a.nodes)} "
+                                             f"turn{'s' if len(a.nodes) == 1 else ''} {a.colour.lower()}"),
         "highlight_edge": ActionSpec("Colour one edge.", EdgeArgs, _check_edge,
                                      lambda s, a: f"the edge {a.a}-{a.b} turns {a.colour.lower()}"),
         "path": ActionSpec("Colour a path: the edges between consecutive nodes.", NodesArgs, _check_path,

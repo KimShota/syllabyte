@@ -762,7 +762,10 @@ def write_storyboard(
     from script_generation_agent.script_writer import ScriptValidationError, gather_source_material, validate_dialogue
     from syllabyte_common.cast import load_cast
 
-    if os.environ.get("SYLLABYTE_STORYBOARD", "one_call") == "plan":  # plan, then write (storyboard_plan.py)
+    # Plan, then write (storyboard_plan.py) is the default: on 19 KUs it scored level or better than one call (on
+    # seven data-structure KUs visual alignment 4.14 -> 5.00, five up and none down). SYLLABYTE_STORYBOARD=one_call
+    # keeps the one call below.
+    if os.environ.get("SYLLABYTE_STORYBOARD", "plan") != "one_call":
         from script_generation_agent.storyboard_plan import write_storyboard_planned
 
         return write_storyboard_planned(ku, corpus, level=level, prereq_titles=prereq_titles, model=model,

@@ -483,11 +483,31 @@ _CHANGE_WORDS = {
     "normalize": r"share|fraction|probab|divid|out of|relative|percent|proportion|frequenc",
     "fill": r"fill|write|equal|becom|is \w+|=|add|sum|plus|times|result|gets",
     "slide": r"slide|move|next|closer|jump|now|shift|guess",
+    # Data structures and graph algorithms: a step the line doesn't mention runs ahead of the words.
+    "reverse_step": r"flip|revers|turn|point|back|prev|curr|arrow|link",
+    "insert": r"insert|add|new|link|goes|go|put|join|land|place|bucket|hash|probe|slide|chain",
+    "delete": r"delet|remov|unlink|skip|gone|take|drop|bypass|replace|successor|leaf|child",
+    "find_step": r"check|look|next|compar|curr|search|find|match|move",
+    "find": r"find|look|check|search|probe|bucket|hash|found|lookup",
+    "push": r"push|on top|top|add|call|frame|start|goes on|opener|rise|bubble|insert|new",
+    "pop": r"pop|off|take|return|remov|finish|close|match|empty|sink|out|root",
+    "enqueue": r"enqueue|join|rear|back|line|add|arriv",
+    "dequeue": r"dequeue|front|leave|serve|take|remov|first",
+    "heapify": r"heapify|sift|sink|heap|build|parent",
+    "traverse_step": r"visit|next|order|left|right|root|list|print|go",
+    "dijkstra_step": r"settl|distance|closest|shortest|relax|update|smallest|nearest|cheap",
+    "prim_step": r"edge|cheap|tree|join|add|grow",
+    "kruskal_step": r"edge|cheap|tree|join|add|skip|cycle",
+    "topo_step": r"next|order|incoming|ready|prerequisite|first|before",
+    "partition_step": r"pivot|small|large|side|swap|less|greater|bigger",
 }
 STATE_CHANGES = {"swap", "set_value", "bubble_step", "bubble_pass", "selection_step", "insertion_step", "scan",
                  "bisect_check", "bisect_discard", "bisect_step", "found", "restore", "grey_out", "split",
                  "merge_step", "merge", "merge_level", "dfs_step", "bfs_level", "walk", "feed", "set", "add_bar",
-                 "cumulative", "normalize", "fill", "fill_next", "fill_row", "slide"}
+                 "cumulative", "normalize", "fill", "fill_next", "fill_row", "slide", "reverse_step", "insert",
+                 "delete", "find_step", "find", "push", "pop", "enqueue", "dequeue", "push_front", "push_back",
+                 "pop_front", "pop_back", "heapify", "traverse_step", "dijkstra_step", "prim_step", "kruskal_step",
+                 "topo_step", "partition_step"}
 
 
 def _says_nodes(line: str, nodes: list[str]) -> bool:

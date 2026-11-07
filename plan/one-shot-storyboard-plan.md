@@ -491,3 +491,26 @@ a hash table that could only hash k mod m (now (a k + b) mod m, so a bad hash pi
 linked-list insert that jumped to its result (now the new node points on, then the one before it points to it,
 then the row makes room; delete bypasses first), a traversal that jumped between nodes (a cursor now walks the
 recursion's route), and Dijkstra's relaxed edges never shown (now lit for that step).
+
+Worked examples for the data structures (2026-11-07): five more modules, each a Level 2 storyboard on an idea that
+isn't one of the test KUs, passing every check (dialogue, call checker with nothing to fix, reveals held, no still
+point lines, highlight rules) and rendering three segments with no layout findings: linked list (reversing in
+place), stack (balanced brackets), hash table (linear probing collisions), tree (BST insert and a missing key),
+graph algorithms (Dijkstra with a detour; graph moves from the boxes module). The check that every change is said
+by its line now covers the new structures' and algorithms' actions.
+
+On the same seven 6.006 KUs (`runs/dsa-2` -> `runs/dsa-3`, $0.80): visual alignment 4.57 -> 4.14 (3 down a point, 4
+the same), all four 5.75 -> 5.54, layout findings 20 -> 0 (the earlier fixes), picture complaints 7.0 -> 7.1 per
+video. No gain. The complaints say why: the writer narrates its own run of the slide's example (Dijkstra's lines
+say "b drops from eleven to ten" while the computed picture settles a at 7 and updates b to 9), and an operation
+the lines narrate in steps runs at once (a heap push plays all its swaps while the lines take one swap each). That
+is the failure bisection had before code traced its steps, and the fix is the same: trace-first for these
+algorithms (code computes the example's steps, the writer narrates them with next_step), with heap and BST
+operations available one comparison or swap per call.
+
+With plan, then write on the same seven KUs (`runs/dsa-plan`, $0.88): visual alignment 4.14 -> 5.00 against one
+call with the same prompt (5 up, 2 the same, none down), all four 5.54 -> 6.14; Dijkstra 6, 5, 6, 4 -> 7, 8, 7, 6
+(its lines now say the computed distances), linked list -> 7, 8, 7, 5. With the 12-KU comparison it is level or
+better on 19 KUs, so it is now the default (`SYLLABYTE_STORYBOARD=one_call` keeps the one call). Still no video
+passes all four at 7; next is trace-first for the data-structure algorithms, with heap and BST operations one swap
+or comparison per call.

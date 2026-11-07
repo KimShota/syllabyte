@@ -20,7 +20,9 @@ critic) reports large gains over writing directly, and so did our own bisection 
   4. As before: the lines are matched to the picture (match_lines), the voices start, and each beat's visual is
      written from its calls.
 
-Chosen with SYLLABYTE_STORYBOARD=plan (write_storyboard); one call stays the default until this is measured.
+The default since 2026-11-07 (write_storyboard; SYLLABYTE_STORYBOARD=one_call for the one call): on 12 KUs it
+scored level or better (coherence 5.67 -> 6.25, visual alignment 4.58 -> 4.83), on seven data-structure KUs clearly
+better (visual alignment 4.14 -> 5.00, five up and none down; Dijkstra's lines now say the computed distances).
 """
 
 from __future__ import annotations

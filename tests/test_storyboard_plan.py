@@ -84,8 +84,7 @@ def test_lines_the_dialogue_checks_reject_are_written_once_more(monkeypatch):
     assert "word word" not in script.segments[2].beats[2].narration
 
 
-def test_one_call_stays_the_default(monkeypatch):
-    monkeypatch.delenv("SYLLABYTE_STORYBOARD", raising=False)
+def _first_stage(monkeypatch) -> list[str]:
     stages = []
 
     def fake(**kw):
@@ -93,12 +92,20 @@ def test_one_call_stays_the_default(monkeypatch):
         raise RuntimeError("stop after the first call")
 
     monkeypatch.setattr(storyboard, "structured", fake)
+    monkeypatch.setattr(storyboard_plan, "structured", fake)
     monkeypatch.setattr("script_generation_agent.script_writer.gather_source_material", lambda c, k: ("slides", []))
     try:
         storyboard.write_storyboard(KU, None, level=2, picture=PICTURE, example=None)
     except RuntimeError:
         pass
-    assert stages == ["storyboard_l2"]
+    return stages
+
+
+def test_plan_then_write_is_the_default_and_one_call_can_be_chosen(monkeypatch):
+    monkeypatch.delenv("SYLLABYTE_STORYBOARD", raising=False)
+    assert _first_stage(monkeypatch) == ["storyboard_plan_l2"]
+    monkeypatch.setenv("SYLLABYTE_STORYBOARD", "one_call")
+    assert _first_stage(monkeypatch) == ["storyboard_l2"]
 
 
 def test_each_call_sees_its_kind_of_example():

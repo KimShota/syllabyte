@@ -527,24 +527,300 @@ for (cover, then uncover on the answer).
 
 
 # --------------------------------------------------------------------------
-# Data structures: linked lists, stacks and queues, hash tables, trees and heaps (rules only, for now)
+# Data structures, each with its own worked example
 # --------------------------------------------------------------------------
 
-STRUCTURES_RULES = """\
-  - Draw the structure itself (LinkedList, StackQueue, HashTable, BinaryTree), not a list of cells standing in for \
-it, and run every operation with its computed action (insert, delete, find_step, reverse_step, push, pop, enqueue, \
-dequeue, a hash table's insert and find, a heap's push and pop, traverse_step): the picture then shows what the \
-operation really does, and its sentence names the values.
-  - Name the pointers as the code does (head, curr, prev, top, front, rear) and show the invariant the idea is \
-about: the part already reversed, the top of the stack, the bucket a key hashes to, the BST's order, the heap's \
-smallest at the root (for a heap, keep the array under the tree: it is how the heap is stored).
-  - A predict line asks for the next state before the step that shows it (where 17 lands, what pop returns, which \
-node the traversal visits next): put the step on the answer line.
+_SHARED_DS_RULES = """\
+  - Draw the structure itself, not a list of cells standing in for it, and run every operation with its computed \
+action: the picture then shows what the operation really does, and its sentence names the values.
+  - A predict line asks for the next state before the step that shows it (where a key lands, what pop returns, \
+the next node visited): put the step on the answer line, never during the objective or the question.
   - The wrong idea is the wrong link, end, bucket or place, drawn as a ghost on a free spot."""
+
+_REVERSE = 'lst = LinkedList(values=[4, 7, 2], title="reverse in place")'
+
+LINKED = {
+    "title": "Reversing a linked list in place",
+    "colour_key": [{"term": "reversed", "colour": "TEAL"}, {"term": "curr", "colour": "GOLD"}],
+    "prepare": [
+        ("b1_peer_question", [_REVERSE],
+         "Lowkey, how do you flip a linked list without making a new one?"),
+        ("b2_explainer_build", ['lst.point(name="curr", index=0)'],
+         "You walk it once with curr and turn each node's arrow around."),
+    ],
+    "initiate": [
+        ("b1_peer_question", [],
+         "Okay, but why not just copy it backwards?"),
+        ("b2_explainer_objective", ['lst.highlight(indices=[0, 1, 2], colour="TEAL")'],
+         "You'll be able to reverse a linked list in place, with only two pointers."),
+    ],
+    "deliver_1": [
+        ("b1_explainer_question", [],
+         "{peer}, what happens when we flip four's arrow first?"),
+        ("b2_peer_answer_wrong_idea", ['lst.ghost(from_index=0, to_index=None, text="the rest is lost?")'],
+         "Not gonna lie, we'd lose seven and two the moment four points back."),
+        ("b3_explainer_feedback", ["lst.clear()", "lst.reverse_step()"],
+         "No, because curr moves on to seven first, so the rest is never lost."),
+        ("b4_peer_build", ["lst.reverse_step()"],
+         "So seven's arrow now points back to four, and curr moves to two."),
+        ("b5_explainer_build", ['lst.highlight(indices=[0, 1], colour="TEAL")'],
+         "Right: everything behind curr is already reversed, one link at a time."),
+    ],
+    "deliver_2": [
+        ("b1_explainer_build", ['lst.highlight(indices=[2], colour="GOLD")'],
+         "Now curr is at two, the last node, and prev holds seven."),
+        ("b2_peer_question", [],
+         "For real, why keep prev around at all?"),
+        ("b3_explainer_feedback", ['lst.highlight(indices=[1], colour="YELLOW")'],
+         "Because two must point back to something, and prev says where: seven."),
+        ("b4_explainer_predict", [],
+         "Pause: after this last flip, where does head go?"),
+        ("b5_peer_build", ["lst.reverse_step()"],
+         "Head moves to two, so the list reads two, seven, four."),
+        ("b6_explainer_build", ['lst.point(name="curr", index=None)'],
+         "Yes, and curr is null now, which is how the loop knows to stop."),
+    ],
+    "end": [
+        ("b1_peer_check", ['lst.highlight(indices=[0, 1, 2], colour="TEAL")'],
+         "So I walk once, flip each arrow back, and move head to the end."),
+        ("b2_explainer_check", ['lst.point(name="prev", index=2)'],
+         "Exactly: one pass, two pointers, and every link turned around in place."),
+    ],
+}
+
+LINKED_RULES = _SHARED_DS_RULES + """
+  - Name the pointers as the code does (head, curr, prev) and show what they hold: insert and delete show the \
+relinking in order, reverse_step flips one link per line, find_step moves curr one node per line."""
+
+_BRACKETS = 'st = StackQueue(kind="stack", title="( [ ] ) balanced?")'
+
+STACK = {
+    "title": "Checking brackets with a stack",
+    "colour_key": [{"term": "top", "colour": "GOLD"}, {"term": "mismatch", "colour": "RED"}],
+    "prepare": [
+        ("b1_peer_question", [_BRACKETS],
+         "Lowkey, how does a computer know if brackets are balanced?"),
+        ("b2_explainer_build", ['st.push(value="(")'],
+         "It keeps a stack, and every opening bracket is pushed on top."),
+    ],
+    "initiate": [
+        ("b1_peer_question", [],
+         "Okay, but why a stack and not a queue?"),
+        ("b2_explainer_objective", ["st.peek()"],
+         "You'll be able to check brackets by matching each closer with the top."),
+    ],
+    "deliver_1": [
+        ("b1_explainer_question", [],
+         "{peer}, a square bracket opens next. Which one closes first?"),
+        ("b2_peer_answer_wrong_idea", ['st.ghost(end="bottom", text="the oldest closes first?")'],
+         "Not gonna lie, the round one, because it opened first."),
+        ("b3_explainer_feedback", ["st.clear()", 'st.push(value="[")'],
+         "No: the square one is newest, so it is pushed on top and must close first."),
+        ("b4_peer_build", ["st.pop()"],
+         "So the closing square bracket pops the top, and they match."),
+        ("b5_explainer_build", ["st.peek()"],
+         "Right, and now the round bracket is back on top, waiting."),
+    ],
+    "deliver_2": [
+        ("b1_explainer_build", ['st.highlight(positions=[0], colour="GOLD")'],
+         "Next comes a closing round bracket, and it checks the top: round."),
+        ("b2_peer_question", [],
+         "For real, what if the top didn't match?"),
+        ("b3_explainer_feedback", ['st.ghost(end="top", text="mismatch: broken")'],
+         "Then the brackets are broken right there, since the newest opener must close first."),
+        ("b4_explainer_predict", [],
+         "Pause: what's left once this bracket closes?"),
+        ("b5_peer_build", ["st.clear()", "st.pop()"],
+         "Nothing: it pops the round bracket off, and the stack is empty."),
+        ("b6_explainer_build", ['st.push(value="(")'],
+         "Yes, empty means balanced; a leftover opener pushed like this means not."),
+    ],
+    "end": [
+        ("b1_peer_check", ['st.highlight(positions=[0], colour="RED")'],
+         "So openers go on top, closers pop a match, and the end must be empty."),
+        ("b2_explainer_check", ["st.pop()"],
+         "Exactly: the last opener in is always the first one to close, off the top."),
+    ],
+}
+
+STACK_RULES = _SHARED_DS_RULES + """
+  - A stack's top and a queue's front and rear are where every line looks: push and pop (enqueue and dequeue) on \
+the line that says them, peek to point at what comes out next. Comparing a stack and a queue: draw both."""
+
+_PROBE = 'ht = HashTable(size=7, mode="probing", keys=[10, 3], title="h(k) = k mod 7")'
+
+HASH = {
+    "title": "Collisions and linear probing",
+    "colour_key": [{"term": "collision", "colour": "GOLD"}, {"term": "cluster", "colour": "ORANGE"}],
+    "prepare": [
+        ("b1_peer_question", [_PROBE],
+         "Lowkey, what happens when two keys want the same bucket?"),
+        ("b2_explainer_build", ['ht.highlight(buckets=[3, 4], colour="GOLD")'],
+         "Ten and three both hash to bucket three, so three moved to four."),
+    ],
+    "initiate": [
+        ("b1_peer_question", [],
+         "Okay, but why not just use a bigger table?"),
+        ("b2_explainer_objective", ["ht.load()"],
+         "You'll be able to place keys with linear probing and count each lookup's checks."),
+    ],
+    "deliver_1": [
+        ("b1_explainer_question", [],
+         "{peer}, seventeen mod seven is three. Where does seventeen go?"),
+        ("b2_peer_answer_wrong_idea", ['ht.ghost(key=17, bucket=3, text="share bucket 3?")'],
+         "Not gonna lie, into bucket three, right next to ten."),
+        ("b3_explainer_feedback", ["ht.clear()", "ht.insert(key=17)"],
+         "No, one bucket holds one key here, so seventeen probes three, four, then five."),
+        ("b4_peer_build", ['ht.highlight(buckets=[5], colour="GOLD")'],
+         "So it lands in bucket five, after two taken buckets."),
+        ("b5_explainer_build", ['ht.highlight(buckets=[3, 4, 5], colour="ORANGE")'],
+         "Right: keys that collide pile up side by side in one cluster."),
+    ],
+    "deliver_2": [
+        ("b1_explainer_build", ["ht.clear()", "ht.insert(key=24)"],
+         "Twenty-four hashes to three as well, so it slides down to six."),
+        ("b2_peer_question", ['ht.highlight(buckets=[3], colour="GOLD")'],
+         "For real, how does a lookup find it again?"),
+        ("b3_explainer_feedback", ['ht.highlight(buckets=[3, 4, 5, 6], colour="YELLOW")'],
+         "Because find walks the same path: start at its hash, move down until it matches."),
+        ("b4_explainer_predict", [],
+         "Pause: how many checks to find twenty-four?"),
+        ("b5_peer_build", ["ht.clear()", "ht.find(key=24)"],
+         "Four checks: three, four, five, then six, where it sits."),
+        ("b6_explainer_build", ["ht.load()"],
+         "Yes, and as the table fills, those runs grow, so lookups slow down."),
+    ],
+    "end": [
+        ("b1_peer_check", ['ht.highlight(buckets=[3, 4, 5, 6], colour="ORANGE")'],
+         "So a collision moves the key down, and find follows the same steps."),
+        ("b2_explainer_check", ["ht.find(key=10)"],
+         "Exactly, which is why a low load factor keeps every lookup short to find."),
+    ],
+}
+
+HASH_RULES = _SHARED_DS_RULES + """
+  - Every insert and find shows its hash and the buckets it tries; use the slide's hash (a and b: h(k) = (a k + b) \
+mod m; a = 0 is a bad hash that piles every key into one chain). Collisions are the point: pick keys that collide."""
+
+_BST = 't = BinaryTree(kind="bst", values=[50, 30, 70, 20, 40], title="where does 65 go?")'
+
+TREE = {
+    "title": "Inserting and searching in a BST",
+    "colour_key": [{"term": "path", "colour": "YELLOW"}, {"term": "new value", "colour": "GOLD"}],
+    "prepare": [
+        ("b1_peer_question", [_BST],
+         "Lowkey, how does a search tree stay sorted when new values arrive?"),
+        ("b2_explainer_build", ['t.highlight(values=[30, 20, 40], colour="TEAL")'],
+         "Everything left of a node is smaller, and everything right is bigger."),
+    ],
+    "initiate": [
+        ("b1_peer_question", [],
+         "Okay, but why does that order matter so much?"),
+        ("b2_explainer_objective", ["t.search(value=40)"],
+         "You'll be able to insert and search by comparing down from the root."),
+    ],
+    "deliver_1": [
+        ("b1_explainer_question", [],
+         "{peer}, where should sixty-five go in this tree?"),
+        ("b2_peer_answer_wrong_idea", ['t.ghost(parent=20, side="left", value=65, text="first free spot?")'],
+         "Not gonna lie, the first free spot, under twenty on the left."),
+        ("b3_explainer_feedback", ["t.clear()", "t.insert(value=65)"],
+         "No, that breaks the order: sixty-five beats fifty, so it goes right."),
+        ("b4_peer_build", ['t.highlight(values=[70], colour="YELLOW")'],
+         "Then sixty-five is smaller than seventy, so it goes left of seventy."),
+        ("b5_explainer_build", ['t.highlight(values=[65], colour="GOLD")'],
+         "Right, one comparison per level, and it lands in the only place that fits."),
+    ],
+    "deliver_2": [
+        ("b1_explainer_build", ["t.clear()", 't.highlight(values=[50], colour="GOLD")'],
+         "Now search for forty-five, starting at the root, fifty, like before."),
+        ("b2_peer_question", [],
+         "For real, how do we know when to stop looking?"),
+        ("b3_explainer_feedback", ['t.highlight(values=[30, 40], colour="YELLOW")'],
+         "We stop when we match, or when the side we need has no child."),
+        ("b4_explainer_predict", [],
+         "Pause: is forty-five in this tree?"),
+        ("b5_peer_build", ["t.clear()", "t.search(value=45)"],
+         "No: left at fifty, right at thirty, right at forty, and it runs out."),
+        ("b6_explainer_build", ['t.highlight(values=[50, 30, 40], colour="TEAL")'],
+         "Yes, three comparisons for a tree three levels deep, never more."),
+    ],
+    "end": [
+        ("b1_peer_check", ['t.highlight(values=[20, 30, 40, 50, 65, 70], colour="TEAL")'],
+         "So I compare down from the root, left if smaller, right if bigger."),
+        ("b2_explainer_check", ['t.highlight(values=[50], colour="GOLD")'],
+         "Exactly, and the same path tells you where to insert or where to stop."),
+    ],
+}
+
+TREE_RULES = _SHARED_DS_RULES + """
+  - A BST's insert, search and delete light their path from the root; a heap keeps its array under the tree (the \
+array is how it is stored) and push, pop and heapify swap in both; traverse_step visits one node per line.
+  - Build the tree the slide uses (BST: insert a middle value first, or it grows lopsided; at most five levels)."""
+
+_DIJKSTRA = ('g = Graph(nodes=["S", "A", "B", "C"], edges=[["S", "A", "4"], ["S", "B", "1"], ["B", "A", "2"], '
+             '["A", "C", "1"], ["B", "C", "5"]], title="shortest paths from S")')
+
+GRAPH_ALGOS = {
+    "title": "Dijkstra settles the closest first",
+    "colour_key": [{"term": "settled", "colour": "TEAL"}, {"term": "detour", "colour": "YELLOW"}],
+    "prepare": [
+        ("b1_peer_question", [_DIJKSTRA],
+         "Lowkey, how does a map app find the shortest route?"),
+        ("b2_explainer_build", ['g.highlight(nodes=["S"], colour="GOLD")'],
+         "It grows outward from the start, always settling the closest place first."),
+    ],
+    "initiate": [
+        ("b1_peer_question", [],
+         "Okay, but why not just take the fewest roads?"),
+        ("b2_explainer_objective", ['g.dijkstra_step(start="S")'],
+         "You'll be able to run Dijkstra by hand and read off each shortest distance."),
+    ],
+    "deliver_1": [
+        ("b1_explainer_question", [],
+         "{peer}, A is four away. Is four its shortest distance?"),
+        ("b2_peer_answer_wrong_idea", ['g.ghost_edge(a="S", b="A", text="4 is final?")'],
+         "Not gonna lie, yes: the direct road is four, so that's it."),
+        ("b3_explainer_feedback", ['g.dijkstra_step(start="S")'],
+         "No, B is only one away, so we settle B first and look through it."),
+        ("b4_peer_build", ['g.highlight_edge(a="B", b="A", colour="YELLOW")'],
+         "So going through B, A costs one plus two, which is three."),
+        ("b5_explainer_build", ['g.dijkstra_step(start="S")'],
+         "Right, the detour is shorter than the direct road, so A settles next."),
+    ],
+    "deliver_2": [
+        ("b1_explainer_build", ['g.highlight(nodes=["C"], colour="GOLD")'],
+         "Last is C, and settling A just gave it a cheaper route."),
+        ("b2_peer_question", [],
+         "For real, why does settling A change C?"),
+        ("b3_explainer_feedback", ['g.highlight_edge(a="A", b="C", colour="YELLOW")'],
+         "Because A's edge to C costs one, so three plus one beats the old route."),
+        ("b4_explainer_predict", [],
+         "Pause: what's C's shortest distance?"),
+        ("b5_peer_build", ['g.dijkstra_step(start="S")'],
+         "Four: three to reach A, plus one more to C."),
+        ("b6_explainer_build", ['g.path(nodes=["S", "B", "A", "C"], colour="TEAL")'],
+         "Yes, so the shortest path runs S, B, A, C, not the direct roads."),
+    ],
+    "end": [
+        ("b1_peer_check", ['g.highlight(nodes=["S", "B", "A", "C"], colour="TEAL")'],
+         "So Dijkstra settles the closest open place, then updates its neighbours."),
+        ("b2_explainer_check", ['g.path(nodes=["S", "B", "A"], colour="GOLD")'],
+         "Exactly: once settled, a distance never shrinks, because every weight is positive."),
+    ],
+}
+
+GRAPH_ALGOS_RULES = """\
+  - Run the algorithm with its computed step, one per line: dfs_step, bfs_level, dijkstra_step (distances appear \
+beside the nodes, relaxed edges light up), prim_step, kruskal_step, topo_step. Give every edge a weight (the third \
+item) for Dijkstra, Prim and Kruskal; a topological order needs a directed graph.
+  - Pick a small graph from the slides where the idea shows: a detour shorter than the direct edge (Dijkstra), an \
+edge skipped because it closes a cycle (Kruskal). A line that works out a distance says the sum ("one plus two").
+  - A predict line asks for the next distance or node before the step that settles it."""
 
 
 MODULES: dict[str, Module] = {m.name: m for m in (
-    Module("boxes", frozenset({"graph", "flowchart", "call_tree", "state_machine"}),
+    Module("boxes", frozenset({"flowchart", "call_tree", "state_machine"}),
            "Recursion: the calls fib(3) makes, and why fib(1) is worked out twice", BOXES, BOXES_RULES),
     Module("bars", frozenset({"bar_meter", "probability", "series"}),
            "Expected value: counting outcomes, turning them into probabilities, weighting them", BARS, BARS_RULES),
@@ -557,8 +833,17 @@ MODULES: dict[str, Module] = {m.name: m for m in (
            "Growth of running time: why n squared outgrows n", PLOT, PLOT_RULES),
     Module("formulas", frozenset({"equation_steps", "proof_steps", "matrix_ops"}),
            "Expanding (a + b) squared: where the middle term 2ab comes from", FORMULAS, FORMULAS_RULES),
-    Module("structures", frozenset({"linked_list", "stack_queue", "hash_table", "tree"}), "", None,
-           STRUCTURES_RULES),
+    Module("linked_list", frozenset({"linked_list"}),
+           "Reversing a linked list in place: prev and curr, one link at a time", LINKED, LINKED_RULES),
+    Module("stack_queue", frozenset({"stack_queue"}),
+           "Stacks in use: checking that brackets are balanced", STACK, STACK_RULES),
+    Module("hash_table", frozenset({"hash_table"}),
+           "Hash tables: collisions under linear probing, and the checks a lookup makes", HASH, HASH_RULES),
+    Module("tree", frozenset({"tree"}),
+           "Binary search trees: inserting and searching by comparing down from the root", TREE, TREE_RULES),
+    Module("graph_algorithms", frozenset({"graph"}),
+           "Dijkstra's algorithm: settling the closest node first, and a detour that beats the direct edge",
+           GRAPH_ALGOS, GRAPH_ALGOS_RULES),
 )}
 
 
