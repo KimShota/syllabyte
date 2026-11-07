@@ -365,3 +365,49 @@ fades one out and the other in (Table, BarChart, NumberLine points); the Graph m
 What holds the scores now is the writer's plan of the picture (a 3-box loop for a trajectory that runs on, all 13
 bars lit during a question); the next step is a worked example per new template in the prompt (every Level 2 KU
 sees the same linear-search example now).
+
+### Prompt modules per picture kind (2026-11-07)
+
+Research (Anthropic's prompting guidance; similarity-chosen examples in structured generation; prompt routing;
+Code2Video's planner-coder-critic for educational video) points the same way as our runs: examples teach more
+than rules when they match the task, and specialised prompts beat one general one if routing is reliable. Every
+Level 2 KU was shown the same worked example (linear search on cells), so a bar-chart, table or loop storyboard
+never saw its own template used well.
+
+So the prompt keeps one shared base (dialogue rules, casual phrases, level, rubric, the KU's template cards) and
+the picture plan's family picks a module (`storyboard_modules.py`): a worked Level 2 storyboard drawn with that
+kind's templates, which replaces the generic example at Level 2, and a few rules for that kind ("Drawing this
+kind of picture"), at every level. Separate full prompts would copy the shared parts and drift.
+
+| Module | Families | Its example |
+|---|---|---|
+| boxes | graph, flowchart, call_tree, tree, state_machine, linked_list | fib(3)'s call tree: fib(1) is worked out twice |
+| bars | bar_meter, probability, series | two coin flips: count the ways, normalize, expected value |
+| number_line | number_line | \|x - 2\| < 3 as a distance |
+| table | dp_table, code_trace, bits_logic, counting | tracing a loop's running total |
+| plot | function_plot, growth_curves, stats_plots, ml_basics, polar_parametric, complex_plane | n against n squared |
+| formulas | equation_steps, proof_steps, matrix_ops | why (a + b)^2 has a middle term |
+
+Lists and merges (the generic example's own kind), linear maps and notes keep the prompt as it was. Each example
+passes what the generic ones pass and more: the Level 2 plan, the dialogue checks, the call checker with nothing
+for code to fix (numbers on screen, every change said, no text-only beat, no answer shown early, no false green),
+and three of its segments render with no layout findings (`tests/test_storyboard_modules.py`). Writing them showed
+two template layout bugs, fixed: a dot's label on a steep curve was crossed by it (plot labels now keep off every
+curve, line and ghost as well as every word), and a NumberLine given a third of the frame stacked its names and
+jumps into the title (it now needs half).
+
+Measured on 12 KUs not used before (`runs/modules-base` with the prompt before modules, `runs/modules-1` with
+them; $1.67 and $1.49). The live picture plan routed 10 to a module (plot 3, formulas 3, table 2, boxes 1, number
+line 1; none to bars) and 2 to the generic example, which serve as controls.
+
+| | Visual alignment | All four scores | Picture complaints per video | Layout findings |
+|---|---|---|---|---|
+| Module KUs (10) | 4.30 -> 4.70 (5 up, 1 down, 4 same) | 5.65 -> 5.62 | 6.7 -> 5.4 | 26 -> 19 |
+| Controls (2) | 4.00 -> 4.00 | 5.25 -> 5.50 | 8.0 -> 6.5 | 11 -> 0 |
+
+A small gain in visual alignment on the module KUs and none on the controls, but within what the critic's noise
+allows (5 up and 1 down of 10 is p of about 0.2 by a sign test), and the other scores didn't move; the complaint
+counts fell for the controls too. No KU passes all four at 7. Two template bugs the run showed are fixed (a box
+that grew to fit two lines pushed into the title row, so box heights now come from the labels, and the marker
+sits below a box's corner; a curve name too wide for the right margin was shrunk to font 13, and now goes inside
+the plot beside its curve at full size). Not re-run.

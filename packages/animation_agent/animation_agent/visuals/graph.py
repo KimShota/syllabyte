@@ -118,6 +118,10 @@ class Graph(Template):
             share = box_share(self.p.layout)
             self.box_w = min(2.6, share * gx * (width - 0.1) / (1 + share * gx))
             self.box_h = min(BOX_H + 0.3, 0.55 * gy * (height - 0.1) / (1 + 0.55 * gy))
+            # As tall as the tallest label needs (two lines), so no box grows past what the rows left room for.
+            tallest = max(wrapped(t, self.box_w - 2 * BOX_PAD, MIN_FONT, max_lines=2).height
+                          for t in self.p.labels.values())
+            self.box_h = max(self.box_h, tallest + 0.16)
             half_w, half_h = self.box_w / 2, self.box_h / 2
             self.r = min(half_w, half_h)
         else:
@@ -247,8 +251,8 @@ class Graph(Template):
     def _corner(self, n: str) -> np.ndarray:
         """Where the marker sits on a node: its top right corner, clear of the words."""
         hw, hh = self.half
-        if self.boxes:  # just outside the top right corner, clear of words that run to the box's edge
-            return self.pos[n] + np.array([hw + MARKER_R * 0.5, hh + MARKER_R * 0.5, 0])
+        if self.boxes:  # just outside the bottom right corner: clear of the box's words and of the title row
+            return self.pos[n] + np.array([hw + MARKER_R * 0.5, -hh - MARKER_R * 0.5, 0])
         return self.pos[n] + np.array([0.7, -0.7, 0]) * (self.r + MARKER_R)  # outside the circle, below right
 
     def _node_colour(self, n: str):

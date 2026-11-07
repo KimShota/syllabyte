@@ -713,9 +713,15 @@ def _traced(script: TemplatedDialogueScript, trace, ku_id: str):
             [Problem(s, b, None, "off_trace", m) for s, b, m in strays])
 
 
-def _example(explainer: str, peer: str, level: int) -> str:
+def _example(explainer: str, peer: str, level: int, family: str | None = None) -> str:
+    """The worked example the prompt shows: at Level 2, the one for this kind of picture (storyboard_modules), if
+    it has one; else the level's own (Levels 1 and 3 have other beat plans, so they always keep theirs)."""
     from script_generation_agent.storyboard_example import render_example
+    from script_generation_agent.storyboard_modules import module_for, render_module_example
 
+    module = module_for(family)
+    if level == 2 and module is not None:
+        return render_module_example(module, explainer=explainer, peer=peer)
     return render_example(explainer=explainer, peer=peer, level=level)
 
 
@@ -749,7 +755,8 @@ def write_storyboard(
     plan = skeleton(level, bool(prereq_titles))
     system = storyboard_system_prompt(level, prereq_titles, explainer=cast.explainer.name, peer=cast.peer.name,
                                       lexicon=lexicon_for_prompt(), example=_example(cast.explainer.name,
-                                                                                     cast.peer.name, level),
+                                                                                     cast.peer.name, level,
+                                                                                     picture.family),
                                       templates=picture.templates, family=picture.family)
     prompt = build_script_prompt(ku, text_context).replace(
         "Write the 5-segment CLT-bLM script for this Knowledge Unit now.",

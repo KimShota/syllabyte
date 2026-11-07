@@ -559,8 +559,8 @@ backslashes (tex="(A - \\lambda I) v = 0").
   - Fixed colours: grey = ruled out, green = sorted or found, red dashed = a wrong idea, yellow = pointed at. Don't \
 use them for other meanings: a green highlight on cells the steps haven't sorted or found shows them as sorted, \
 and code drops it; a ghost is only for the wrong idea, and code turns any other into a plain highlight.
-  - The "wrong idea" beat draws the wrong idea as a ghost (ArrayBars.ghost, LinearMap2D.ghost_vector) or a wrong \
-formula step (EquationSteps.then); the feedback line clears it, or crosses the step out (EquationSteps.cross_out) \
+  - The "wrong idea" beat draws the wrong idea with your template's ghost (ghost, ghost_edge, ghost_vector: a \
+wrong value, edge, bar, curve or vector) or a wrong formula step (EquationSteps.then); the feedback line clears it, or crosses the step out (EquationSteps.cross_out) \
 and writes the right one.
   - A question or predict line points at what is asked about without giving the answer away (highlight the \
 candidates, never the one that answers, or EquationSteps.cover); the line that answers shows the answer. A result shown during a question or predict line \
@@ -607,7 +607,9 @@ def storyboard_system_prompt(level: int, prereq_titles: list[str] | None, *, exp
     """`templates` (the KU's picture plan: picture_plan.PicturePlan.templates) limits the cards the writer sees;
     None shows every template."""
     from animation_agent.visuals.specs import template_cards
+    from script_generation_agent.storyboard_modules import module_for, module_rules
 
+    module = module_for(family)
     prereqs = "; ".join(f"“{t}”" for t in prereq_titles or [])
     prereq_line = (f"This idea builds on {prereqs}: the plan has a line where {explainer} recaps it in one plain "
                    "sentence." if prereqs else "This idea builds on nothing earlier in the course: no recap.")
@@ -618,7 +620,8 @@ def storyboard_system_prompt(level: int, prereq_titles: list[str] | None, *, exp
         + "The viewer's level\n" + LEVEL_BRIEF[level].format(prereq_line=prereq_line) + "\n"
         + _DIALOGUE_LEVEL_RULES.replace("Give the video a `colour_key`", "As above, give the video a `colour_key`")
         + _STORYBOARD_SLANG.format(lexicon=lexicon)
-        + _STORYBOARD_DRAWING.replace("{picture}", picture_brief(family, templates or []))
+        + _STORYBOARD_DRAWING.replace("{picture}", picture_brief(family, templates or [])
+                                      + (module_rules(module) if module is not None else ""))
                              .replace("{cards}", template_cards(templates, auto_layout=True))
         + SHARED_RUBRIC + "\n"
         + STORYBOARD_EXAMPLE_NOTE

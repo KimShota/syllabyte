@@ -3126,9 +3126,9 @@ NUMBER_LINE = TemplateSpec(
     purpose="One axis with ticks: named points (and sliding them), jumps between numbers (an arc marked +3 or x2), "
             "intervals for inequalities (filled or hollow ends, or running off to infinity), a sequence's terms "
             "computed from its formula, and a band within eps of a number with the terms inside it counted "
-            "(convergence). Needs a third of the frame or more.",
+            "(convergence). Needs at least half the frame (its title, jumps, names and ticks stack up).",
     params=NumberLineParams,
-    min_rows=2,
+    min_rows=3,
     init_state=_nl_state,
     noun="number line",
     describe=_describe_nl,

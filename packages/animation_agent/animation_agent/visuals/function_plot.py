@@ -159,7 +159,7 @@ class FunctionPlot(Template):
     def _label_targets(self) -> dict[str, np.ndarray]:
         """Each curve's label beside its end, nudged apart so no two touch."""
         items = sorted(((c["end_y"] if "end_y" in c else self._end_y(c["fn"]), name)
-                        for name, c in self.curves.items()), reverse=True)
+                        for name, c in self.curves.items() if not c.get("inside")), reverse=True)
         out, last = {}, None
         for y, name in items:
             h = self.curves[name]["label"].height
@@ -174,8 +174,21 @@ class FunctionPlot(Template):
         fn = parse_fn(expr)
         col = colour(col_name)
         mob = self._curve_mob(fn, col)
-        label = fit_width(tex(name, LABEL_FONT, col), self.mr - 0.15)
-        self.curves[name] = {"fn": fn, "colour": col, "mob": mob, "label": label}
+        label = tex(name, LABEL_FONT, col)
+        inside = label.width > self.mr - 0.15  # too wide for the margin: beside the curve's end, inside the axes
+        if not inside:
+            label = fit_width(label, self.mr - 0.15)
+        self.curves[name] = {"fn": fn, "colour": col, "mob": mob, "label": label, "inside": inside}
+        if inside:
+            xs, ys = fn_samples(fn, *self.xr)
+            ok = np.where(self._inside(ys))[0]
+            k = ok[int(len(ok) * 0.85)] if ok.size else 0
+            end = self.c2p(xs[k], ys[k]) if ok.size else self.c2p(*self.xr[::-1][:1], self.yr[1])
+            centre = self.c2p((self.xr[0] + self.xr[1]) / 2, (self.yr[0] + self.yr[1]) / 2)
+            self.curves.pop(name)  # placed clear of the curve itself too, once it is on the plot
+            self.curves[name] = {"fn": fn, "colour": col, "mob": mob, "label": VGroup(), "inside": True}
+            self._beside(label, end, centre)
+            self.curves[name]["label"] = label
         moves = []
         for other, target in self._label_targets().items():
             lab = self.curves[other]["label"]
@@ -240,11 +253,16 @@ class FunctionPlot(Template):
         anims = [GrowFromCenter(d)]
         if a.label:
             lab = tex(a.label, 30, colour(a.colour))
-            slope = fn_slope(self.curves[a.curve]["fn"], a.x, self.xr[1] - self.xr[0])
-            side = -1 if slope >= 0 else 1  # away from the curve: up-left of a rising one, up-right of a falling one
-            lab.next_to(d, np.array([side, 1, 0]), buff=0.06)
-            lab.shift([min(0, self.right - lab.get_right()[0]) + max(0, self.left - lab.get_left()[0]),
-                       min(0, self.top - lab.get_top()[1]), 0])
+            # Start on the curve's upper side, square to it, and let _beside move off any curve or word.
+            fn = self.curves[a.curve]["fn"]
+            h = (self.xr[1] - self.xr[0]) / 200
+            p0, p1 = self.c2p(a.x - h, float(fn(np.array([a.x - h]))[0])), self.c2p(a.x + h, float(fn(np.array([a.x + h]))[0]))
+            t = (p1 - p0) / max(np.linalg.norm(p1 - p0), 1e-9)
+            normal = np.array([-t[1], t[0], 0.0])
+            if normal[1] < 0:
+                normal = -normal
+            at = d.get_center()
+            self._beside(lab, at, at - normal)
             self._mark(lab)
             anims.append(FadeIn(lab))
         yield Step(anims)
@@ -339,13 +357,21 @@ class FunctionPlot(Template):
         lo_y, hi_y = self.bottom + 0.05, box.top - NOTE_ROW
         others = [(o.get_left()[0], o.get_right()[0], o.get_bottom()[1], o.get_top()[1])
                   for o in [*self._words_on_screen(), *avoid]]
+        # Every curve, path, line and ghost on the plot, as points: a label may not sit where one passes.
+        strokes = [m for c in self.curves.values() for m in [c["mob"]]]
+        strokes += [m for m in self.marks if not isinstance(m, Text | MathTex | Dot)]
+        strokes += [self.ghost_mob] if self.ghost_mob is not None else []
+        pts = [m.get_all_points() for m in strokes if m is not None and len(m.get_all_points())]
+        pts = np.concatenate(pts)[:, :2] if pts else np.zeros((0, 2))
 
         def free() -> bool:
             l, r, b, t = label.get_left()[0], label.get_right()[0], label.get_bottom()[1], label.get_top()[1]
             off_dot = (abs(label.get_center()[0] - p[0]) > label.width / 2 + DOT_R * 1.4
                        or abs(label.get_center()[1] - p[1]) > label.height / 2 + DOT_R * 1.4)
-            return off_dot and all(r < ol - 0.04 or l > orr + 0.04 or t < ob - 0.04 or b > ot + 0.04
-                                   for ol, orr, ob, ot in others)
+            crossed = pts.size and np.any((pts[:, 0] > l - 0.04) & (pts[:, 0] < r + 0.04)
+                                          & (pts[:, 1] > b - 0.04) & (pts[:, 1] < t + 0.04))
+            return off_dot and not crossed and all(r < ol - 0.04 or l > orr + 0.04 or t < ob - 0.04
+                                                   or b > ot + 0.04 for ol, orr, ob, ot in others)
 
         best = None
         for reach in (1.0, 1.7, 2.4):
