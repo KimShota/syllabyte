@@ -564,7 +564,8 @@ line is a sentence saying what the picture does during it. Those sentences are c
 so they are always right. The lines were written before the animation ran, so a line may be wrong about it.
 
 Rewrite a line when it is marked as correcting itself ("the last four... wait, I mean the last three"): say \
-the right thing once. Otherwise rewrite a line only when it contradicts its picture or the pictures before it: it names a different value, middle, \
+the right thing once. Rewrite a line marked as ahead of the picture too: it names a step's result before that \
+step is on screen, so say only what the pictures so far show (the step comes later, on its own line). Otherwise rewrite a line only when it contradicts its picture or the pictures before it: it names a different value, middle, \
 front, order, count, swap or result than the picture shows, or describes a step the picture doesn't take, or skips \
 one it does. "The picture stays as it is" means the line can still talk about the picture before it. Leave every \
 other line exactly as it is.
@@ -617,13 +618,26 @@ def _picture_sentences(script: TemplatedDialogueScript, allowed: set[str] | None
     return describe_script(segments)
 
 
+def align_lines(script: TemplatedDialogueScript, segments, trace, ku_id: str):
+    """trace.align_steps on the script's lines: steps a line names pulled onto it, and the lines still ahead of
+    the picture, for match_lines."""
+    from animation_agent.visuals.trace import align_steps
+
+    lines = [[b.narration for b in seg.beats] for seg in script.segments]
+    roles = [[(b.step, bool(b.misconception)) for b in seg.beats] for seg in script.segments]
+    segments, log, notes = align_steps(segments, lines, roles, trace)
+    _log(ku_id, log + [f"segment {s} beat {b + 1}: line ahead of the picture: {why}" for (s, b), why in notes.items()])
+    return segments, notes
+
+
 def match_lines(script: TemplatedDialogueScript, *, ku_id: str, model: str = DEFAULT_MODEL,
                 manifest: RunManifest | None = None, allowed: set[str] | None = None,
                 accept: Callable[[TemplatedDialogueScript], bool] = lambda s: True,
-                segments=None) -> TemplatedDialogueScript:
+                segments=None, notes: dict | None = None) -> TemplatedDialogueScript:
     """The script with each line that contradicts its picture rewritten (one call). The picture is `segments`
     (settle_picture's calls, as they render), or else what code alone would draw from the script's calls. A
-    rewrite is kept only if `accept` still passes the script and the line stays about as long."""
+    rewrite is kept only if `accept` still passes the script and the line stays about as long. `notes` marks
+    lines code found ahead of the picture, {(segment, beat 0-based): why} (trace.align_steps)."""
     from animation_agent.visuals.calls import describe_script
 
     said = _picture_sentences(script, allowed) if segments is None else describe_script(segments)
@@ -635,6 +649,8 @@ def match_lines(script: TemplatedDialogueScript, *, ku_id: str, model: str = DEF
         for k, (b, picture) in enumerate(zip(seg.beats, seg_said), 1):
             role = b.step + (", the wrong idea" if b.misconception else "")
             mark = " (corrects itself: rewrite it)" if self_corrects(b.narration) else ""
+            if notes and (i, k - 1) in notes:
+                mark += f" ({notes[(i, k - 1)]}: rewrite it)"
             listing.append(f"  beat {k} [{b.speaker}, {role}]{mark}: {b.narration}\n    picture: {picture}")
     if not listing:
         return script
@@ -833,8 +849,9 @@ def write_storyboard(
     allowed = set(picture.templates)
     segments = settle_picture(script, ku_id=ku.id, model=model, manifest=manifest, system=system, allowed=allowed,
                               main=picture.main, trace=trace)
+    segments, notes = align_lines(script, segments, trace, ku.id)
     script = match_lines(script, ku_id=ku.id, model=model, manifest=manifest, allowed=allowed, segments=segments,
-                         accept=lambda s: not [p for p in validate_dialogue(s) if not _over_limit(p, s)])
+                         accept=lambda s: not [p for p in validate_dialogue(s) if not _over_limit(p, s)], notes=notes)
     if on_lines_ready is not None:
         on_lines_ready(script)
     return with_pictures(script, segments, ku_id=ku.id, allowed=allowed)

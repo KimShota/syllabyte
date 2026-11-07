@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -567,5 +568,158 @@ it. Highlights, pointers, ghosts and notes on the example are yours to add. To s
 second object with other values; its steps are then yours to call."""
 
 
-__all__ = ["Example", "FIX_NOTE", "Op", "Trace", "apply_trace", "build_trace", "example_name", "keep_steps", "trace_brief",
+# --------------------------------------------------------------------------
+# Lines that run ahead of the steps
+# --------------------------------------------------------------------------
+# In runs/dsa-trace-2 the Dijkstra lines said "we remove a and relax its edges" four beats before the step that
+# settles a, and "we remove b" over a picture settling a: the planner placed the steps and the writer narrated the
+# algorithm, not the picture, and the line-matching call let both through. The steps are known, so code can tell
+# when a line names a step's result (the node it settles or visits, a distance it sets) before that step is on
+# screen, and pull the step onto that line; where it can't (a question or predict line, or a beat with three steps
+# already), the line is sent to the line-matching call to be rewritten.
+
+_ARRIVE = (r"remove|removes|removed|settle|settles|settled|visit|visits|visited|reach|reaches|reached|add|adds|"
+           r"added|pick|picks|picked|list|lists|listed|take|takes|took")
+# After the node "a", what may follow when "a" is the node and not the article ("we remove a and ...").
+_AFTER_A = {"and", "then", "next", "first", "now", "with", "so", "because", "at", "too", "last", "second"}
+ASKING = ("question", "predict")
+
+
+def _names_node(line: str, node: str) -> bool:
+    words = re.findall(r"[a-z0-9]+|[^\sa-z0-9]", line.lower())
+    n = node.lower()
+    for i, w in enumerate(words):
+        if w != n:
+            continue
+        after = words[i + 1] if i + 1 < len(words) else ""
+        if n == "a" and after.isalpha() and after not in _AFTER_A | {"is", "gets"}:
+            continue  # "a node", "a shorter path": the article
+        before = " ".join(words[max(0, i - 2):i])
+        if re.search(rf"\b({_ARRIVE})\b", before) or (after in ("is", "gets") and i + 2 < len(words)
+                                                       and re.fullmatch(rf"({_ARRIVE}|next)", words[i + 2])):
+            return True
+    return False
+
+
+def _step_keys(trace: Trace) -> list[tuple[list[str], set[float]]]:
+    """For each step: the nodes it lands on, and the numbers it is first to show (a weighted algorithm's
+    distances and totals)."""
+    from animation_agent.visuals.highlights import _landed
+    from animation_agent.visuals.specs import REGISTRY
+
+    spec = REGISTRY[trace.template]
+    seen = {float(x) for x in re.findall(r"\d+(?:\.\d+)?", spec.describe(spec.params.model_validate(trace.match)))}
+    run = _Run(trace.template, trace.match)
+    weighted = trace.example.algorithm in ("dijkstra", "prim")
+    out = []
+    for step, said in zip(trace.steps, trace.said):
+        parts = _parts("x" + step)
+        action, args = parts[2], parts[3]
+        run.do(action, **args)
+        nodes = _landed(trace.template, run.st, action)
+        # 0 is where a search starts (the start's distance, an empty tree's total): given, not found by a step.
+        numbers = {float(x) for x in re.findall(r"\d+(?:\.\d+)?", said)} - seen - {0.0} if weighted else set()
+        seen |= numbers
+        out.append((nodes, numbers))
+    return out
+
+
+def _example_steps(segments, name: str, template: str) -> list[tuple[int, int, int]]:
+    """(segment, beat, index in the beat) of each step call on the example, in order."""
+    out = []
+    for s, draws in enumerate(segments):
+        for b, calls in enumerate(draws or []):
+            for i, text in enumerate(calls):
+                parts = _parts(text)
+                if parts and parts[0] == "act" and parts[1] == name and parts[2] in STEP_ACTIONS[template]:
+                    out.append((s, b, i))
+    return out
+
+
+def align_steps(segments: list[list[list[str]] | None], lines: list[list[str]], roles: list[list[tuple[str, bool]]],
+                trace: Trace | None) -> tuple[list[list[list[str]] | None], list[str], dict[tuple[int, int], str]]:
+    """The calls with each step a line names pulled onto that line (from a later beat). `roles` gives each beat's
+    (step, is the wrong idea). Returns the calls, a log, and the lines still ahead of the picture, as
+    {(segment, beat 0-based): why}, for the line-matching call. Only the traced graph algorithms, where a step's
+    result is a node and a distance a line can name."""
+    from animation_agent.visuals.calls import _ARITHMETIC, _number_tokens, check_script
+
+    notes: dict[tuple[int, int], str] = {}
+    log: list[str] = []
+    if trace is None or trace.template != "Graph" or (name := example_name(segments, trace)) is None:
+        return segments, log, notes
+    keys = _step_keys(trace)
+    segments = [None if d is None else [list(c) for c in d] for d in segments]
+
+    def role(s, b):
+        return roles[s][b] if s < len(roles) and b < len(roles[s]) else ("", False)
+
+    def line_at(s, b):
+        return lines[s][b] if s < len(lines) and b < len(lines[s]) else ""
+
+    def numbers_in(text: str) -> set[float]:
+        tokens = _number_tokens(text)
+        if any(t in _ARITHMETIC for t in tokens if isinstance(t, str)):
+            return set()  # "seven plus two is nine" works a number out: it needn't be on screen yet
+        return {t for t in tokens if isinstance(t, float)}
+
+    def names(text: str, j: int, seen: set) -> bool:
+        nums = numbers_in(text)
+        return any(_names_node(text, n) for n in keys[j][0]) or bool((keys[j][1] & nums) - seen)
+
+    # Each question or predict line, and the line that answers it (the next one that is neither asking nor the
+    # wrong idea): a step that answer names mustn't move onto the screen before the question.
+    answers = []
+    for s, draws in enumerate(segments):
+        for b in range(len(draws or [])):
+            if role(s, b)[0] in ASKING and not role(s, b)[1]:
+                k = next((k for k in range(b + 1, len(draws)) if role(s, k)[0] not in ASKING and not role(s, k)[1]),
+                         None)
+                if k is not None:
+                    answers.append(((s, b), line_at(s, k)))
+    for s, draws in enumerate(segments):
+        for b in range(len(draws or [])):
+            role, wrong = roles[s][b] if s < len(roles) and b < len(roles[s]) else ("", False)
+            line = lines[s][b] if s < len(lines) and b < len(lines[s]) else ""
+            if wrong or not line:
+                continue  # a wrong idea names what isn't so
+            placed = _example_steps(segments, name, trace.template)
+            shown = sum(1 for (ps, pb, _) in placed if (ps, pb) <= (s, b))
+            seen = set().union(*(keys[k][1] for k in range(shown))) if shown else set()
+            # Steps the planner never placed count too: the line names them, so they can be added here.
+            ahead = [j for j in range(shown, len(trace.steps)) if names(line, j, seen)]
+            if not ahead:
+                continue
+            j = max(ahead)
+            here = sum(1 for (ps, pb, _) in placed if (ps, pb) == (s, b))
+            what = trace.said[j].rstrip(".")
+            if role in ASKING or here + (j - shown + 1) > MAX_PER_BEAT:
+                notes[(s, b)] = (f"it says what step {j + 1} shows ({what}) before the picture shows it; say only "
+                                 "what the picture shows so far")
+                continue
+            moving = placed[shown:j + 1]
+            last = (moving[-1][0], moving[-1][1]) if j < len(placed) else (len(segments), 0)
+            crossed = [q for q, answer in answers if (s, b) < q < last
+                       and any(names(answer, m, set()) for m in range(shown, j + 1))]
+            if crossed:
+                notes[(s, b)] = (f"it says what step {j + 1} shows ({what}) before the picture shows it (the "
+                                 f"picture holds it for the question after); say only what the picture shows so far")
+                continue
+            texts = [segments[ms][mb][mi] for ms, mb, mi in moving]
+            texts += [f"{name}{step}" for step in trace.steps[len(placed):j + 1]]  # never placed: added
+            trial = [None if d is None else [list(c) for c in d] for d in segments]
+            for ms, mb, mi in sorted(moving, reverse=True):
+                del trial[ms][mb][mi]
+            trial[s][b] += texts
+            if len(check_script(trial)) > len(check_script(segments)):
+                notes[(s, b)] = (f"it says what step {j + 1} shows ({what}) before the picture shows it; say only "
+                                 "what the picture shows so far")
+                continue
+            segments = trial
+            log.append(f"segment {s} beat {b + 1}: its line names step {j + 1} ({what}), so steps "
+                       f"{shown + 1}-{j + 1} moved onto it")
+    return segments, log, notes
+
+
+__all__ = ["Example", "FIX_NOTE", "Op", "align_steps", "Trace", "apply_trace", "build_trace", "example_name", "keep_steps", "trace_brief",
            "TEMPLATE_OF"]

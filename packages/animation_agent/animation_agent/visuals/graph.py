@@ -72,7 +72,7 @@ def _clip(center: np.ndarray, half_w: float, half_h: float, toward: np.ndarray) 
 
 class Graph(Template):
     spec = GRAPH
-    durations = {"create": 1.0, "dfs_step": 0.8, "bfs_level": 0.9, "path": 0.8, "ghost_edge": 0.7, "walk": 0.8,
+    durations = {"create": 1.0, "dfs_step": 0.8, "bfs_level": 0.9, "path": 0.8, "ghost_edge": 0.7, "ghost_mark": 0.7, "walk": 0.8,
                  "feed": 0.9}
 
     def __init__(self, scene, params, uses=None):
@@ -494,6 +494,19 @@ class Graph(Template):
         self.ghost_mob = mark_background(DashedLine(self.pos[a.a], self.pos[a.b], buff=self.r, color=GHOST_COLOUR,
                                                     stroke_width=4))
         yield Step(self.drop(old) + self.add(self.ghost_mob) + self._note(a.text, GHOST_COLOUR))
+
+    def ghost_mark(self, a) -> Steps:
+        from manim import Circle, DashedVMobject, VGroup
+
+        old = self.ghost_mob
+        rings = [DashedVMobject(Circle(radius=self._ring_radius(n), color=GHOST_COLOUR, stroke_width=4)
+                                .move_to(self.pos[n]), num_dashes=16) for n in a.nodes]
+        self.ghost_mob = VGroup(*rings).set_z_index(3)
+        yield Step(self.drop(old) + self.add(self.ghost_mob) + self._note(a.text, GHOST_COLOUR))
+
+    def _ring_radius(self, n: str) -> float:
+        shape = self.nodes[n][0]  # a node's circle or box
+        return 0.62 * max(shape.width, shape.height)
 
     def note(self, a) -> Steps:
         yield Step(self._note(a.text, colour(a.colour)))

@@ -314,6 +314,14 @@ STEP_SEGMENTS = {
     "heap": [['h = BinaryTree(kind="min_heap", values=[1, 3, 2, 7, 4, 5])'],
              ["h.push_step(value=0)"], ["h.push_step(value=0)"], ["h.push_step(value=0)"],
              ["h.pop_step()"], ["h.pop_step()", "h.pop_step()"]],
+    "ghosts": [['t = BinaryTree(kind="bst", values=[50, 30, 70, 20, 40, 60])'],
+               ['t.ghost_turn(at=50, side="left", text="go left to 30?")'],
+               ['t.ghost_turn(at=70, side="right", text="under 70?")'],
+               ['t.clear()', 't.ghost_mark(values=[50, 20], text="50 listed first?")']],
+    "graph_ghost": [['g = Graph(nodes=["s", "a", "b", "c"], edges=[["s", "a", "4"], ["s", "b", "1"], '
+                     '["b", "a", "2"], ["a", "c", "1"]])'],
+                    ['g.dijkstra_step(start="s")', 'g.ghost_mark(nodes=["a"], text="4 is final?")'],
+                    ['g.clear()', 'g.dijkstra_step(start="s")']],
     "heapify": [['h = BinaryTree(kind="max_heap", values=[1, 3, 2, 7, 4, 5])'],
                 ["h.heapify_step()", "h.heapify_step()"], ["h.heapify_step()", "h.heapify_step()"]],
 }

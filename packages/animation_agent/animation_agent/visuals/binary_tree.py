@@ -12,7 +12,18 @@ from __future__ import annotations
 import copy
 
 import numpy as np
-from manim import WHITE, Circle, DashedVMobject, Dot, Line, MoveAlongPath, RoundedRectangle, VGroup, VMobject
+from manim import (
+    WHITE,
+    Circle,
+    DashedLine,
+    DashedVMobject,
+    Dot,
+    Line,
+    MoveAlongPath,
+    RoundedRectangle,
+    VGroup,
+    VMobject,
+)
 
 from animation_agent.visuals.base import (
     GHOST_COLOUR,
@@ -48,7 +59,7 @@ class BinaryTree(Template):
     spec = BINARY_TREE
     durations = {"create": 1.0, "insert": 1.3, "search": 1.2, "delete": 1.1, "push": 1.3, "pop": 1.4,
                  "heapify": 1.8, "traverse_step": 0.7, "ghost": 0.7, "insert_step": 0.9, "search_step": 0.9,
-                 "push_step": 0.9, "pop_step": 1.0, "heapify_step": 0.9}
+                 "push_step": 0.9, "pop_step": 1.0, "heapify_step": 0.9, "ghost_turn": 0.7, "ghost_mark": 0.7}
 
     def __init__(self, scene, params, uses=None):
         super().__init__(scene, params, uses)
@@ -418,6 +429,38 @@ class BinaryTree(Template):
         ring = DashedVMobject(Circle(radius=self.r, color=GHOST_COLOUR, stroke_width=4).move_to(q), num_dashes=14)
         link = DashedVMobject(Line(p, q, buff=self.r, color=GHOST_COLOUR, stroke_width=3), num_dashes=6)
         self.ghost_mob = VGroup(mark_background(link), ring, text(str(a.value), MIN_FONT, GHOST_COLOUR).move_to(q))
+        yield Step(self.drop(old) + self.add(self.ghost_mob) + self._note(a.text, GHOST_COLOUR))
+
+    def _id_of(self, value: int) -> int:
+        return self.st["heap"].index(value) if self.heap else self._path_ids([value])[0]
+
+    def _slot(self, parent: int, side: str):
+        """Where a child on that side of the node sits (or would)."""
+        pos = self._positions()
+        p = pos[parent]
+        level = round((self.top - p[1]) / self.row_h - 0.5)
+        dx = self.width / 2 ** (level + 2)
+        return p + np.array([-dx if side == "left" else dx, -self.row_h, 0])
+
+    def ghost_turn(self, a) -> Steps:
+        from animation_agent.visuals.specs import _bt_child
+
+        old = self.ghost_mob
+        at = self._id_of(a.at)
+        pos = self._positions()
+        child = _bt_child(self.st, a.at, a.side)
+        q = pos[self._id_of(child)] if child is not None else self._slot(at, a.side)
+        arrow = DashedLine(pos[at], q, buff=self.r * 1.15, color=GHOST_COLOUR, stroke_width=5, dash_length=0.08)
+        arrow.add_tip(tip_length=0.16, tip_width=0.16)
+        self.ghost_mob = VGroup(mark_background(arrow))
+        yield Step(self.drop(old) + self.add(self.ghost_mob) + self._note(a.text, GHOST_COLOUR))
+
+    def ghost_mark(self, a) -> Steps:
+        old = self.ghost_mob
+        pos = self._positions()
+        rings = [DashedVMobject(Circle(radius=self.r * 1.3, color=GHOST_COLOUR, stroke_width=4)
+                                .move_to(pos[self._id_of(v)]), num_dashes=16) for v in a.values]
+        self.ghost_mob = VGroup(*rings).set_z_index(3)
         yield Step(self.drop(old) + self.add(self.ghost_mob) + self._note(a.text, GHOST_COLOUR))
 
     def note(self, a) -> Steps:

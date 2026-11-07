@@ -5,6 +5,12 @@ The calls were checked when the script was written (calls.check_segment); they a
 here, so a scene file can't run anything else. Each beat's actions share BEAT_FILL of the beat's narration
 time, in proportion to how long each takes by default (Template.durations), and never run longer than that
 default. end_beat (called by the scene) then waits out the rest of the sentence.
+
+A beat's steps (the calls that show a result: a comparison, a swap, a node settled) don't all play at the start
+of its line: the calls before them (clear, highlight, note) do, the first step starts STEP_LEAD into the line, and
+later steps are spread over the rest of it. Played at the start, a one-second step was over before a five-second line said what
+it does ("forty-five is bigger than thirty, so we go right"), so the picture ran ahead of the words. The voices
+give no word timings, so this places the steps where a line usually says them, after its setup.
 """
 
 from __future__ import annotations
@@ -38,6 +44,16 @@ assert set(CLASSES) == set(REGISTRY), "every spec needs a drawing class"
 
 BEAT_FILL = 0.8  # share of a beat's narration the animations may take
 MIN_STEP = 0.1
+STEP_LEAD = 0.3  # share of a beat's narration before its first step starts
+MIN_WAIT = 0.05
+
+
+def _is_step(call) -> bool:
+    """A call that shows a result (its action reveals one), as opposed to setting the picture up."""
+    if call.action is None:
+        return False
+    action = REGISTRY[call.template].all_actions().get(call.action)
+    return bool(action and action.reveals)
 
 
 class SpecRunner:
@@ -73,10 +89,28 @@ class SpecRunner:
         if not calls:
             return
         durations = [CLASSES[c.template].duration(c.action) for c in calls]
-        budget = BEAT_FILL * self.scene.beat_durations[n - 1]
+        length = self.scene.beat_durations[n - 1]
+        budget = BEAT_FILL * length
         scale = min(1.0, budget / sum(durations))
-        for call, duration in zip(calls, durations):
-            self._run(call, duration * scale)
+        played = [d * scale for d in durations]
+        steps = [i for i, c in enumerate(calls) if _is_step(c)]
+        if not steps:
+            for call, seconds in zip(calls, played):
+                self._run(call, seconds)
+            return
+        # In order: the calls before the first step at once; then a pause until STEP_LEAD into the line; then
+        # the rest, with what time is left spread as pauses after each step but the last. Everything still fits
+        # BEAT_FILL of the line (the calls are scaled as before; only the pauses are new).
+        lead = sum(played[:steps[0]])
+        rest = sum(played[steps[0]:])
+        first = min(max(lead, STEP_LEAD * length), budget - rest)
+        pause = max(0.0, budget - first - rest) / len(steps)
+        for i, (call, seconds) in enumerate(zip(calls, played)):
+            if i == steps[0] and first - lead > MIN_WAIT:
+                self.scene.wait(first - lead)
+            self._run(call, seconds)
+            if i in steps and i != steps[-1] and pause > MIN_WAIT:
+                self.scene.wait(pause)
 
     def _run(self, call, seconds: float, instant: bool = False) -> None:
         """Plays one call. An action that fails is skipped, not fatal: the segment then misses one highlight

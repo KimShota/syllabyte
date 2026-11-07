@@ -759,7 +759,14 @@ TREE_RULES = _SHARED_DS_RULES + """
 search, push, pop and heapify play every comparison in one call, so only use them when the line sums the result. \
 A heap keeps its array under the tree (the array is how it is stored), and its swaps show in both; traverse_step \
 visits one node per line.
-  - Build the tree the slide uses (BST: insert a middle value first, or it grows lopsided; at most five levels)."""
+  - Build the tree the slide uses (BST: insert a middle value first, or it grows lopsided; at most five levels).
+  - Draw the wrong idea the way the line says it: a wrong turn ("left, to thirty", "put it under forty", even \
+where a child sits) is ghost_turn from the node down that side; a wrong order or a wrong answer about nodes \
+already there ("fifty is listed first") is ghost_mark round them; only a new value hung in a free place it \
+doesn't belong is ghost.
+  - A question or predict line doesn't light the node its answer lands on (the next node down, the node listed \
+or found, the parent a value goes under); light only what the line gives (the start, the value searched for). \
+Green is only for a node a search has found."""
 
 _DIJKSTRA = ('g = Graph(nodes=["S", "A", "B", "C"], edges=[["S", "A", "4"], ["S", "B", "1"], ["B", "A", "2"], '
              '["A", "C", "1"], ["B", "C", "5"]], title="shortest paths from S")')
@@ -819,7 +826,9 @@ beside the nodes, relaxed edges light up), prim_step, kruskal_step, topo_step. G
 item) for Dijkstra, Prim and Kruskal; a topological order needs a directed graph.
   - Pick a small graph from the slides where the idea shows: a detour shorter than the direct edge (Dijkstra), an \
 edge skipped because it closes a cycle (Kruskal). A line that works out a distance says the sum ("one plus two").
-  - A predict line asks for the next distance or node before the step that settles it."""
+  - A predict line asks for the next distance or node before the step that settles it, and doesn't light that \
+node. A wrong idea about a node (its distance taken as final too soon, a wrong order) is ghost_mark round it; a \
+wrong edge or route is ghost_edge."""
 
 
 MODULES: dict[str, Module] = {m.name: m for m in (

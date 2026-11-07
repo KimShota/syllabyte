@@ -339,6 +339,7 @@ def write_storyboard_planned(
         _over_limit,
         _redo_feedback,
         _traced,
+        align_lines,
         drop_echoes,
         fix_slang,
         match_lines,
@@ -423,8 +424,9 @@ def write_storyboard_planned(
     # 4. As in one call: matched to the picture, the voices start, the visuals written. A note that repeats the
     # line it was planned for goes (it was kept while the lines were only points).
     segments = drop_echoes(segments, [[b.narration for b in seg.beats] for seg in best.segments], ku.id)
+    segments, notes = align_lines(best, segments, example, ku.id)
     script = match_lines(best, ku_id=ku.id, model=model, manifest=manifest, allowed=allowed, segments=segments,
-                         accept=lambda s: not [p for p in validate_dialogue(s) if not _over_limit(p, s)])
+                         accept=lambda s: not [p for p in validate_dialogue(s) if not _over_limit(p, s)], notes=notes)
     if on_lines_ready is not None:
         on_lines_ready(script)
     print(f"[storyboard] {ku.id}: planned, then written", file=sys.stderr, flush=True)

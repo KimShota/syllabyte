@@ -558,3 +558,40 @@ about 0.8 of a point from the next (SD), so a mean over five KUs carries ±0.37 
 way. A change has to move a five-KU mean by about a point (two SDs) to show; a half-point effect needs about 20
 scripts a side (e.g. ten KUs written twice). Comparisons so far on 5-12 KUs, one script each (worked examples,
 modules, plan-then-write's 4.14 -> 5.00 on seven), sit near that line.
+
+Four fixes from the critique of `runs/dsa-trace-2` (2026-11-07):
+  1. Highlights on the data structures (visuals/highlights.py). The rules were ArrayBars-only. Now a question or
+     predict line on a BinaryTree, Graph or LinkedList may not light a node the coming operation lands on (through
+     every step of an operation run a step per call; a highlight of more than half the nodes that also lights
+     others is context); green is only for a found node (else teal); a ghost off the wrong-idea line becomes a
+     highlight. Replayed on the three runs' scripts it catches exactly the reveals the critic named (the BST search
+     path, the traversal's first and last node, the linked list's remaining path) and the all-green traversal.
+  2. Wrong ideas drawn as the line says them. BinaryTree's ghost could only hang a value on a free side, so a wrong
+     turn ("left, to thirty", "under forty") or a wrong order ("fifty is listed first") was drawn somewhere else.
+     New: ghost_turn (a red dashed arrow from a node down a side, even a taken one), ghost_mark (red dashed rings
+     round nodes, also on Graph). The tree and graph rules say which to use, and that a question doesn't light its
+     answer.
+  3. Lines ahead of the steps (trace.align_steps, storyboard.align_lines, before match_lines in both paths). For a
+     traced graph algorithm each step's keys are the node it settles or visits and the distances it is first to
+     show; a line naming a later step's key gets that step pulled onto it (or added, if the planner never placed
+     it), unless the line is a question or predict line, the beat would hold more than three steps, or the move
+     would put on screen what the answer to a question in between names; those lines go to the line-matching call
+     marked as ahead of the picture. Lines working a number out (plus, sum) and wrong ideas are left alone. On the
+     Dijkstra script: "we remove b" gets the step settling b (never placed), and "we remove a and relax its edges"
+     is sent for a rewrite (its step is held for the question after it).
+  4. Steps spread through their line (visuals/runner.py). A beat's calls before its first step play at once, the
+     first step starts 30% into the line, and the time left is spread as pauses after each step; everything still
+     fits 80% of the line. The voices give no word timings, so this is an estimate; it shows only in the video.
+
+The four fixes measured (2026-11-08, `runs/writer-noise-fixes`, $1.38): the five traced KUs written twice each with
+the fixes, against the two trace-first scripts per KU before them (`runs/dsa-trace-2`, `runs/writer-noise`).
+Visual alignment 4.90 -> 5.10, conceptual accuracy 6.70 -> 6.40, coherence 6.20 -> 6.10: inside the writer's noise
+(a difference of two ten-script means carries about ±0.4). The complaints the fixes aim at did fall (counted by
+pattern over the critic's issues, per script): an answer shown before its line 1.1 -> 0.5, a wrong idea drawn
+wrong 0.7 -> 0.1, a line out of step with the picture 0.5 -> 0.3. But the issues per script stayed at about 10:
+what fills them now is mostly the lines, not the picture (the slide's facts or example 2.1 per script, shallow
+questions or predict lines that give themselves away 1.7, terms without a gloss 1.6, the objective line 1.4, the
+end restatement 1.2, slang 1.1; a weak picture only 0.6). The critic marks every complaint down, so fixing one kind
+lets the next fill the scores. The step timing was checked by eye: `runs/dsa-trace-2-retimed` re-renders the five
+videos from their scripts and voices; in the heap video the swap now shows halfway through "forty-five is larger
+than its parent ten. They swap." instead of before the line has named the parent.

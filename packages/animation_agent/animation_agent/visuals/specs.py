@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 # Bump when a template draws differently (or the call language changes): it is part of the cache key of every
 # video drawn with templates (syllabyte_common.video_jobs.video_key), so those videos are made again.
-TEMPLATES_VERSION = "8"  # 8: BinaryTree _step actions (one comparison or swap per call), traced data structure examples (7: BarChart, NumberLine, Table, Graph boxes/edge labels/tree+flow/walk/feed, polar and parametric curves (6: MergeSort, Graph, FunctionPlot, computed sorts, picture plans, reveals held (5: overlapping formula pieces, doubled backslashes, a failed action skipped; 4: ghost outlines clear of notes; 3: storyboards)
+TEMPLATES_VERSION = "9"  # 9: steps spread through their line, ghost_turn and ghost_mark (8: BinaryTree _step actions (one comparison or swap per call), traced data structure examples (7: BarChart, NumberLine, Table, Graph boxes/edge labels/tree+flow/walk/feed, polar and parametric curves (6: MergeSort, Graph, FunctionPlot, computed sorts, picture plans, reveals held (5: overlapping formula pieces, doubled backslashes, a failed action skipped; 4: ghost outlines clear of notes; 3: storyboards)
 
 # --------------------------------------------------------------------------
 # Shared vocabulary
@@ -2016,6 +2016,13 @@ class EdgeArgs(_Args):
     colour: Colour = "YELLOW"
 
 
+class GhostMarkArgs(_Args):
+    nodes: list[str] = Field(description="the nodes the wrong idea is about (1-4)")
+    text: str = Field(description="the wrong idea, at most 24 characters")
+
+    _text = field_validator("text")(_short(24))
+
+
 class GhostEdgeArgs(_Args):
     a: str
     b: str
@@ -2399,6 +2406,12 @@ GRAPH = TemplateSpec(
         "ghost_edge": ActionSpec("A wrong idea: a red dashed edge (it may not exist), with the idea noted in red.",
                                  GhostEdgeArgs, lambda s, a: _need_nodes(s, a.a, a.b),
                                  lambda s, a: f'a wrong idea: a red dashed edge {a.a}-{a.b}, noted "{a.text}"'),
+        "ghost_mark": ActionSpec("A wrong idea about nodes (a wrong order, a distance taken as final too soon): "
+                                 "red dashed rings round them, noted in red.", GhostMarkArgs,
+                                 lambda s, a: ("ring 1-4 nodes" if not 1 <= len(a.nodes) <= 4
+                                               else _need_nodes(s, *a.nodes)),
+                                 lambda s, a: f"a wrong idea: red dashed rings round "
+                                              f'{", ".join(_name(s, n) for n in a.nodes)}, noted "{a.text}"'),
         "note": ActionSpec("A short line of text above the graph.", NoteArgs,
                            says=lambda s, a: f'note above the graph: "{a.text}"'),
         "clear": ActionSpec("Remove highlights, the ghost and the note (a search's colours stay).",
@@ -4880,6 +4893,7 @@ def bt_step(st: dict, op: str, value: int | None = None) -> dict | str:
         ev = {"op": "search_step", "v": value, "at": at, "with": node["v"], "k": o["k"]}
         if node["v"] == value:
             st["op"] = None
+            st.setdefault("found", set()).add(value)
             return ev | {"found": True, "end": True}
         side = "l" if value < node["v"] else "r"
         ev |= {"dir": "left" if side == "l" else "right", "found": False}
@@ -5033,6 +5047,47 @@ class BTGhostArgs(_Args):
     _text = field_validator("text")(_short(24))
 
 
+class BTTurnArgs(_Args):
+    at: int = Field(description="the node the wrong turn starts from")
+    side: Literal["left", "right"]
+    text: str = Field(description="the wrong idea, at most 24 characters")
+
+    _text = field_validator("text")(_short(24))
+
+
+class BTMarkArgs(_Args):
+    values: list[int] = Field(description="the nodes the wrong idea is about (1-4)")
+    text: str = Field(description="the wrong idea, at most 24 characters")
+
+    _text = field_validator("text")(_short(24))
+
+
+def _check_bt_turn(st: dict, a: BTTurnArgs) -> str | None:
+    return None if a.at in _bt_values(st) else f"there is no node {a.at}"
+
+
+def _check_bt_mark(st: dict, a: BTMarkArgs) -> str | None:
+    if not 1 <= len(a.values) <= 4:
+        return "ring 1-4 nodes"
+    return next((f"there is no node {v}" for v in a.values if v not in _bt_values(st)), None)
+
+
+def _bt_child(st: dict, at: int, side: str) -> int | None:
+    """The value of a node's child on that side, or None."""
+    if st["kind"] == "bst":
+        node = next(n for n in st["nodes"].values() if n["v"] == at)
+        c = node["l" if side == "left" else "r"]
+        return None if c is None else st["nodes"][c]["v"]
+    c = 2 * st["heap"].index(at) + (1 if side == "left" else 2)
+    return st["heap"][c] if c < len(st["heap"]) else None
+
+
+def _said_bt_turn(st: dict, a: BTTurnArgs) -> str:
+    child = _bt_child(st, a.at, a.side)
+    to = f" to {child}" if child is not None else " into the empty place"
+    return f'a wrong idea: a red dashed arrow from {a.at} down its {a.side} side{to}, noted "{a.text}"'
+
+
 def _bt_kind(kind: str):
     def check(st: dict, a) -> str | None:
         want = ("bst",) if kind == "bst" else ("min_heap", "max_heap")
@@ -5059,6 +5114,8 @@ def _check_bt_search(st: dict, a: BTValueArgs) -> str | None:
     if problem := _bt_kind("bst")(st, a) or bt_pending(st):
         return problem
     st["last"] = bst_search(st, a.value)
+    if st["last"]["found"]:
+        st.setdefault("found", set()).add(a.value)
     return None
 
 
@@ -5069,6 +5126,7 @@ def _check_bt_delete(st: dict, a: BTValueArgs) -> str | None:
     if isinstance(ev, str):
         return ev
     st["last"] = ev
+    st.get("found", set()).discard(a.value)
     return None
 
 
@@ -5162,7 +5220,8 @@ def _check_bt_ghost(st: dict, a: BTGhostArgs) -> str | None:
         c = 2 * i + (1 if a.side == "left" else 2)
         taken = st["heap"][c] if c < len(st["heap"]) else None
     if taken is not None:
-        return f"{a.parent}'s {a.side} child is {taken} already: draw the wrong idea on a free side"
+        return (f"{a.parent}'s {a.side} child is {taken} already: for a wrong turn or a taken place use "
+                f"ghost_turn(at={a.parent}, side=\"{a.side}\", text=...)")
     return None
 
 
@@ -5235,10 +5294,19 @@ BINARY_TREE = TemplateSpec(
                                                    if v not in _bt_values(s)), None),
                                 lambda s, a: f"{', '.join(map(str, a.values))} turn"
                                              f"{'s' if len(a.values) == 1 else ''} {a.colour.lower()}"),
-        "ghost": ActionSpec("A wrong idea: a red dashed node hung on the wrong side, noted in red (on a free side).",
+        "ghost": ActionSpec("A wrong idea: a red dashed node hung in a free place it doesn't belong, noted in red "
+                            "(for a wrong turn or a taken place use ghost_turn; for a wrong order, ghost_mark).",
                             BTGhostArgs, _check_bt_ghost,
                             lambda s, a: f"a wrong idea: a red dashed {a.value} as {a.parent}'s {a.side} child, "
                                          f'noted "{a.text}"'),
+        "ghost_turn": ActionSpec("A wrong turn: a red dashed arrow from a node down the side the wrong idea goes "
+                                 "(\"go left at 50\", \"put it under 40\"), noted in red. The side may hold a "
+                                 "child already.", BTTurnArgs, _check_bt_turn, _said_bt_turn),
+        "ghost_mark": ActionSpec("A wrong idea about nodes already there (a wrong order, \"50 is listed first\"; "
+                                 "a wrong answer): red dashed rings round them, noted in red.", BTMarkArgs,
+                                 _check_bt_mark,
+                                 lambda s, a: f"a wrong idea: red dashed rings round {', '.join(map(str, a.values))}, "
+                                              f'noted "{a.text}"'),
         "note": ActionSpec("A short line of text above the tree.", NoteArgs,
                            says=lambda s, a: f'note above the tree: "{a.text}"'),
         "clear": ActionSpec("Remove highlights, the ghost and the note.",
