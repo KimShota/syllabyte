@@ -306,3 +306,55 @@ def test_the_first_draft_is_kept_when_the_redo_breaks_the_dialogue(monkeypatch):
     picture = PicturePlan(family="array_bars", also=[], reason="a list searched cell by cell")
     script = storyboard.write_storyboard(KU, None, level=2, picture=picture)
     assert len(calls) == 2 and "seventeen" in " ".join(b.narration for s in script.segments for b in s.beats)
+
+
+# --------------------------------------------------------------------------
+# A line that makes a point changes the picture
+# --------------------------------------------------------------------------
+
+
+def test_a_still_point_line_naming_cells_gets_them_highlighted():
+    from animation_agent.visuals.normalize import fill_still
+
+    segments = [[['a = ArrayBars(values=[4, 9, 2, 7])'], [], [], []]]
+    steps = [[("build", False), ("question", False), ("feedback", False), ("check", False)]]
+    lines = [["A list.", "Where is seven?", "Seven sits after nine, in the last cell.", "So we check two lists."]]
+    out, log = fill_still(segments, steps, lines)
+    assert out[0][1] == []  # a question may keep the picture
+    assert out[0][2] == ["a.highlight(indices=[1, 3])"] and log
+    assert out[0][3] == []  # "two lists" is a count, not a cell
+
+
+def test_a_still_point_line_goes_to_the_fix_call_and_a_note_only_one_is_kept_for_it(monkeypatch):
+    from script_generation_agent import storyboard
+    from test_storyboard import KU, example_board
+
+    sent = []
+
+    def fake(**kw):
+        sent.append(kw["content"][0]["text"])
+        raise RuntimeError("no network in tests")
+
+    monkeypatch.setattr(storyboard, "structured", fake)
+    plan = storyboard.skeleton(2)
+    board = example_board(plan)
+    board.deliver_2.b6_explainer_build.draw = []  # "Yes, six checks for six cells: ..." names no cell
+    board.end.b2_explainer_check.draw = ['q = Note(text="every cell")']
+    board.initiate.b1_peer_question.draw = ['q = Note(text="why care?")']
+    storyboard.finish(storyboard.assemble(board, plan, KU), ku_id="ku-x")
+    assert sent and "segment 3: beat 6: the line makes a point" in sent[0]
+    assert "segment 4: beat 2: its calls only put text on screen" in sent[0]
+    assert "segment 1: beat 1" not in sent[0]  # a question with a note is cleared by code, as before
+
+
+def test_the_examples_never_keep_the_picture_on_a_point_line():
+    from animation_agent.visuals.calls import script_segments
+    from animation_agent.visuals.normalize import still_beats
+    from script_generation_agent import storyboard
+    from test_storyboard import KU, example_board
+
+    for level in (1, 2, 3):
+        plan = storyboard.skeleton(level)
+        script = storyboard.assemble(example_board(plan, level), plan, KU)
+        steps = [[(b.step, b.misconception) for b in seg.beats] for seg in script.segments]
+        assert still_beats(script_segments(script), steps) == [], level

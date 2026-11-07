@@ -352,8 +352,8 @@ def simulate_script(segments: list[list[list[str]] | None], lines: list[list[str
                 if calls and all(_only_text(text) for text in calls):
                     flag(b, None, f"beat {b}: its calls only put text on screen (a note, a cleared highlight); the "
                                   "reviewer scores a text-only picture 4 of 10 at most. Show the line in the diagram "
-                                  "itself (highlight, point, add, apply, grey out), or leave the beat [] to keep the "
-                                  "picture")
+                                  "itself (highlight, point, add, apply, grey out, take a step); only a question or "
+                                  "predict line may keep the picture instead, with []")
         if seg_lines is not None and report and shown and shown <= {"Note"}:
             flag(1, None, "the segment shows only Notes: every segment shows a diagram (a list, a grid, a "
                           "formula), and a Note is a label or a question beside it")
@@ -453,6 +453,41 @@ _COMPARING = [re.compile(p) for p in (
 def _compared_pairs(line: str) -> list[tuple[float, float]]:
     text = " ".join(f"#{_fmt_num(t)}" if isinstance(t, float) else t for t in _number_tokens(line))
     return [(float(m[1]), float(m[2])) for p in _COMPARING for m in p.finditer(text)]
+
+
+def live_after(segments: list[list[list[str]] | None]) -> dict[str, _Live]:
+    """What is on screen after these calls (broken calls skipped, as the renderer skips them)."""
+    live: dict[str, _Live] = {}
+    for draws in segments:
+        for calls in draws or []:
+            for text in calls:
+                try:
+                    _check(parse_call(text, {n: o.template for n, o in live.items()}), live)
+                except Exception:  # noqa: BLE001 - a broken call draws nothing; the checker reports it
+                    pass
+    return live
+
+
+def named_cells(live: dict[str, _Live], line: str) -> str | None:
+    """A highlight of the cells whose values the line says ("five and two"), on the first list or merge on screen
+    that holds them all, or None. Counts ("two lists") aren't values; nor is a lone "one" (often a pronoun)."""
+    tokens = _number_tokens(line)
+    words = re.findall(r"\d+(?:\.\d+)?|[a-z]+", line.lower().replace(",", ""))
+    said = []
+    for k, t in enumerate(tokens):
+        if not isinstance(t, float):
+            continue
+        after = [w for w in tokens[k + 1:k + 3] if isinstance(w, str)]
+        if any(w in _COUNT_NOUNS for w in after) and not (after and after[0] in ("and", "or", "vs", "versus")):
+            continue
+        said.append(t)
+    if not said or (said == [1.0] and "one" in words and "1" not in words):
+        return None
+    for name, values in _list_values(live).items():
+        nums = [float(v) if isinstance(v, int | float) else None for v in values]
+        if all(t in nums for t in said):
+            return f"{name}.highlight(indices={[i for i, v in enumerate(nums) if v in said]})"
+    return None
 
 
 def _merge_fronts(live: dict[str, _Live]) -> dict[str, tuple | None]:

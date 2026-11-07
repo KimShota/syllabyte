@@ -400,7 +400,14 @@ def finish(script: TemplatedDialogueScript, *, ku_id: str, model: str = DEFAULT_
     can't fix (including a template the picture plan didn't choose, `allowed`, or its main template, `main`, never
     drawn), then code drops whatever is still rejected. Each drawn beat's `visual` is then what its calls show."""
     from animation_agent.visuals.calls import describe_script, script_segments
-    from animation_agent.visuals.normalize import hold_reveals, normalize_script
+    from animation_agent.visuals.normalize import (
+        fill_still,
+        hold_reveals,
+        normalize_script,
+        point_beats,
+        still_beats,
+        still_problems,
+    )
 
     segments = script_segments(script)
     lines = [[b.narration for b in seg.beats] for seg in script.segments]
@@ -413,17 +420,28 @@ def finish(script: TemplatedDialogueScript, *, ku_id: str, model: str = DEFAULT_
             print(f"[storyboard] {ku_id}: {line}", file=sys.stderr, flush=True)
         return segs
 
-    fixed = normalize_script(held(segments), lines, allowed)
-    for line in fixed.log:
-        print(f"[storyboard] {ku_id}: {line}", file=sys.stderr, flush=True)
+    def log(entries):
+        for line in entries:
+            print(f"[storyboard] {ku_id}: {line}", file=sys.stderr, flush=True)
+
+    # A line that makes a point changes the picture: code highlights the cells it names where it can, and a
+    # note-only beat there goes to the fix call (to be drawn) instead of being cleared.
+    segments, filled = fill_still(held(segments), steps, lines)
+    log(filled)
+    fixed = normalize_script(segments, lines, allowed, keep_text=point_beats(steps))
+    log(fixed.log)
     segments = fixed.segments
     # Only problems that break or contradict the picture are worth a call; a segment showing only notes or a
     # count the words don't match is left to the critic.
-    worth = [p for p in fixed.left if p.kind not in ("notes_only", "count")] + _missing_main(segments, main)
+    worth = ([p for p in fixed.left if p.kind not in ("notes_only", "count")] + _missing_main(segments, main)
+             + still_problems(segments, steps))
     if worth:
         segments = _fix_calls(script, segments, worth, ku_id=ku_id, model=model, manifest=manifest, system=system)
         segments = normalize_script(held(segments), lines, allowed).segments
     segments = _drop_broken(segments, lines, allowed)
+    if still := still_beats(segments, steps):
+        log([f"still picture on {len(still)} point-making lines: "
+             + ", ".join(f"segment {s} beat {b}" for s, b in still)])
     said = describe_script(segments)
     data = script.model_dump(mode="json")
     for seg, draws, seg_said in zip(data["segments"], segments, said):

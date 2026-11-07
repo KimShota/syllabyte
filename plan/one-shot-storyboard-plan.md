@@ -204,3 +204,23 @@ picture ran a step behind the lines from there on.
 | hold_reveals | doesn't make a move that adds a `wrong_front` line |
 
 Over the 54 finished scripts of both runs, the checks flag 5 lines, all real (both merge-step videos).
+
+### Static pictures (2026-11-06)
+
+The critic's "the picture doesn't change while the line makes a new point" (32 of 615 issues, in 25 of 55 videos).
+Of the 100 drawn beats with no picture change, about 57 were emptied by code: a note-only beat was cleared as
+text_only. The complaints fell on objective, explaining and recap lines; a still question or predict line is fine
+(the critic says so itself).
+
+| | Now |
+|---|---|
+| A point-making line (build, feedback, objective, check, the right answer) draws nothing | code highlights the list cells the line names (`normalize.fill_still`), else problem `still` for the fix call |
+| A point-making line draws only a note | kept for the fix call (`keep_text`) instead of cleared; cleared only if still text-only after it |
+| A question, predict or wrong-idea line | may keep the picture, as before |
+| Prompt | `[]` only for a question, a predict line or the wrong idea; the Level 3 example's objective now highlights the value it names |
+
+Measured on 4 KUs (`runs/still-fix-1`, $0.37): still point-making lines 6 to 0, the critic's still-picture
+complaints 6 to 3 (two of them on question or predict lines), visual alignment unchanged but for selection sort (4 to
+5). The fix call mostly adds highlights, which are honest but weak; a `replay()` for recap lines is the next step if
+this matters. What holds the scores down now is the line and the picture disagreeing about state (bisection: found
+shown early, pointers reset while the line says "one cell left", the counter at 2 while the line says three checks).

@@ -237,9 +237,11 @@ def _drop_title(text: str) -> str | None:
 
 
 def normalize_script(segments: list[list[list[str]] | None], lines: list[list[str]] | None = None,
-                     allowed: set[str] | None = None) -> Fixed:
+                     allowed: set[str] | None = None, keep_text: set[tuple[int, int]] | frozenset = frozenset(),
+                     ) -> Fixed:
     """The calls laid out by code, with every problem it can fix fixed (module docstring). `lines` are each
-    beat's narration, for the checks against the words; `allowed`, the templates the KU's picture plan chose."""
+    beat's narration, for the checks against the words; `allowed`, the templates the KU's picture plan chose.
+    A text-only beat in `keep_text` ((segment, 1-based beat)) is left for the fix call to draw, not cleared."""
     segs = segments
     log: list[str] = []
     for _ in range(MAX_PASSES):
@@ -252,7 +254,7 @@ def normalize_script(segments: list[list[list[str]] | None], lines: list[list[st
             if p.kind in _DROP and p.call is not None and p.call < len(calls):
                 log.append(f"segment {p.segment} beat {p.beat}: dropped `{calls.pop(p.call)}` ({p.kind})")
                 changed = True
-            elif p.kind == "text_only" and calls:
+            elif p.kind == "text_only" and calls and (p.segment, p.beat) not in keep_text:
                 log.append(f"segment {p.segment} beat {p.beat}: dropped its text-only calls {calls}")
                 calls.clear()
                 changed = True
@@ -329,3 +331,57 @@ def hold_reveals(segments: list[list[list[str]] | None], steps: list[list[tuple[
 def _out_of_step(segments, lines, s: int) -> int:
     """How many lines of segment `s` compare a merge's values that its picture doesn't."""
     return sum(1 for p in simulate_script(segments, lines).problems if p.segment == s and p.kind == "wrong_front")
+
+
+# --------------------------------------------------------------------------
+# A line that makes a point changes the picture
+# --------------------------------------------------------------------------
+# Static pictures (plan/one-shot-storyboard-plan.md, "Static pictures"): of the 100 drawn beats with no picture
+# change in the course tests, about 57 were emptied by code (a note-only beat cleared as text_only), and the critic's
+# complaints fell on objective, explaining and recap lines. A question, a predict line or the wrong idea may keep
+# the picture: the viewer is thinking, and the critic agrees ("the predict line is fine to leave still").
+
+def point_beats(steps: list[list[tuple[str, bool]]]) -> set[tuple[int, int]]:
+    """(segment, 1-based beat) of every line that makes a point: not a question, a predict line or the wrong idea."""
+    return {(s, b + 1) for s, seg in enumerate(steps) for b, (step, wrong) in enumerate(seg)
+            if step not in ASKING_STEPS and not wrong}
+
+
+def still_beats(segments: list[list[list[str]] | None], steps: list[list[tuple[str, bool]]],
+                text_too: bool = True) -> list[tuple[int, int]]:
+    """The point-making beats whose calls don't change the diagram: none at all, or (with `text_too`) only text."""
+    from animation_agent.visuals.calls import _only_text
+
+    out = []
+    for s, b in sorted(point_beats(steps)):
+        draws = segments[s] if s < len(segments) else None
+        if draws is None or b > len(draws):
+            continue
+        calls = draws[b - 1]
+        if not calls or (text_too and all(_only_text(c) for c in calls)):
+            out.append((s, b))
+    return out
+
+
+def fill_still(segments: list[list[list[str]] | None], steps: list[list[tuple[str, bool]]],
+               lines: list[list[str]]) -> tuple[list[list[list[str]] | None], list[str]]:
+    """In code, no LLM: a still point-making beat whose line says values of a list on screen highlights them."""
+    from animation_agent.visuals.calls import live_after, named_cells
+
+    out = [None if d is None else [list(b) for b in d] for d in segments]
+    log = []
+    for s, b in still_beats(out, steps):
+        call = named_cells(live_after([*out[:s], out[s][:b - 1]]), lines[s][b - 1])
+        if call is not None:
+            out[s][b - 1].append(call)
+            log.append(f"segment {s} beat {b}: the picture was still; added `{call}`, the cells the line names")
+    return out, log
+
+
+def still_problems(segments: list[list[list[str]] | None], steps: list[list[tuple[str, bool]]]) -> list[Problem]:
+    """A problem for the fix call per point-making beat that draws nothing (text-only ones are text_only)."""
+    return [Problem(s, b, None, "still",
+                    f"beat {b}: the line makes a point, but the picture doesn't change; add a call that shows it in "
+                    "the diagram (highlight or point at what it names, take a step, ghost a value, write the "
+                    "formula), not only a note")
+            for s, b in still_beats(segments, steps, text_too=False)]

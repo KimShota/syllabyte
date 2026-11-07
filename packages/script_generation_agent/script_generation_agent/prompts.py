@@ -511,9 +511,11 @@ dicts, True/False/None):
   - What is on screen stays on screen, from one segment into the next, until you remove it. Create a diagram \
 once and keep acting on it; creating a name again replaces that object. Where things sit is worked out for you: \
 give no areas.
-  - 1-3 calls per beat; [] keeps the picture as it is (fine for a short reply). At most one diagram (a list, \
+  - 1-3 calls per beat; [] keeps the picture as it is, which is only for a question, a predict line or the \
+wrong idea (the viewer is thinking). A line that makes a point (a build, feedback, the objective, a check) changes \
+the diagram itself, not only a note. At most one diagram (a list, \
 runs, a graph, a plot or a grid) and one formula or note on screen at a time.
-  - Every beat's picture moves: highlight, point, scan, a sort or merge step, a search step, plot a curve, \
+  - So a point-making beat's picture moves: highlight, point, scan, a sort or merge step, a search step, plot a curve, \
 apply, add a vector, write or rewrite a formula. A beat whose only calls change text (a note, a counter, clear) \
 counts as text on screen. A note adds what the voice doesn't say (a value, a label, a question); it never repeats \
 the line.

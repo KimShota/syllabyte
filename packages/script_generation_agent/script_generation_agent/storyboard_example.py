@@ -172,8 +172,8 @@ EXAMPLE_L3 = {
          [],
          "Okay, so what should I be able to judge after this?"),
         ("b2_explainer_objective",
-         [],
-         "You'll be able to predict insertion sort's cost from how sorted its input already is."),
+         ["bars.highlight(indices=[3])"],
+         "You'll be able to predict insertion sort's cost from how far a value like one must travel."),
     ],
     "deliver_1": [
         ("b1_explainer_question",
