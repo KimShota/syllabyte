@@ -40,6 +40,7 @@ from animation_agent.visuals.base import (
 )
 from animation_agent.visuals.specs import (
     GRAPH,
+    _num,
     bfs_new,
     bfs_next,
     dfs_new,
@@ -128,6 +129,7 @@ class Graph(Template):
             per_row = max(len(row) for row in rows.values())
             dx = min(width / (per_row + 1), gx * width)
             self.r = min(MAX_R, 0.32 * dx, 0.32 * height / max(len(ys), 1))
+            self.r = max(self.r, min(0.2, 0.4 * dx))  # a 1-2 character name at the smallest readable size fits
             half_w = half_h = self.r
         span_w, span_h = width - 2 * half_w - 0.1, height - 2 * half_h - 0.1
         if self.p.layout == "circle" and not self.boxes:
@@ -229,12 +231,24 @@ class Graph(Template):
         lab = text(label, MIN_FONT, colour("GOLD"))
         start, end = self._ends(a, b)
         chord_mid = (start + end) / 2
-        if self._bend(a, b):  # beside the curve's middle, on its outer side
+        hw, hh = self.half
+
+        def on_a_node() -> bool:
+            c = lab.get_center()
+            return any(abs(c[0] - p[0]) < hw + lab.width / 2 + 0.04 and abs(c[1] - p[1]) < hh + lab.height / 2 + 0.04
+                       for p in self.pos.values())
+
+        if self._bend(a, b):  # beside the curve's middle, on its outer side, and off every node
             mid = self.edges[self._key(a, b)].point_from_proportion(0.5)
             away = mid - chord_mid
             away = away / max(np.linalg.norm(away), 1e-6)
             reach = 0.1 + 0.5 * abs(np.dot(away, [lab.width, lab.height, 0]))
-            return lab.move_to(mid + away * reach)
+            for _ in range(6):
+                lab.move_to(mid + away * reach)
+                if not on_a_node():
+                    break
+                reach += 0.12
+            return lab
         d = end - start
         centre = np.mean(list(self.pos.values()), axis=0)
         # Beside a straight edge's middle, sideways: above a level edge, else on the side away from the middle
@@ -246,7 +260,12 @@ class Graph(Template):
             side = np.array([1.0 if chord_mid[0] >= centre[0] else -1.0, 0.0, 0.0])
             slope = abs(d[0] / d[1])
             reach = 0.1 + lab.width / 2 + slope * lab.height / 2
-        return lab.move_to(chord_mid + side * reach)
+        for _ in range(6):  # off every node: a short edge between close nodes put its weight on one of them
+            lab.move_to(chord_mid + side * reach)
+            if not on_a_node():
+                break
+            reach += 0.12
+        return lab
 
     def _corner(self, n: str) -> np.ndarray:
         """Where the marker sits on a node: its top right corner, clear of the words."""
@@ -348,6 +367,71 @@ class Graph(Template):
         yield Step(anims + self._restyle(ev["nodes"], edges)
                    + self._note(f"distance {ev['level']}: " + ", ".join(ev["nodes"])))
 
+    # ---- algorithms on weighted and directed graphs ------------------------------------
+
+    def _annotate(self, values: dict[str, str]) -> list:
+        """Small gold numbers beside nodes (Dijkstra's distances), replacing the last ones."""
+        anims = self.drop(*getattr(self, "annotations", {}).values())
+        self.annotations = {}
+        hw, hh = self.half
+        centre = np.mean(list(self.pos.values()), axis=0)
+        for n, s in values.items():
+            # A teal badge, not a gold number like the edge weights, beside the node on the outer side.
+            label = text(f"d={s}", MIN_FONT, colour("TEAL"))
+            badge = RoundedRectangle(width=label.width + 0.12, height=label.height + 0.1, corner_radius=0.05,
+                                     stroke_color=colour("TEAL"), stroke_width=2, fill_color=BLACK, fill_opacity=1)
+            side = 1.0 if self.pos[n][0] > centre[0] + 0.05 else -1.0
+            badge.move_to(self.pos[n] + np.array([side * (hw + 0.08 + badge.width / 2), 0, 0]))
+            label.move_to(badge)
+            self.annotations[n] = VGroup(badge, label).set_z_index(3)
+        return anims + self.add(*self.annotations.values())
+
+    def _algo(self, kind: str, a) -> Steps:
+        from animation_agent.visuals.specs import _check_algo, _graph_state
+
+        if not hasattr(self, "st"):
+            self.st = _graph_state(self.p)
+        _check_algo(kind)(self.st, a)
+        ev, d = self.st["last"], self.st["algo"]
+        old_nodes, old_edges = list(self.search_state), list(self.search_edges | set(self.hl_edges))
+        self.hl_edges = {k: v for k, v in self.hl_edges.items() if v not in ("RED", "YELLOW")}
+        self.search_state = {n: "visited" for n in self.search_state}
+        extra = []
+        if kind == "dijkstra":
+            if ev["settled"] is not None:
+                self.search_state[ev["settled"]] = "current"
+            self.search_edges = {self._key(u, v) for v, u in d["prev"].items() if v in d["settled"]}
+            for v, _ in ev.get("updated", []):  # the edges just relaxed, for this step
+                self.hl_edges[self._key(ev["settled"], v)] = "YELLOW"
+            extra = self._annotate({n: _num(x) for n, x in d["dist"].items()})
+        elif kind in ("prim", "kruskal"):
+            nodes = d["tree"] if kind == "prim" else [n for e in d["edges"] for n in e]
+            for n in nodes:
+                self.search_state.setdefault(n, "visited")
+            self.search_edges = {self._key(u, v) for u, v in d["edges"]}
+            if kind == "kruskal" and ev.get("edge") and not ev["taken"]:
+                self.hl_edges[self._key(*ev["edge"])] = "RED"
+            extra = self._note(f"total {_num(d['total'])}", colour("TEAL"))
+        else:
+            if ev["node"] is not None:
+                self.search_state[ev["node"]] = "current"
+            extra = self._note("order: " + ", ".join(d["order"]), colour("TEAL"))
+        nodes = set(old_nodes) | set(self.search_state)
+        edges = set(old_edges) | self.search_edges | set(self.hl_edges)
+        yield Step(self._restyle(nodes, edges) + extra)
+
+    def dijkstra_step(self, a) -> Steps:
+        yield from self._algo("dijkstra", a)
+
+    def prim_step(self, a) -> Steps:
+        yield from self._algo("prim", a)
+
+    def kruskal_step(self, a) -> Steps:
+        yield from self._algo("kruskal", a)
+
+    def topo_step(self, a) -> Steps:
+        yield from self._algo("topo", a)
+
     # ---- the marker ---------------------------------------------------------
 
     def _move_marker(self, to: str) -> list:
@@ -428,8 +512,12 @@ class Graph(Template):
         self.hl_nodes, self.hl_edges, self.search_state, self.search_edges = {}, {}, {}, set()
         self.search = None
         anims = self._restyle(nodes, edges) + self.drop(self.ghost_mob, self.note_mob, self.marker)
+        anims += self.drop(*getattr(self, "annotations", {}).values())
+        self.annotations = {}
         self.ghost_mob = self.note_mob = self.marker = None
         self.at, self.read = None, ""
+        if hasattr(self, "st"):
+            self.st["algo"] = None
         if anims:
             yield Step(anims)
 

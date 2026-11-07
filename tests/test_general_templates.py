@@ -164,7 +164,7 @@ def test_polar_and_parametric_curves_and_points_on_them_are_computed():
 
 
 def test_the_picture_kinds_the_templates_now_draw():
-    for family, template in {"flowchart": "Graph", "state_machine": "Graph", "tree": "Graph", "bar_meter": "BarChart",
+    for family, template in {"flowchart": "Graph", "state_machine": "Graph", "tree": "BinaryTree", "bar_meter": "BarChart",
                              "probability": "BarChart", "number_line": "NumberLine", "dp_table": "Table",
                              "bits_logic": "Table", "polar_parametric": "FunctionPlot"}.items():
         assert main_template(family) == template, family

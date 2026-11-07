@@ -40,7 +40,7 @@ BAR_MAX = 1.6
 
 class ArrayBars(Template):
     spec = ARRAY_BARS
-    durations = {"create": 0.8, "swap": 0.9, "bisect_check": 1.0, "bisect_discard": 1.0, "bisect_step": 1.8,
+    durations = {"create": 0.8, "swap": 0.9, "partition_step": 1.1, "bisect_check": 1.0, "bisect_discard": 1.0, "bisect_step": 1.8,
                  "ghost": 0.8, "scan": 0.7, "bubble_step": 1.0, "bubble_pass": 2.4, "selection_step": 1.2,
                  "insertion_step": 1.2}
     SORT_ACTIONS = ("bubble_step", "bubble_pass", "selection_step", "insertion_step")
@@ -70,7 +70,7 @@ class ArrayBars(Template):
         box = self.bounds
         self.cell_w = min(MAX_CELL, box.width / self.n)
         note = NOTE_ROW if self.p.title or self.will(
-            "note", "compare", "found", "ghost", "bisect_check", "bisect_discard", "bisect_step",
+            "note", "compare", "found", "ghost", "bisect_check", "bisect_discard", "bisect_step", "partition_step",
             *self.SORT_ACTIONS) else 0.0
         index = INDEX_ROW if self.p.show_indices or self.p.style == "bars" else 0.05
         bisects = self.will("bisect_check", "bisect_step")
@@ -415,6 +415,37 @@ class ArrayBars(Template):
                 restyle += self._restyle([k], state).anims
             self.counters["comparisons"] = self.sort["comparisons"]
             yield Step(restyle + self._counter(), share * 0.25)
+
+    def partition_step(self, a) -> Steps:
+        """Lomuto's partition: the pivot gold, the small side teal, the value j looks at yellow."""
+        from animation_agent.visuals.specs import partition_next
+
+        n = self.n
+        lo = 0 if a.lo is None else a.lo
+        hi = n - 1 if a.hi is None else a.hi
+        part = getattr(self, "part", None)
+        if part is None or part["done"] or (part["lo"], part["hi"]) != (lo, hi):
+            part = self.part = {"lo": lo, "hi": hi, "i": lo - 1, "j": lo, "done": False}
+        values = list(self.values)
+        ev = partition_next(values, part)
+        restyle = self._restyle([hi], "GOLD").anims if ev["kind"] == "compare" else []
+        if ev["kind"] == "compare":
+            yield Step(restyle + self._restyle([ev["j"]], "YELLOW").anims
+                       + self._note(f"{_fmt(ev['value'])} {'<=' if ev['small'] else '>'} {_fmt(ev['pivot'])}"), 0.45)
+        if ev["swap"] is not None:
+            i, j = ev["swap"]
+            order = list(range(n))
+            order[i], order[j] = j, i
+            yield Step(self._move_cells(order), 0.3)
+        if ev["kind"] == "compare":
+            states = {k: "TEAL" for k in range(lo, part["i"] + 1)}
+            states |= {k: "base" for k in range(part["i"] + 1, part["j"]) if self.cell_state[k] != "GREEN"}
+        else:
+            states = {k: "base" for k in range(lo, hi + 1) if self.cell_state[k] != "GREEN"} | {ev["at"]: "GREEN"}
+        anims = [] if ev["kind"] == "compare" else self._note(f"pivot {_fmt(ev['pivot'])} in place")
+        for k, st in states.items():
+            anims += self._restyle([k], st).anims
+        yield Step(anims, 0.25)
 
     def bubble_step(self, a) -> Steps:
         yield from self._sorted("bubble")

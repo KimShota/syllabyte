@@ -15,6 +15,10 @@ from manim import FadeOut
 
 from animation_agent.visuals.array_bars import ArrayBars
 from animation_agent.visuals.bar_chart import BarChart
+from animation_agent.visuals.binary_tree import BinaryTree
+from animation_agent.visuals.hash_table import HashTable
+from animation_agent.visuals.linked_list import LinkedList
+from animation_agent.visuals.stack_queue import StackQueue
 from animation_agent.visuals.base import Template
 from animation_agent.visuals.calls import CallError, parse_call, parse_segment
 from animation_agent.visuals.equation_steps import EquationSteps
@@ -28,7 +32,8 @@ from animation_agent.visuals.specs import REGISTRY
 from animation_agent.visuals.table import Table
 
 CLASSES: dict[str, type[Template]] = {cls.spec.name: cls for cls in (
-    ArrayBars, MergeSort, Graph, BarChart, NumberLine, Table, FunctionPlot, LinearMap2D, EquationSteps, Note)}
+    ArrayBars, MergeSort, Graph, BarChart, NumberLine, Table, LinkedList, StackQueue, HashTable, BinaryTree,
+    FunctionPlot, LinearMap2D, EquationSteps, Note)}
 assert set(CLASSES) == set(REGISTRY), "every spec needs a drawing class"
 
 BEAT_FILL = 0.8  # share of a beat's narration the animations may take

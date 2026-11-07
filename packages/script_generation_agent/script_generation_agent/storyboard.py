@@ -733,7 +733,7 @@ def _example(explainer: str, peer: str, level: int, family: str | None = None) -
     from script_generation_agent.storyboard_modules import module_for, render_module_example
 
     module = module_for(family)
-    if level == 2 and module is not None:
+    if level == 2 and module is not None and module.example is not None:
         return render_module_example(module, explainer=explainer, peer=peer)
     return render_example(explainer=explainer, peer=peer, level=level)
 

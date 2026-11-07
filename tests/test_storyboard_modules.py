@@ -26,7 +26,7 @@ def module_board(module, plan):
     return storyboard.storyboard_model(plan).model_validate(data)
 
 
-@pytest.mark.parametrize("name", sorted(MODULES))
+@pytest.mark.parametrize("name", sorted(n for n, m in MODULES.items() if m.example is not None))
 def test_each_module_example_is_one_the_pipeline_accepts_as_it_is(name):
     module = MODULES[name]
     plan = storyboard.skeleton(2)
@@ -81,7 +81,7 @@ def test_module_examples_render_in_the_prompts_form():
 
 
 @pytest.mark.skipif(not __import__("os").environ.get("SYLLABYTE_RENDER_TESTS"), reason="set SYLLABYTE_RENDER_TESTS=1")
-@pytest.mark.parametrize("name", sorted(MODULES))
+@pytest.mark.parametrize("name", sorted(n for n, m in MODULES.items() if m.example is not None))
 @pytest.mark.parametrize("segment", [0, 2, 3])
 def test_each_module_example_renders_with_no_layout_findings(name, segment, tmp_path):
     import json

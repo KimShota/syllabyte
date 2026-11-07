@@ -522,9 +522,13 @@ runs, a graph, a plot or a grid) and one formula or note on screen at a time.
 apply, add a vector, write or rewrite a formula. A beat whose only calls change text (a note, a counter, clear) \
 counts as text on screen. A note adds what the voice doesn't say (a value, a label, a question); it never repeats \
 the line.
-  - An algorithm runs itself: a sort (bubble_step, selection_step, insertion_step), a merge (merge_step, merge), \
-a search (scan, bisect_step, dfs_step, bfs_level), a state machine reading its input (feed), a table built from a \
-rule (fill_next, fill_row), a sequence's terms, a chart's totals, shares and expected value, and a curve's \
+  - An algorithm runs itself: a sort (bubble_step, selection_step, insertion_step, quicksort's partition_step), \
+a merge (merge_step, merge), a search (scan, bisect_step, dfs_step, bfs_level), shortest paths and spanning trees \
+(dijkstra_step, prim_step, kruskal_step, topo_step), a data structure's operations (a linked list's insert, \
+delete, find_step and reverse_step; push, pop, enqueue and dequeue; a hash table's insert and find; a BST's \
+insert, search and delete, a heap's push, pop and heapify, traverse_step), a state machine reading its input \
+(feed), a table built from a rule (fill_next, fill_row: Pascal, grid paths, Fibonacci, truth tables, LCS, edit \
+distance, knapsack, coin change), a sequence's terms, a chart's totals, shares and expected value, and a curve's \
 tangent, area or maximum are computed. Call the \
 step and say what it shows; never act out an algorithm with swap or set_value, which is how the order goes wrong.
   - A highlight lights up what its own line names (say the values, or "the front", "the first two"); a cell \

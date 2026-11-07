@@ -268,7 +268,7 @@ def _example_data(level: int, family: str | None) -> tuple[str, dict]:
     from script_generation_agent.storyboard_modules import module_for
 
     module = module_for(family)
-    if level == 2 and module is not None:
+    if level == 2 and module is not None and module.example is not None:
         return module.ku, module.example
     return EXAMPLES[level]
 

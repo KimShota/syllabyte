@@ -20,7 +20,7 @@ from animation_agent.visuals.base import (
     mark_background,
     text,
 )
-from animation_agent.visuals.specs import TABLE, table_next, table_shape, truth_fn
+from animation_agent.visuals.specs import TABLE, table_next, table_row_labels, table_shape, truth_fn
 
 MAX_CELL_W = 1.3
 MAX_CELL_H = 0.6
@@ -34,10 +34,11 @@ class Table(Template):
         super().__init__(scene, params, uses)
         self.nrows, self.ncols, cells, self.columns = table_shape(params)
         self.st = {"rule": params.rule, "cells": [list(r) for r in cells], "nrows": self.nrows, "ncols": self.ncols,
-                   "columns": self.columns}
+                   "columns": self.columns, "s": params.s, "t": params.t, "weights": params.weights,
+                   "values": params.values, "coins": params.coins}
         if params.rule == "truth_table":
             self.st["truth"], self.st["vars"] = truth_fn(params.expr)
-        self.labels = params.row_labels or (["F"] if params.rule == "fibonacci" else None)
+        self.labels = table_row_labels(params)
         self.fills: dict[tuple[int, int], str] = {}
         self.arrows: list = []
         self.note_mob = self.ghost_mob = None
@@ -105,6 +106,10 @@ class Table(Template):
         anims = self.drop(*self.arrows)
         self.arrows = []
         for a in frm:
+            if abs(a[0] - to[0]) > 1 or abs(a[1] - to[1]) > 1:  # far away (knapsack's take): outline it instead
+                ring = Rectangle(width=self.cw * 0.9, height=self.ch * 0.84).move_to(self.centre(*a))
+                self.arrows.append(mark_background(ring.set_stroke(colour("TEAL"), 5)).set_z_index(1))
+                continue
             p, q = self.centre(*a), self.centre(*to)
             d = (q - p) / max(np.linalg.norm(q - p), 1e-6)
             reach = np.array([self.cw * 0.26, self.ch * 0.26, 0]) * np.abs(d) / max(np.abs(d).max(), 1e-6)

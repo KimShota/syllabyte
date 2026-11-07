@@ -58,10 +58,13 @@ DRAWN_BY: dict[str, tuple[str, ...]] = {
     "merge_sort": ("MergeSort",),
     # Boxes and arrows (Graph with labels, edge labels, tree and flow layouts, walk and feed).
     "flowchart": ("Graph",),
-    "call_tree": ("Graph",),
-    "tree": ("Graph",),
+    "call_tree": ("Graph", "StackQueue"),
     "state_machine": ("Graph",),
-    "linked_list": ("Graph",),
+    # Data structures, each with its operations computed.
+    "linked_list": ("LinkedList",),
+    "stack_queue": ("StackQueue",),
+    "hash_table": ("HashTable",),
+    "tree": ("BinaryTree", "Graph"),
     # Quantities as bars (totals, running totals, shares, the mean, an expected value computed).
     "bar_meter": ("BarChart",),
     "probability": ("BarChart",),

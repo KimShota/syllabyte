@@ -568,6 +568,68 @@ def _said_sort(state: dict, a) -> str:
     return out + f"; comparisons: {state['sort']['comparisons']}"
 
 
+# ---- Quicksort's partition (Lomuto), computed ------------------------------------------------------------------
+
+
+class PartitionArgs(_Args):
+    lo: int | None = Field(None, description="the first index of the part to partition (left out: the whole list)")
+    hi: int | None = Field(None, description="the last index; its value is the pivot")
+
+
+def partition_next(values: list, part: dict) -> dict:
+    """One step of Lomuto's partition of values[lo..hi] around the pivot values[hi]: j looks at its next value, which
+    joins the small side (swapped to just after i) if it is at most the pivot; the last step swaps the pivot in
+    between the two sides."""
+    lo, hi, pivot = part["lo"], part["hi"], values[part["hi"]]
+    j = part["j"]
+    if j < hi:
+        v = values[j]
+        small = v <= pivot
+        swap = None
+        if small:
+            part["i"] += 1
+            if part["i"] != j:
+                swap = (part["i"], j)
+                values[part["i"]], values[j] = values[j], values[part["i"]]
+        part["j"] += 1
+        return {"kind": "compare", "j": j, "value": v, "pivot": pivot, "small": small, "swap": swap, "i": part["i"]}
+    k = part["i"] + 1
+    swap = (k, hi) if k != hi else None
+    values[k], values[hi] = values[hi], values[k]
+    part["done"], part["at"] = True, k
+    return {"kind": "place", "at": k, "pivot": pivot, "swap": swap, "lo": lo, "hi": hi}
+
+
+def _check_partition(state: dict, a: PartitionArgs) -> str | None:
+    values = state["values"]
+    if not all(isinstance(v, int | float) for v in values):
+        return "partition needs numeric values"
+    n = len(values)
+    lo = 0 if a.lo is None else a.lo
+    hi = n - 1 if a.hi is None else a.hi
+    if not 0 <= lo <= hi < n:
+        return f"lo and hi must satisfy 0 <= lo <= hi <= {n - 1}"
+    part = state.get("part")
+    if part is None or part["done"] or (part["lo"], part["hi"]) != (lo, hi):
+        part = state["part"] = {"lo": lo, "hi": hi, "i": lo - 1, "j": lo, "done": False}
+    state["last_part"] = partition_next(values, part)
+    if part["done"]:
+        state.setdefault("found", set()).add(part["at"])  # a placed pivot is where it belongs: green
+    return None
+
+
+def _said_partition(state: dict, a) -> str:
+    ev = state["last_part"]
+    if ev["kind"] == "compare":
+        v, p = _fmt(ev["value"]), _fmt(ev["pivot"])
+        out = (f"{v} <= pivot {p}: it joins the small side" + (" (swapped to the front of the large side)"
+                                                                if ev["swap"] else "")
+               if ev["small"] else f"{v} > pivot {p}: it stays on the large side")
+        return out + f"; the row reads {_row(state)}"
+    return (f"the pivot {_fmt(ev['pivot'])} swaps into place between the two sides, at index {ev['at']}, and turns "
+            f"green; the row reads {_row(state)}")
+
+
 def _scan_reveals(state: dict, a: ScanArgs) -> bool:
     return a.target is not None and 0 <= a.index < len(state["values"]) and state["values"][a.index] == a.target
 
@@ -619,6 +681,11 @@ ARRAY_BARS = TemplateSpec(
         "insertion_step": ActionSpec(
             "Insertion sort, one step (computed): the next value moves left past every larger value and stops "
             "after the first smaller one.", NoArgs, _check_sort("insertion"), _said_sort, reveals=True),
+        "partition_step": ActionSpec(
+            "Quicksort's partition (Lomuto), one step (computed): the pivot is the last value of lo..hi; j looks at "
+            "the next value, and a value at most the pivot joins the small side; the last step swaps the pivot in "
+            "between, where it stays (green). Then partition each side with lo and hi.", PartitionArgs,
+            _check_partition, _said_partition, reveals=True),
         "note": ActionSpec("A short line of text above the list.", NoteArgs,
                            says=lambda s, a: f'note above the list: "{a.text}"'),
         "counter": ActionSpec('Show or update a counter, e.g. checks: 3.', CounterArgs,
@@ -1845,8 +1912,8 @@ def graph_positions(nodes: list[str], edges: list[list[str]], layout: str,
                 return sum(xs_) / len(xs_) if xs_ else 0.5
             level = sorted(level, key=key)
         y = 0.5 if rows == 1 else 1 - li / (rows - 1)
-        for i, n in enumerate(level):
-            pos[n] = ((i + 1) / (len(level) + 1), y)
+        for i, n in enumerate(level):  # (i + 0.5) / k: a row's nodes use the width, leaving room for edge labels
+            pos[n] = ((i + 0.5) / len(level), y)
     if layout == "flow":  # rows become columns, left to right
         return {n: (1 - y, x) for n, (x, y) in pos.items()}
     return pos
@@ -1956,6 +2023,185 @@ class GhostEdgeArgs(_Args):
     _text = field_validator("text")(_short(24))
 
 
+# ---- Algorithms on weighted and directed graphs, computed -------------------------------------------------------
+
+
+def graph_weights(st: dict) -> dict | None:
+    """Each edge's weight (its label as a number), or None if some edge has none."""
+    try:
+        return {k: float(v) for k, v in st["edge_labels"].items()} if len(st["edge_labels"]) == len(st["edges"]) \
+            else None
+    except ValueError:
+        return None
+
+
+def _w(st: dict, a: str, b: str) -> float:
+    return st["weights"][(a, b) if st["directed"] else tuple(sorted((a, b)))]
+
+
+def dijkstra_next(st: dict) -> dict:
+    """Settle the closest unsettled node, then relax its edges."""
+    d = st["algo"]
+    if not d["dist"]:
+        d["dist"][d["start"]] = 0.0
+    open_ = [n for n in d["dist"] if n not in d["settled"]]
+    if not open_:
+        d["done"] = True
+        return {"settled": None}
+    u = min(open_, key=lambda n: (d["dist"][n], st["nodes"].index(n)))
+    d["settled"].append(u)
+    updated = []
+    for v in st["adj"][u]:
+        if v in d["settled"] or not _has_edge(st, u, v):
+            continue
+        nd = d["dist"][u] + _w(st, u, v)
+        if v not in d["dist"] or nd < d["dist"][v]:
+            d["dist"][v], d["prev"][v] = nd, u
+            updated.append((v, nd))
+    d["done"] = all(n in d["settled"] for n in d["dist"]) and not any(
+        v not in d["dist"] for v in st["adj"][u] if _has_edge(st, u, v))
+    return {"settled": u, "dist": d["dist"][u], "updated": updated}
+
+
+def prim_next(st: dict) -> dict:
+    d = st["algo"]
+    if not d["tree"]:
+        d["tree"].append(d["start"])
+        return {"added": d["start"], "edge": None}
+    best = None
+    for u in d["tree"]:
+        for v in st["adj"][u]:
+            if v not in d["tree"]:
+                w = _w(st, u, v)
+                if best is None or w < best[0]:
+                    best = (w, u, v)
+    if best is None:
+        d["done"] = True
+        return {"added": None}
+    w, u, v = best
+    d["tree"].append(v)
+    d["edges"].append((u, v))
+    d["total"] += w
+    d["done"] = len(d["tree"]) == len(st["nodes"])
+    return {"added": v, "edge": (u, v), "w": w, "total": d["total"]}
+
+
+def kruskal_next(st: dict) -> dict:
+    d = st["algo"]
+    if d["queue"] is None:
+        d["queue"] = sorted(st["weights"], key=lambda k: (st["weights"][k], k))
+        d["parent"] = {n: n for n in st["nodes"]}
+
+    def find(x):
+        while d["parent"][x] != x:
+            x = d["parent"][x]
+        return x
+
+    if not d["queue"] or len(d["edges"]) == len(st["nodes"]) - 1:
+        d["done"] = True
+        return {"edge": None}
+    a, b = d["queue"].pop(0)
+    w = st["weights"][(a, b)]
+    ra, rb = find(a), find(b)
+    if ra == rb:
+        return {"edge": (a, b), "w": w, "taken": False}
+    d["parent"][ra] = rb
+    d["edges"].append((a, b))
+    d["total"] += w
+    d["done"] = len(d["edges"]) == len(st["nodes"]) - 1
+    return {"edge": (a, b), "w": w, "taken": True, "total": d["total"]}
+
+
+def topo_next(st: dict) -> dict:
+    d = st["algo"]
+    if d["indeg"] is None:
+        d["indeg"] = {n: 0 for n in st["nodes"]}
+        for a, b in st["edges"]:
+            d["indeg"][b] += 1
+    ready = [n for n in st["nodes"] if n not in d["order"] and d["indeg"][n] == 0]
+    if not ready:
+        d["done"] = True
+        left = [n for n in st["nodes"] if n not in d["order"]]
+        return {"node": None, "cycle": left}
+    u = ready[0]
+    d["order"].append(u)
+    for v in st["adj"][u]:
+        if (u, v) in st["edges"]:
+            d["indeg"][v] -= 1
+    d["done"] = len(d["order"]) == len(st["nodes"])
+    return {"node": u}
+
+
+_ALGOS = {"dijkstra": lambda start: {"kind": "dijkstra", "start": start, "dist": {}, "settled": [], "prev": {},
+                                     "done": False},
+          "prim": lambda start: {"kind": "prim", "start": start, "tree": [], "edges": [], "total": 0.0, "done": False},
+          "kruskal": lambda start: {"kind": "kruskal", "start": None, "queue": None, "edges": [], "total": 0.0,
+                                    "done": False, "parent": {}},
+          "topo": lambda start: {"kind": "topo", "start": None, "indeg": None, "order": [], "done": False}}
+_NEXT = {"dijkstra": dijkstra_next, "prim": prim_next, "kruskal": kruskal_next, "topo": topo_next}
+
+
+def _check_algo(kind: str):
+    def check(st: dict, a) -> str | None:
+        start = getattr(a, "start", None)
+        if start is not None and (problem := _need_nodes(st, start)):
+            return problem
+        if kind in ("dijkstra", "prim", "kruskal"):
+            st["weights"] = graph_weights(st)
+            if st["weights"] is None:
+                return f"{kind} needs a weight on every edge: a number as each edge's third item"
+            if any(w < 0 for w in st["weights"].values()) and kind == "dijkstra":
+                return "Dijkstra needs weights of 0 or more"
+            if kind in ("prim", "kruskal") and st["directed"]:
+                return f"{kind} builds a spanning tree of an undirected graph"
+        if kind == "topo" and not st["directed"]:
+            return "a topological order needs a directed graph"
+        algo = st.get("algo")
+        if algo is None or algo["kind"] != kind or algo.get("start") != start:
+            algo = st["algo"] = _ALGOS[kind](start)
+        if algo["done"]:
+            return f"{kind} is done: call it again on a new graph, or reset"
+        st["last"] = _NEXT[kind](st)
+        return None
+    return check
+
+
+def _said_algo(kind: str):
+    def says(st: dict, a) -> str:
+        ev, d = st["last"], st["algo"]
+        nm = lambda n: _name(st, n)  # noqa: E731
+        if kind == "dijkstra":
+            if ev["settled"] is None:
+                return "every node reachable is settled"
+            out = f"{nm(ev['settled'])} is settled at distance {_num(ev['dist'])}, the smallest open"
+            if ev["updated"]:
+                out += "; its edges update " + ", ".join(f"{nm(v)} to {_num(x)}" for v, x in ev["updated"])
+            return out
+        if kind == "prim":
+            if ev.get("edge") is None:
+                return f"the tree starts at {nm(ev['added'])}" if ev.get("added") else "the tree spans everything"
+            u, v = ev["edge"]
+            return (f"the cheapest edge out of the tree, {nm(u)}-{nm(v)} ({_num(ev['w'])}), joins it; total "
+                    f"{_num(ev['total'])}")
+        if kind == "kruskal":
+            if ev["edge"] is None:
+                return "the spanning tree is complete"
+            u, v = ev["edge"]
+            if not ev["taken"]:
+                return f"the next cheapest edge, {nm(u)}-{nm(v)} ({_num(ev['w'])}), would close a cycle: skipped"
+            return f"the next cheapest edge, {nm(u)}-{nm(v)} ({_num(ev['w'])}), joins the tree; total {_num(ev['total'])}"
+        if ev["node"] is None:
+            return "no node is left without incoming edges" + (f": {', '.join(map(nm, ev['cycle']))} form a cycle"
+                                                              if ev["cycle"] else "")
+        return (f"{nm(ev['node'])} has no incoming edges left, so it comes next; order so far: "
+                f"{', '.join(map(nm, d['order']))}")
+    return says
+
+
+class OptStartArgs(_Args):
+    start: str = Field(description="the node it starts from")
+
+
 class WalkArgs(_Args):
     to: str = Field(description="the node the marker moves to, along an edge (the first walk puts it there)")
 
@@ -1967,7 +2213,7 @@ class FeedArgs(_Args):
 def _graph_state(p: GraphParams) -> dict:
     return {"adj": graph_adjacency(p.nodes, p.edges, p.directed), "nodes": list(p.nodes), "directed": p.directed,
             "edges": {(e[0], e[1]) if p.directed else tuple(sorted(e[:2])) for e in p.edges}, "search": None,
-            "last": None, "labels": dict(p.labels or {}), "at": None, "walked": None, "read": "",
+            "last": None, "labels": dict(p.labels or {}), "at": None, "walked": None, "read": "", "algo": None,
             "edge_labels": {((e[0], e[1]) if p.directed else tuple(sorted(e[:2]))): e[2] for e in p.edges
                             if len(e) == 3}}
 
@@ -2121,6 +2367,19 @@ GRAPH = TemplateSpec(
             "BFS, one level (computed): every node at the next distance from start turns teal, labelled with its "
             "distance, and the edges that reached them thicken.", StartArgs, _check_search("bfs"), _said_bfs,
             reveals=True),
+        "dijkstra_step": ActionSpec("Dijkstra, one node per call (computed): the closest unsettled node is "
+                                    "settled, then its edges update its neighbours' distances, shown beside them. "
+                                    "Every edge needs a weight.", OptStartArgs, _check_algo("dijkstra"),
+                                    _said_algo("dijkstra"), reveals=True),
+        "prim_step": ActionSpec("Prim's minimum spanning tree, one node per call (computed): the cheapest edge "
+                                "leaving the tree joins it.", OptStartArgs, _check_algo("prim"), _said_algo("prim"),
+                                reveals=True),
+        "kruskal_step": ActionSpec("Kruskal's minimum spanning tree, one edge per call (computed): the next "
+                                   "cheapest edge joins unless it would close a cycle.", NoArgs,
+                                   _check_algo("kruskal"), _said_algo("kruskal"), reveals=True),
+        "topo_step": ActionSpec("Topological order (Kahn), one node per call (computed): a node with no incoming "
+                                "edges left goes next. Directed graphs.", NoArgs, _check_algo("topo"),
+                                _said_algo("topo"), reveals=True),
         "walk": ActionSpec("Move the gold marker along an edge to this node (the first walk puts it there): a "
                            "flowchart's path, a step through a list or a machine.", WalkArgs, _check_walk, _said_walk,
                            reveals=True),
@@ -2143,7 +2402,7 @@ GRAPH = TemplateSpec(
         "clear": ActionSpec("Remove highlights, the ghost and the note (a search's colours stay).",
                             says=lambda s, a: "the graph's highlights, ghost and note clear"),
         "reset": ActionSpec("Clear everything, a search's colours and the marker too.",
-                            check=lambda s, a: s.update(search=None, at=None, read="") or None,
+                            check=lambda s, a: s.update(search=None, at=None, read="", algo=None) or None,
                             says=lambda s, a: "the graph is back to plain"),
     },
     example=[
@@ -3183,7 +3442,7 @@ NUMBER_LINE = TemplateSpec(
 
 MAX_TABLE_ROWS = 8
 MAX_TABLE_COLS = 7
-TABLE_RULES = ("pascal", "grid_paths", "fibonacci", "truth_table")
+TABLE_RULES = ("pascal", "grid_paths", "fibonacci", "truth_table", "lcs", "edit_distance", "knapsack", "coin_change")
 _TRUTH_VARS = ("A", "B", "C")
 
 
@@ -3224,10 +3483,20 @@ class TableParams(_Args):
         None, description='the cells, row by row, "" for an empty cell to fill later (1-8 rows), e.g. '
                           '[[0, 5, ""], [1, 3, ""]]')
     row_labels: list[str] | None = Field(None, description="a label in front of each row (optional)")
-    rule: Literal["pascal", "grid_paths", "fibonacci", "truth_table"] | None = Field(
+    rule: Literal["pascal", "grid_paths", "fibonacci", "truth_table", "lcs", "edit_distance", "knapsack",
+                  "coin_change"] | None = Field(
         None, description='instead of rows, a table code fills (fill_next): "pascal" (Pascal\'s triangle, size=[n] '
                           'rows), "grid_paths" (paths to each cell moving right or down, size=[rows, cols]), '
-                          '"fibonacci" (one row, size=[n]), "truth_table" (every row of 0/1 values for expr)')
+                          '"fibonacci" (one row, size=[n]), "truth_table" (every row of 0/1 values for expr), '
+                          '"lcs" or "edit_distance" (of strings s and t), "knapsack" (items weights and values, '
+                          'capacity), "coin_change" (fewest coins for each amount up to amount)')
+    s: str | None = Field(None, description="lcs, edit_distance: the string down the side (at most 6 letters)")
+    t: str | None = Field(None, description="lcs, edit_distance: the string across the top (at most 5 letters)")
+    weights: list[int] | None = Field(None, description="knapsack: each item's weight")
+    values: list[int] | None = Field(None, description="knapsack: each item's value")
+    capacity: int | None = Field(None, description="knapsack: the bag's capacity (at most 5)")
+    coins: list[int] | None = Field(None, description="coin_change: the coin values")
+    amount: int | None = Field(None, description="coin_change: the largest amount (at most 5)")
     size: list[int] | None = Field(None, description="for pascal and fibonacci [n]; for grid_paths [rows, cols]")
     expr: str | None = Field(None, description='for truth_table: e.g. "A and not B", "(A or B) xor C"')
     title: str | None = Field(None, description="at most 24 characters")
@@ -3250,13 +3519,13 @@ class TableParams(_Args):
         nrows, ncols, _, cols = table_shape(self)
         if not 1 <= nrows <= MAX_TABLE_ROWS:
             raise ValueError(f"{nrows} rows; use 1-{MAX_TABLE_ROWS}")
-        total_cols = ncols + (1 if self.row_labels or self.rule == "fibonacci" else 0)
+        total_cols = ncols + (1 if table_row_labels(self) else 0)
         if not 1 <= total_cols <= MAX_TABLE_COLS:
             raise ValueError(f"{total_cols} columns; use 1-{MAX_TABLE_COLS}")
-        if self.row_labels is not None and len(self.row_labels) != nrows:
+        if self.row_labels is not None and len(self.row_labels) != nrows and self.rule is None:
             raise ValueError(f"{len(self.row_labels)} row labels for {nrows} rows")
         cell = table_cell_width(total_cols)
-        texts = [str(h) for h in cols or []] + [str(lab) for lab in self.row_labels or []]
+        texts = [str(h) for h in cols or []] + [str(lab) for lab in table_row_labels(self) or []]
         texts += [_fmt(v) for row in self.rows or [] for v in row if v != ""]
         long = [t for t in texts if est_width(t) > cell]
         if long:
@@ -3284,12 +3553,44 @@ def table_shape(p: TableParams) -> tuple[int, int, list[list[str]], list[str] | 
             raise ValueError("grid_paths needs size=[rows, cols]")
         r, c = size
         return r, c, [[""] * c for _ in range(r)], None
+    if p.rule in ("lcs", "edit_distance"):
+        if not p.s or not p.t or len(p.s) > 6 or len(p.t) > 5:
+            raise ValueError(f"{p.rule} needs strings s (at most 6 letters) and t (at most 5)")
+        r, c = len(p.s) + 1, len(p.t) + 1
+        cells = [[""] * c for _ in range(r)]
+        return r, c, cells, ["-"] + list(p.t)
+    if p.rule == "knapsack":
+        if not p.weights or not p.values or len(p.weights) != len(p.values) or p.capacity is None:
+            raise ValueError("knapsack needs weights and values (one each per item) and a capacity")
+        if not 1 <= p.capacity <= 5 or len(p.weights) > 6 or min(p.weights) < 1:
+            raise ValueError("knapsack: a capacity of 1-5, at most 6 items, weights of 1 or more")
+        return len(p.weights) + 1, p.capacity + 1, [[""] * (p.capacity + 1) for _ in range(len(p.weights) + 1)], \
+            [str(k) for k in range(p.capacity + 1)]
+    if p.rule == "coin_change":
+        if not p.coins or p.amount is None or not 1 <= p.amount <= 5 or min(p.coins) < 1:
+            raise ValueError("coin_change needs coins (values of 1 or more) and an amount of 1-5")
+        return 1, p.amount + 1, [[""] * (p.amount + 1)], [str(k) for k in range(p.amount + 1)]
     if len(size) != 1 or size[0] < 2:
         raise ValueError(f"{p.rule} needs size=[n] (2 or more)")
     n = size[0]
     if p.rule == "pascal":
         return n, n, [[""] * n for _ in range(n)], [str(k) for k in range(n)]
     return 1, n, [[""] * n], [str(k) for k in range(n)]
+
+
+def table_row_labels(p) -> list[str] | None:
+    """The labels in front of the rows: given, or the rule's (a string's letters, the items, the coins)."""
+    if p.row_labels:
+        return list(p.row_labels)
+    if p.rule == "fibonacci":
+        return ["F"]
+    if p.rule in ("lcs", "edit_distance") and p.s:
+        return ["-"] + list(p.s)
+    if p.rule == "knapsack" and p.weights:  # item numbers (their weights and values are in the sentence)
+        return ["-"] + [str(k) for k in range(1, len(p.weights) + 1)]
+    if p.rule == "coin_change":
+        return ["#"]
+    return None
 
 
 def table_next(st: dict) -> dict | None:
@@ -3308,11 +3609,61 @@ def table_next(st: dict) -> dict | None:
             elif rule == "fibonacci":
                 frm = [] if c < 2 else [(0, c - 2), (0, c - 1)]
                 value = c if not frm else sum(int(cells[a][b]) for a, b in frm)
+            elif rule in ("lcs", "edit_distance", "knapsack", "coin_change"):
+                return _dp_next(st, r, c)
             else:
                 frm = [(r, j) for j in range(len(row) - 1)]
                 value = st["truth"]({st["vars"][j]: int(row[j]) for j in range(len(row) - 1)})
             return {"cell": (r, c), "value": str(value), "from": frm}
     return None
+
+
+def _dp_next(st: dict, r: int, c: int) -> dict:
+    """The value of cell (r, c) of a classic DP table, the cells it comes from, and why."""
+    cells, rule = st["cells"], st["rule"]
+    num = lambda x: int(cells[x[0]][x[1]]) if cells[x[0]][x[1]] not in ("", "-") else None  # noqa: E731
+    if rule in ("lcs", "edit_distance"):
+        s, t = st["s"], st["t"]
+        if r == 0 or c == 0:
+            v = 0 if rule == "lcs" else r + c
+            return {"cell": (r, c), "value": str(v), "from": [],
+                    "why": "an empty prefix" + (" shares nothing" if rule == "lcs" else f": {v} edits")}
+        a, b = s[r - 1], t[c - 1]
+        diag, up, left = (r - 1, c - 1), (r - 1, c), (r, c - 1)
+        if a == b:
+            v = num(diag) + (1 if rule == "lcs" else 0)
+            return {"cell": (r, c), "value": str(v), "from": [diag],
+                    "why": f"{a} matches {b}, so the diagonal" + (" + 1" if rule == "lcs" else "")}
+        if rule == "lcs":
+            v = max(num(up), num(left))
+            return {"cell": (r, c), "value": str(v), "from": [up, left],
+                    "why": f"{a} and {b} differ, so the larger of up and left"}
+        v = 1 + min(num(up), num(left), num(diag))
+        return {"cell": (r, c), "value": str(v), "from": [up, left, diag],
+                "why": f"{a} and {b} differ, so 1 + the smallest of up, left and the diagonal"}
+    if rule == "knapsack":
+        w, val = st["weights"], st["values"]
+        if r == 0:
+            return {"cell": (r, c), "value": "0", "from": [], "why": "no items: nothing to take"}
+        wi, vi = w[r - 1], val[r - 1]
+        skip = num((r - 1, c))
+        if wi > c:
+            return {"cell": (r, c), "value": str(skip), "from": [(r - 1, c)],
+                    "why": f"item {r} (weight {wi}) doesn't fit in {c}, so the value above"}
+        take = vi + num((r - 1, c - wi))
+        v = max(skip, take)
+        return {"cell": (r, c), "value": str(v), "from": [(r - 1, c), (r - 1, c - wi)],
+                "why": f"skip item {r} ({skip}) or take it ({vi} + {num((r - 1, c - wi))} = {take}): {v}"}
+    coins = st["coins"]
+    if c == 0:
+        return {"cell": (0, 0), "value": "0", "from": [], "why": "no coins for an amount of 0"}
+    options = [(num((0, c - k)) + 1, k) for k in coins if k <= c and num((0, c - k)) is not None]
+    if not options:
+        return {"cell": (0, c), "value": "-", "from": [], "why": f"no coins add up to {c}"}
+    best, k = min(options)
+    return {"cell": (0, c), "value": str(best), "from": [(0, c - k) for _, k in sorted(options)][:3],
+            "why": f"one more coin than the best of {', '.join(str(c - k) for _, k in sorted(options))}: "
+                   f"{best} (with a {k})"}
 
 
 class TableCellArgs(_Args):
@@ -3366,7 +3717,8 @@ class TableGhostArgs(_Args):
 def _table_state(p: TableParams) -> dict:
     nrows, ncols, cells, cols = table_shape(p)
     st = {"rule": p.rule, "cells": cells, "nrows": nrows, "ncols": ncols, "columns": cols, "last": None,
-          "lead": bool(p.row_labels or p.rule == "fibonacci")}
+          "lead": bool(table_row_labels(p)), "s": p.s, "t": p.t, "weights": p.weights, "values": p.values,
+          "coins": p.coins}
     if p.rule == "truth_table":
         st["truth"], st["vars"] = truth_fn(p.expr)
     return st
@@ -3430,6 +3782,9 @@ def _cell_words(st: dict, r: int, c: int) -> str:
 def _said_fill_next(st: dict, a) -> str:
     ev = st["last"]
     r, c = ev["cell"]
+    if "why" in ev:
+        return f"{_cell_words(st, r, c)} is filled with {ev['value']}: {ev['why']}" + (
+            ", arrows from the cells it uses" if ev["from"] else "")
     if not ev["from"]:
         return f"{_cell_words(st, r, c)} is filled with {ev['value']}, a starting value"
     if st["rule"] == "truth_table":
@@ -3453,7 +3808,15 @@ def _describe_table(p: TableParams) -> str:
     nrows, ncols, cells, cols = table_shape(p)
     kind = {"pascal": "Pascal's triangle to fill", "grid_paths": "a grid of path counts to fill",
             "fibonacci": "a row of Fibonacci numbers to fill",
-            "truth_table": f"a truth table for {p.expr}"}.get(p.rule or "", "a table")
+            "truth_table": f"a truth table for {p.expr}",
+            "lcs": f"a DP table for the longest common subsequence of {p.s} and {p.t}",
+            "edit_distance": f"a DP table for the edit distance from {p.s} to {p.t}",
+            "knapsack": "a knapsack DP table (items "
+                        + ", ".join(f"{k} of weight {w} and value {v}" for k, (w, v) in
+                                    enumerate(zip(p.weights or [], p.values or []), 1))
+                        + f"; capacities 0 to {p.capacity})",
+            "coin_change": f"a DP row of the fewest coins ({', '.join(map(str, p.coins or []))}) for each amount"
+            }.get(p.rule or "", "a table")
     out = f"{kind}, {nrows} row{'s' if nrows != 1 else ''} by {ncols} column{'s' if ncols != 1 else ''}"
     if cols:
         out += " headed " + ", ".join(cols)
@@ -3521,8 +3884,1142 @@ TABLE = TemplateSpec(
 )
 
 
+# ==========================================================================
+# Data structures (plan/one-shot-storyboard-plan.md, "Data structure templates")
+# ==========================================================================
+# Each structure's operations are computed here, shared by the checker and the drawing, so the picture is always
+# what the operation does (the course test's hand-run algorithms lost track). Each shows the current operation,
+# named pointers as code names them, and its invariant, and marks its result as a reveal so a predict line can ask
+# first (algorithm-visualisation studies: what the learner does with a picture, here predicting, matters more than
+# what it shows).
+
+# ---- LinkedList -----------------------------------------------------------------------------------------------
+
+MAX_LL_NODES = 5
+
+
+class LinkedListParams(_Args):
+    values: list[Value] = Field(description="the nodes' values from head to tail, 1-5 of them, short (1-2 "
+                                            "characters)")
+    doubly: bool = Field(False, description="each node also links back to the one before it")
+    title: str | None = Field(None, description="at most 24 characters")
+    area: Area = "full"
+
+    _title = field_validator("title")(_short(24))
+
+    @model_validator(mode="after")
+    def _fits(self) -> LinkedListParams:
+        if not 1 <= len(self.values) <= MAX_LL_NODES:
+            raise ValueError(f"{len(self.values)} nodes; use 1-{MAX_LL_NODES} (a longer list doesn't fit the screen)")
+        long = [v for v in self.values if est_width(_fmt(v)) > 0.42]
+        if long:
+            raise ValueError(f"value {_fmt(long[0])!r} is too wide for a node: 1-2 characters")
+        return self
+
+
+def ll_new(values: list, doubly: bool) -> dict:
+    ids = list(range(len(values)))
+    nxt = {i: (i + 1 if i + 1 < len(ids) else None) for i in ids}
+    return {"vals": {i: v for i, v in zip(ids, values)}, "nxt": nxt, "head": 0 if ids else None,
+            "doubly": doubly, "ptrs": {}, "rev": None, "find": None, "next_id": len(ids), "last": None,
+            "slots": list(ids)}  # the nodes left to right as drawn: list order, until a reversal flips links
+
+
+def ll_order(st: dict) -> list[int]:
+    """The node ids from head along the next links (stopping at a cycle)."""
+    out, seen, c = [], set(), st["head"]
+    while c is not None and c not in seen:
+        out.append(c)
+        seen.add(c)
+        c = st["nxt"][c]
+    return out
+
+
+def _ll_words(st: dict) -> str:
+    order = ll_order(st)
+    return " -> ".join(_fmt(st["vals"][i]) for i in order) + " -> null" if order else "empty: head is null"
+
+
+def _ll_at(st: dict, index: int) -> int | None:
+    """The node at a place counted from the left as drawn."""
+    return st["slots"][index] if 0 <= index < len(st["slots"]) else None
+
+
+def ll_insert(st: dict, index: int, value) -> str | None:
+    order = ll_order(st)
+    if not 0 <= index <= len(order):
+        return f"position {index} is outside 0-{len(order)} (0 puts it at the head)"
+    if len(st["vals"]) >= MAX_LL_NODES + 1:
+        return f"at most {MAX_LL_NODES + 1} nodes fit"
+    if st["rev"] is not None and not st["rev"]["done"]:
+        return "finish the reversal first"
+    new = st["next_id"]
+    st["next_id"] += 1
+    st["vals"][new] = value
+    if index == 0:
+        st["nxt"][new], st["head"] = st["head"], new
+    else:
+        before = order[index - 1]
+        st["nxt"][new], st["nxt"][before] = st["nxt"][before], new
+    st["last"] = {"op": "insert", "id": new, "index": index}
+    st["slots"], st["rev"] = ll_order(st), None
+    return None
+
+
+def ll_delete(st: dict, index: int) -> str | None:
+    order = ll_order(st)
+    if not 0 <= index < len(order):
+        return f"there is no node at position {index} (positions 0-{len(order) - 1})"
+    if st["rev"] is not None and not st["rev"]["done"]:
+        return "finish the reversal first"
+    gone = order[index]
+    if index == 0:
+        st["head"] = st["nxt"][gone]
+    else:
+        st["nxt"][order[index - 1]] = st["nxt"][gone]
+    st["last"] = {"op": "delete", "id": gone, "value": st["vals"][gone], "index": index}
+    del st["vals"][gone], st["nxt"][gone]
+    st["ptrs"] = {n: (None if t == gone else t) for n, t in st["ptrs"].items()}
+    st["slots"], st["rev"] = ll_order(st), None
+    return None
+
+
+def ll_reverse_step(st: dict) -> str | None:
+    """One step of the in-place reversal: curr's next link flips to prev, then prev and curr move on."""
+    r = st["rev"]
+    if r is None or r["done"]:
+        r = st["rev"] = {"prev": None, "curr": st["head"], "done": False, "flipped": []}
+    c = r["curr"]
+    if c is None:
+        return "the list is empty"
+    after = st["nxt"][c]
+    st["nxt"][c] = r["prev"]
+    r["flipped"].append(c)
+    r["prev"], r["curr"] = c, after
+    if after is None:
+        st["head"], r["done"] = c, True
+    st["ptrs"]["prev"], st["ptrs"]["curr"] = r["prev"], r["curr"]
+    st["last"] = {"op": "reverse", "id": c, "to": st["nxt"][c], "done": r["done"]}
+    return None
+
+
+class LLPointArgs(_Args):
+    name: str = Field(description='a pointer as the code names it, e.g. "curr", "prev", "slow" (at most 5 '
+                                  "characters)")
+    index: int | None = Field(description="the node's place from the left as drawn (0 = the leftmost); None: "
+                                          "null")
+
+    _name = field_validator("name")(_short(5))
+
+
+class LLNameArgs(_Args):
+    name: str
+
+
+class LLInsertArgs(_Args):
+    index: int = Field(description="the new node's position (0 = the new head)")
+    value: Value
+
+
+class LLIndexArgs(_Args):
+    index: int
+
+
+class LLFindArgs(_Args):
+    value: Value
+
+
+class LLHighlightArgs(_Args):
+    indices: list[int]
+    colour: Colour = "YELLOW"
+
+
+class LLGhostArgs(_Args):
+    from_index: int = Field(description="the node a wrong link starts at")
+    to_index: int | None = Field(description="where it points (None: null)")
+    text: str = Field(description="the wrong idea, at most 24 characters")
+
+    _text = field_validator("text")(_short(24))
+
+
+def _check_ll_point(st: dict, a: LLPointArgs) -> str | None:
+    if a.index is None:
+        st["ptrs"][a.name] = None
+        return None
+    target = _ll_at(st, a.index)
+    if target is None:
+        return f"there is no node at position {a.index}"
+    st["ptrs"][a.name] = target
+    return None
+
+
+def _check_ll_advance(st: dict, a: LLNameArgs) -> str | None:
+    if a.name not in st["ptrs"]:
+        return f'there is no pointer "{a.name}": point it first'
+    at = st["ptrs"][a.name]
+    if at is None:
+        return f'"{a.name}" is null: it can\'t move on'
+    st["last"] = {"op": "advance", "from": at, "to": st["nxt"][at]}
+    st["ptrs"][a.name] = st["nxt"][at]
+    return None
+
+
+def _check_ll_find(st: dict, a: LLFindArgs) -> str | None:
+    f = st["find"]
+    if f is None or f["value"] != a.value or f["done"]:
+        f = st["find"] = {"value": a.value, "at": None, "done": False, "checks": 0}
+    nxt = st["head"] if f["at"] is None else st["nxt"][f["at"]]
+    if nxt is None:
+        f["done"], f["hit"] = True, False
+        st["last"] = {"op": "find", "id": None, "hit": False, "checks": f["checks"]}
+        return None
+    f["at"] = nxt
+    f["checks"] += 1
+    hit = st["vals"][nxt] == a.value
+    f["done"], f["hit"] = hit, hit
+    st["ptrs"]["curr"] = nxt
+    st["last"] = {"op": "find", "id": nxt, "hit": hit, "checks": f["checks"]}
+    return None
+
+
+def _said_ll_find(st: dict, a: LLFindArgs) -> str:
+    ev = st["last"]
+    if ev["id"] is None:
+        return f"curr reaches null after {ev['checks']} checks: {_fmt(a.value)} isn't in the list"
+    v = _fmt(st["vals"][ev["id"]])
+    return (f"curr moves to the node holding {v} (check {ev['checks']}): "
+            + (f"it matches {_fmt(a.value)} and turns green" if ev["hit"] else f"{v} isn't {_fmt(a.value)}"))
+
+
+def _said_ll_reverse(st: dict, a) -> str:
+    ev, v = st["last"], st["vals"]
+    to = "null" if ev["to"] is None else _fmt(v[ev["to"]])
+    out = f"the node holding {_fmt(v[ev['id']])} now points back to {to}"
+    if ev["done"]:
+        return out + f"; curr is null, so head moves to {_fmt(v[st['head']])}: the list reads {_ll_words(st)}"
+    return out + f"; prev moves to {_fmt(v[ev['id']])}, curr to {_fmt(v[st['rev']['curr']])}"
+
+
+def _ll_index_ok(st: dict, *indices) -> str | None:
+    n = len(st["slots"])
+    bad = [i for i in indices if i is not None and not 0 <= i < n]
+    return f"there is no node at position {bad[0]} (positions 0-{n - 1})" if bad else None
+
+
+def _describe_ll(p: LinkedListParams) -> str:
+    kind = "a doubly linked list" if p.doubly else "a linked list"
+    return f"{kind}: head -> " + " -> ".join(_fmt(v) for v in p.values) + " -> null" + (
+        f', titled "{p.title}"' if p.title else "")
+
+
+LINKED_LIST = TemplateSpec(
+    name="LinkedList",
+    family="linked_list",
+    purpose="A linked list: nodes with their next links (and back links if doubly), head, null, and named "
+            "pointers (curr, prev, slow, fast). Computed: insert and delete at a position (the links rewire), "
+            "find (curr walks node by node, counting checks), and the in-place reversal (reverse_step: curr's "
+            "link flips back to prev, one node per call). Needs at least half the frame.",
+    params=LinkedListParams,
+    min_rows=3,
+    init_state=lambda p: ll_new(list(p.values), p.doubly),
+    noun="list",
+    describe=_describe_ll,
+    actions={
+        "point": ActionSpec("Show (or move) a named pointer at a node, or at null.", LLPointArgs, _check_ll_point,
+                            lambda s, a: f'pointer "{a.name}" at '
+                                         + ("null" if a.index is None else
+                                            f"the node holding {_fmt(s['vals'][s['ptrs'][a.name]])}")),
+        "advance": ActionSpec("A pointer follows its node's next link (computed): curr = curr.next.", LLNameArgs,
+                              _check_ll_advance,
+                              lambda s, a: f'"{a.name}" moves from {_fmt(s["vals"][s["last"]["from"]])} to '
+                                           + ("null" if s["last"]["to"] is None
+                                              else _fmt(s["vals"][s["last"]["to"]])), reveals=True),
+        "insert": ActionSpec("Link a new node in at a position (computed): the node before it now points to it, "
+                             "and it points to the rest.", LLInsertArgs,
+                             lambda s, a: ll_insert(s, a.index, a.value),
+                             lambda s, a: f"a new node {_fmt(a.value)} is linked in at position {a.index}: "
+                                          + _ll_words(s), reveals=True),
+        "delete": ActionSpec("Unlink the node at a position (computed): the node before it skips over it.",
+                             LLIndexArgs, lambda s, a: ll_delete(s, a.index),
+                             lambda s, a: f"the node holding {_fmt(s['last']['value'])} is unlinked: "
+                                          + _ll_words(s), reveals=True),
+        "find_step": ActionSpec("Search, one node per call (computed): curr moves to the next node and compares "
+                                "it with the value; green when it matches.", LLFindArgs, _check_ll_find,
+                                _said_ll_find, reveals=True),
+        "reverse_step": ActionSpec("In-place reversal, one node per call (computed): curr's next link flips to "
+                                   "prev, then prev and curr move on; at the end head moves to the old tail.",
+                                   NoArgs, lambda s, a: ll_reverse_step(s), _said_ll_reverse, reveals=True),
+        "highlight": ActionSpec("Colour the nodes at these positions.", LLHighlightArgs,
+                                lambda s, a: _ll_index_ok(s, *a.indices),
+                                lambda s, a: "the node" + ("s" if len(a.indices) > 1 else "") + " holding "
+                                             + ", ".join(_fmt(s["vals"][s["slots"][i]]) for i in a.indices)
+                                             + f" turn{'' if len(a.indices) > 1 else 's'} {a.colour.lower()}"),
+        "ghost": ActionSpec("A wrong idea: a red dashed link from one node to another (or null), noted in red.",
+                            LLGhostArgs, lambda s, a: _ll_index_ok(s, a.from_index, a.to_index),
+                            lambda s, a: f"a wrong idea: a red dashed link from "
+                                         f"{_fmt(s['vals'][s['slots'][a.from_index]])} to "
+                                         + ("null" if a.to_index is None else
+                                            _fmt(s["vals"][s["slots"][a.to_index]])) + f', noted "{a.text}"'),
+        "note": ActionSpec("A short line of text above the list.", NoteArgs,
+                           says=lambda s, a: f'note above the list: "{a.text}"'),
+        "clear": ActionSpec("Remove highlights, the ghost and the note (pointers stay).",
+                            says=lambda s, a: "the list's highlights, ghost and note clear"),
+    },
+    example=[
+        ['lst = LinkedList(values=[3, 8, 5, 1], title="reverse in place")'],
+        ['lst.point(name="curr", index=0)'],
+        ["lst.reverse_step()"],
+        ["lst.reverse_step()"],
+        ['lst.ghost(from_index=2, to_index=None, text="lose the rest?")'],
+        ["lst.clear()", "lst.reverse_step()"],
+        ["lst.reverse_step()"],
+    ],
+)
+
+
+# ---- StackQueue -----------------------------------------------------------------------------------------------
+
+MAX_SQ = 7
+
+
+class StackQueueParams(_Args):
+    kind: Literal["stack", "queue", "deque", "call_stack"] = Field(
+        description='"stack" (push and pop at the top), "queue" (enqueue at the rear, dequeue at the front), '
+                    '"deque" (both ends), "call_stack" (frames of running calls, e.g. "fact(3)")')
+    values: list[Value] = Field(default_factory=list,
+                                description="what it holds at the start: bottom to top for a stack, front to rear "
+                                            "for a queue (0-7 items)")
+    title: str | None = Field(None, description="at most 24 characters")
+    area: Area = "full"
+
+    _title = field_validator("title")(_short(24))
+
+    @model_validator(mode="after")
+    def _fits(self) -> StackQueueParams:
+        if len(self.values) > MAX_SQ:
+            raise ValueError(f"at most {MAX_SQ} items")
+        limit = 12 if self.kind == "call_stack" else 3
+        long = [v for v in self.values if len(_fmt(v)) > limit]
+        if long:
+            raise ValueError(f"{_fmt(long[0])!r} is too long: at most {limit} characters")
+        return self
+
+
+class SQValueArgs(_Args):
+    value: Value = Field(description="what goes in (a frame such as \"fact(2)\" for a call stack)")
+
+
+class SQPopArgs(_Args):
+    returns: Value | None = Field(None, description='call stack only: what the call returns, e.g. 2')
+
+
+class SQHighlightArgs(_Args):
+    positions: list[int] = Field(description="0 = the bottom of a stack, the front of a queue")
+    colour: Colour = "YELLOW"
+
+
+class SQGhostArgs(_Args):
+    end: Literal["top", "bottom", "front", "rear"] = Field(description="the end the wrong idea uses")
+    text: str = Field(description="the wrong idea, at most 24 characters")
+
+    _text = field_validator("text")(_short(24))
+
+
+_SQ_ACTIONS = {"stack": {"push", "pop", "peek"}, "call_stack": {"push", "pop", "peek"},
+               "queue": {"enqueue", "dequeue", "peek"},
+               "deque": {"push_front", "push_back", "pop_front", "pop_back", "peek"}}
+
+
+def _sq_state(p: StackQueueParams) -> dict:
+    return {"kind": p.kind, "items": list(p.values), "last": None}
+
+
+def _sq_op(op: str):
+    def check(st: dict, a) -> str | None:
+        kind, items = st["kind"], st["items"]
+        if op not in _SQ_ACTIONS[kind]:
+            return f"a {kind.replace('_', ' ')} has no {op}; it has {', '.join(sorted(_SQ_ACTIONS[kind]))}"
+        if op in ("push", "enqueue", "push_back", "push_front"):
+            if len(items) >= MAX_SQ:
+                return f"at most {MAX_SQ} items fit"
+            limit = 12 if kind == "call_stack" else 3
+            if len(_fmt(a.value)) > limit:
+                return f"{_fmt(a.value)!r} is too long: at most {limit} characters"
+            if op == "push_front":
+                items.insert(0, a.value)
+            else:
+                items.append(a.value)
+            st["last"] = a.value
+            return None
+        if not items:
+            return f"the {kind.replace('_', ' ')} is empty: nothing to {op.replace('_', ' ')}"
+        if op == "peek":
+            st["last"] = items[0] if kind == "queue" else items[-1]
+            return None
+        st["last"] = items.pop(0) if op in ("dequeue", "pop_front") else items.pop()
+        return None
+    return check
+
+
+def _sq_words(st: dict) -> str:
+    items = ", ".join(_fmt(v) for v in st["items"])
+    if not st["items"]:
+        return "it is empty"
+    return {"stack": f"bottom to top: {items}", "call_stack": f"bottom to top: {items}",
+            "queue": f"front to rear: {items}", "deque": f"front to back: {items}"}[st["kind"]]
+
+
+def _said_sq(op: str):
+    def says(st: dict, a) -> str:
+        v = _fmt(st["last"])
+        kind = st["kind"]
+        if op == "push":
+            what = f"the call {v} starts: a new frame on top" if kind == "call_stack" else f"{v} is pushed on top"
+        elif op == "pop":
+            if kind == "call_stack":
+                what = f"the call {v} returns" + (f" {_fmt(a.returns)} to the frame below" if a.returns is not None
+                                                  else "") + " and its frame comes off"
+            else:
+                what = f"pop takes {v} off the top"
+        elif op == "enqueue":
+            what = f"{v} joins the rear"
+        elif op == "dequeue":
+            what = f"dequeue takes {v} from the front"
+        elif op == "peek":
+            what = f"peek shows {v} without removing it"
+        else:
+            what = {"push_front": f"{v} goes on the front", "push_back": f"{v} goes on the back",
+                    "pop_front": f"{v} comes off the front", "pop_back": f"{v} comes off the back"}[op]
+        return f"{what}; {_sq_words(st)}"
+    return says
+
+
+def _sq_positions(st: dict, positions) -> str | None:
+    bad = [i for i in positions if not 0 <= i < len(st["items"])]
+    return f"there is no item at position {bad[0]}" if bad else None
+
+
+STACK_QUEUE = TemplateSpec(
+    name="StackQueue",
+    family="stack_queue",
+    purpose='A stack (a column: push and pop at the top), a queue (a row: enqueue at the rear, dequeue at the '
+            'front), a deque (a row, both ends), or a call stack (frames of running calls, each popped with what it '
+            'returns: recursion). Computed: what each operation takes out, and "empty" when there is nothing. '
+            "Needs at least half the frame.",
+    params=StackQueueParams,
+    min_rows=3,
+    init_state=_sq_state,
+    noun="stack",
+    describe=lambda p: (f"an empty {p.kind.replace('_', ' ')}" if not p.values else
+                        f"a {p.kind.replace('_', ' ')}, " + _sq_words({"kind": p.kind, "items": list(p.values)}))
+    + (f', titled "{p.title}"' if p.title else ""),
+    actions={
+        "push": ActionSpec("Stack or call stack: put a value (a frame) on top.", SQValueArgs, _sq_op("push"),
+                           _said_sq("push"), reveals=True),
+        "pop": ActionSpec("Stack or call stack: take the top off (a call stack's frame returns `returns`).",
+                          SQPopArgs, _sq_op("pop"), _said_sq("pop"), reveals=True),
+        "enqueue": ActionSpec("Queue: add at the rear.", SQValueArgs, _sq_op("enqueue"), _said_sq("enqueue"),
+                              reveals=True),
+        "dequeue": ActionSpec("Queue: take from the front.", NoArgs, _sq_op("dequeue"), _said_sq("dequeue"),
+                              reveals=True),
+        "push_front": ActionSpec("Deque: add at the front.", SQValueArgs, _sq_op("push_front"),
+                                 _said_sq("push_front"), reveals=True),
+        "push_back": ActionSpec("Deque: add at the back.", SQValueArgs, _sq_op("push_back"), _said_sq("push_back"),
+                                reveals=True),
+        "pop_front": ActionSpec("Deque: take from the front.", NoArgs, _sq_op("pop_front"), _said_sq("pop_front"),
+                                reveals=True),
+        "pop_back": ActionSpec("Deque: take from the back.", NoArgs, _sq_op("pop_back"), _said_sq("pop_back"),
+                               reveals=True),
+        "peek": ActionSpec("Light up the item the next pop or dequeue would take, without taking it.", NoArgs,
+                           _sq_op("peek"), _said_sq("peek"), reveals=True),
+        "highlight": ActionSpec("Colour the items at these positions (0 = bottom or front).", SQHighlightArgs,
+                                lambda s, a: _sq_positions(s, a.positions),
+                                lambda s, a: ", ".join(_fmt(s["items"][i]) for i in a.positions)
+                                             + f" turn{'s' if len(a.positions) == 1 else ''} {a.colour.lower()}"),
+        "ghost": ActionSpec("A wrong idea: a red dashed arrow at the wrong end, noted in red.", SQGhostArgs,
+                            says=lambda s, a: f'a wrong idea: a red dashed arrow at the {a.end}, noted "{a.text}"'),
+        "note": ActionSpec("A short line of text above it.", NoteArgs,
+                           says=lambda s, a: f'note above it: "{a.text}"'),
+        "clear": ActionSpec("Remove highlights, the ghost and the note.",
+                            says=lambda s, a: "the highlights, ghost and note clear"),
+    },
+    example=[
+        ['st = StackQueue(kind="call_stack", values=["fact(3)"], title="fact(3) runs")'],
+        ['st.push(value="fact(2)")'],
+        ['st.push(value="fact(1)")'],
+        ['st.ghost(end="bottom", text="fact(3) returns first?")'],
+        ["st.clear()", "st.pop(returns=1)"],
+        ["st.pop(returns=2)"],
+        ["st.pop(returns=6)"],
+    ],
+)
+
+
+# ---- HashTable ------------------------------------------------------------------------------------------------
+
+MAX_BUCKETS = 8
+MAX_CHAIN = 4
+
+
+class HashTableParams(_Args):
+    size: int = Field(description="the number of buckets m, 3-8; a key k goes to bucket k mod m")
+    mode: Literal["chaining", "probing"] = Field(
+        "chaining", description='"chaining": colliding keys form a chain in their bucket; "probing": linear '
+                                "probing, a collision tries the next bucket")
+    keys: list[int] = Field(default_factory=list, description="whole-number keys already in it (0-99), inserted "
+                                                              "in this order")
+    a: int = Field(1, description="the hash is h(k) = (a k + b) mod m: a = 1, b = 0 is k mod m; a = 0 sends every "
+                                  "key to bucket b (a bad hash: one long chain)")
+    b: int = 0
+    title: str | None = Field(None, description="at most 24 characters")
+    area: Area = "full"
+
+    _title = field_validator("title")(_short(24))
+
+    @model_validator(mode="after")
+    def _fits(self) -> HashTableParams:
+        if not 3 <= self.size <= MAX_BUCKETS:
+            raise ValueError(f"size {self.size}; use 3-{MAX_BUCKETS} buckets")
+        if any(not 0 <= k <= 99 for k in self.keys):
+            raise ValueError("keys are whole numbers 0-99")
+        if not (0 <= self.a <= 99 and 0 <= self.b <= 99):
+            raise ValueError("a and b are whole numbers 0-99")
+        st = ht_new(self.size, self.mode, self.a, self.b)
+        for k in self.keys:
+            if problem := ht_insert(st, k):
+                raise ValueError(problem)
+        return self
+
+
+def ht_new(size: int, mode: str, a: int = 1, b: int = 0) -> dict:
+    return {"m": size, "mode": mode, "buckets": [[] for _ in range(size)] if mode == "chaining" else [None] * size,
+            "last": None, "a": a, "b": b}
+
+
+def ht_hash(st: dict, key: int) -> int:
+    return (st.get("a", 1) * key + st.get("b", 0)) % st["m"]
+
+
+def ht_formula(st: dict, key: int | None = None) -> str:
+    """The hash as written: "k mod 7", "(3k + 1) mod 7", "0 mod 7"; with a key, its working."""
+    a, b, m = st.get("a", 1), st.get("b", 0), st["m"]
+    inner = ("k" if a == 1 else f"{a}k" if a else "") + (f" + {b}" if b and a else str(b) if not a else "")
+    form = (f"({inner})" if a and b else inner or "0") + f" mod {m}"
+    if key is None:
+        return f"h(k) = {form}"
+    filled = ((str(key) if a == 1 else f"{a}*{key}" if a else "") + (f" + {b}" if b and a else str(b) if not a else
+                                                                    ""))
+    filled = (f"({filled})" if a and b else filled or "0") + f" mod {m}"
+    return f"h({key}) = {filled} = {ht_hash(st, key)}"
+
+
+def ht_insert(st: dict, key: int) -> str | None:
+    m, h = st["m"], ht_hash(st, key)
+    if st["mode"] == "chaining":
+        if key in st["buckets"][h]:
+            return f"{key} is already in bucket {h}"
+        if len(st["buckets"][h]) >= MAX_CHAIN:
+            return f"bucket {h}'s chain is full on screen ({MAX_CHAIN} keys)"
+        st["buckets"][h].append(key)
+        st["last"] = {"op": "insert", "key": key, "h": h, "probes": [h], "at": h,
+                      "chain": list(st["buckets"][h])}
+        return None
+    probes = []
+    for k in range(m):
+        b = (h + k) % m
+        probes.append(b)
+        if st["buckets"][b] == key:
+            return f"{key} is already in bucket {b}"
+        if st["buckets"][b] is None:
+            st["buckets"][b] = key
+            st["last"] = {"op": "insert", "key": key, "h": h, "probes": probes, "at": b}
+            return None
+    return "the table is full"
+
+
+def ht_find(st: dict, key: int) -> dict:
+    m, h = st["m"], ht_hash(st, key)
+    if st["mode"] == "chaining":
+        chain = st["buckets"][h]
+        return {"op": "find", "key": key, "h": h, "probes": [h], "at": h if key in chain else None,
+                "checks": (chain.index(key) + 1) if key in chain else len(chain)}
+    probes = []
+    for k in range(m):
+        b = (h + k) % m
+        probes.append(b)
+        if st["buckets"][b] == key:
+            return {"op": "find", "key": key, "h": h, "probes": probes, "at": b, "checks": len(probes)}
+        if st["buckets"][b] is None:
+            break
+    return {"op": "find", "key": key, "h": h, "probes": probes, "at": None, "checks": len(probes)}
+
+
+class HTKeyArgs(_Args):
+    key: int = Field(description="a whole number 0-99")
+
+
+class HTBucketsArgs(_Args):
+    buckets: list[int]
+    colour: Colour = "YELLOW"
+
+
+class HTGhostArgs(_Args):
+    key: int
+    bucket: int = Field(description="the wrong bucket")
+    text: str = Field(description="the wrong idea, at most 24 characters")
+
+    _text = field_validator("text")(_short(24))
+
+
+def _check_ht_insert(st: dict, a: HTKeyArgs) -> str | None:
+    if not 0 <= a.key <= 99:
+        return "keys are whole numbers 0-99"
+    return ht_insert(st, a.key)
+
+
+def _check_ht_find(st: dict, a: HTKeyArgs) -> str | None:
+    st["last"] = ht_find(st, a.key)
+    return None
+
+
+def _check_ht_delete(st: dict, a: HTKeyArgs) -> str | None:
+    if st["mode"] != "chaining":
+        return "delete is for chaining (deleting under probing needs a tombstone, which this table doesn't draw)"
+    h = ht_hash(st, a.key)
+    if a.key not in st["buckets"][h]:
+        return f"{a.key} isn't in the table (bucket {h} holds {st['buckets'][h] or 'nothing'})"
+    st["buckets"][h].remove(a.key)
+    st["last"] = {"op": "delete", "key": a.key, "h": h}
+    return None
+
+
+def _said_ht(st: dict, a) -> str:
+    ev = st["last"]
+    head = "the hash " + ht_formula(st, ev["key"])
+    if ev["op"] == "insert":
+        if st["mode"] == "chaining":
+            others = [k for k in ev["chain"] if k != ev["key"]]
+            return head + (f"; bucket {ev['h']} already holds {', '.join(map(str, others))}, so {ev['key']} joins "
+                           "its chain" if others else f"; {ev['key']} goes in bucket {ev['h']}")
+        taken = ev["probes"][:-1]
+        return head + (f"; bucket{'s' if len(taken) > 1 else ''} {', '.join(map(str, taken))} "
+                       f"{'are' if len(taken) > 1 else 'is'} taken, so {ev['key']} goes in bucket {ev['at']}"
+                       if taken else f"; {ev['key']} goes in bucket {ev['h']}")
+    if ev["op"] == "find":
+        if ev["at"] is None:
+            return head + f"; not there, after {ev['checks']} check{'s' if ev['checks'] != 1 else ''}"
+        return head + f"; found in bucket {ev['at']} after {ev['checks']} check{'s' if ev['checks'] != 1 else ''}"
+    return head + f"; {ev['key']} is taken out of bucket {ev['h']}'s chain"
+
+
+def _ht_load(st: dict) -> float:
+    n = sum(len(b) for b in st["buckets"]) if st["mode"] == "chaining" else sum(b is not None for b in st["buckets"])
+    return n / st["m"]
+
+
+def _describe_ht(p: HashTableParams) -> str:
+    st = ht_new(p.size, p.mode, p.a, p.b)
+    for k in p.keys:
+        ht_insert(st, k)
+    filled = [f"bucket {i}: {', '.join(map(str, b)) if isinstance(b, list) else b}"
+              for i, b in enumerate(st["buckets"]) if b not in (None, [])]
+    return (f"a hash table of {p.size} buckets ({'chaining' if p.mode == 'chaining' else 'linear probing'}, "
+            f"{ht_formula(st)})" + (": " + "; ".join(filled) if filled else ", empty")
+            + (f', titled "{p.title}"' if p.title else ""))
+
+
+HASH_TABLE = TemplateSpec(
+    name="HashTable",
+    family="hash_table",
+    purpose="A hash table: m buckets, h(k) = (a k + b) mod m (k mod m by default; a = 0 is a bad hash sending "
+            "every key to one bucket), with chaining (colliding keys form a chain) or linear "
+            "probing (a collision tries the next bucket). Computed: where each key goes and why (its hash, the "
+            "buckets probed), find with its number of checks, delete (chaining), and the load factor n / m. Needs "
+            "at least two thirds of the frame.",
+    params=HashTableParams,
+    min_rows=4,
+    init_state=lambda p: _ht_init(p),
+    noun="table",
+    describe=_describe_ht,
+    actions={
+        "insert": ActionSpec("Put a key in (computed): its hash picks the bucket; a collision chains or probes.",
+                             HTKeyArgs, _check_ht_insert, _said_ht, reveals=True),
+        "find": ActionSpec("Look a key up (computed): its bucket, then the chain or the probes, counting checks.",
+                           HTKeyArgs, _check_ht_find, _said_ht, reveals=True),
+        "delete": ActionSpec("Take a key out of its chain (chaining only).", HTKeyArgs, _check_ht_delete, _said_ht,
+                             reveals=True),
+        "load": ActionSpec("Note the load factor n / m (computed).",
+                           says=lambda s, a: f"the load factor, {_num(_ht_load(s))} keys per bucket, is noted",
+                           reveals=True),
+        "highlight": ActionSpec("Colour these buckets.", HTBucketsArgs,
+                                lambda s, a: next((f"there is no bucket {b} (0-{s['m'] - 1})" for b in a.buckets
+                                                   if not 0 <= b < s["m"]), None),
+                                lambda s, a: f"bucket{'s' if len(a.buckets) > 1 else ''} "
+                                             f"{', '.join(map(str, a.buckets))} turn{'' if len(a.buckets) > 1 else 's'}"
+                                             f" {a.colour.lower()}"),
+        "ghost": ActionSpec("A wrong idea: a key in a red dashed box at the wrong bucket, noted in red.",
+                            HTGhostArgs,
+                            lambda s, a: None if 0 <= a.bucket < s["m"] else f"there is no bucket {a.bucket}",
+                            lambda s, a: f"a wrong idea: {a.key} in a red dashed box at bucket {a.bucket}, noted "
+                                         f'"{a.text}"'),
+        "note": ActionSpec("A short line of text above the table.", NoteArgs,
+                           says=lambda s, a: f'note above the table: "{a.text}"'),
+        "clear": ActionSpec("Remove highlights, the ghost and the note.",
+                            says=lambda s, a: "the table's highlights, ghost and note clear"),
+    },
+    example=[
+        ['ht = HashTable(size=7, keys=[10, 22], title="h(k) = k mod 7")'],
+        ["ht.insert(key=31)"],
+        ['ht.ghost(key=17, bucket=0, text="17 goes first free?")'],
+        ["ht.clear()", "ht.insert(key=17)"],
+        ["ht.find(key=24)"],
+        ["ht.load()"],
+    ],
+)
+
+
+def _ht_init(p: HashTableParams) -> dict:
+    st = ht_new(p.size, p.mode, p.a, p.b)
+    for k in p.keys:
+        ht_insert(st, k)
+    st["last"] = None
+    return st
+
+
+# ---- BinaryTree: binary search trees and heaps ----------------------------------------------------------------
+
+MAX_TREE_NODES = 12
+MAX_TREE_DEPTH = 5
+
+
+class BinaryTreeParams(_Args):
+    kind: Literal["bst", "min_heap", "max_heap"] = Field(
+        description='"bst": a binary search tree, the values inserted in order; "min_heap" / "max_heap": a binary '
+                    "heap, the values its array in level order (call heapify to make it a heap)")
+    values: list[int] = Field(default_factory=list, description="0-12 whole numbers, 0-99")
+    show_array: bool = Field(True, description="heaps: the array the heap lives in, under the tree")
+    title: str | None = Field(None, description="at most 24 characters")
+    area: Area = "full"
+
+    _title = field_validator("title")(_short(24))
+
+    @model_validator(mode="after")
+    def _fits(self) -> BinaryTreeParams:
+        if len(self.values) > MAX_TREE_NODES:
+            raise ValueError(f"at most {MAX_TREE_NODES} nodes")
+        if any(not 0 <= v <= 99 for v in self.values):
+            raise ValueError("values are whole numbers 0-99")
+        if self.kind == "bst":
+            if len(set(self.values)) != len(self.values):
+                raise ValueError("a binary search tree holds each value once")
+            st = bt_new("bst", [])
+            for v in self.values:
+                bst_insert(st, v)
+            if bt_depth(st) > MAX_TREE_DEPTH:
+                raise ValueError(f"this order makes the tree {bt_depth(st)} levels deep; at most {MAX_TREE_DEPTH} "
+                                 "fit (insert a middle value first)")
+        return self
+
+
+def bt_new(kind: str, values: list[int]) -> dict:
+    st = {"kind": kind, "nodes": {}, "root": None, "next_id": 0, "heap": [], "trav": None, "last": None}
+    if kind == "bst":
+        for v in values:
+            bst_insert(st, v)
+    else:
+        st["heap"] = list(values)
+    st["last"] = None
+    return st
+
+
+def _new_node(st: dict, v: int) -> int:
+    i = st["next_id"]
+    st["next_id"] += 1
+    st["nodes"][i] = {"v": v, "l": None, "r": None}
+    return i
+
+
+def bst_insert(st: dict, v: int) -> dict:
+    """Insert into the BST; the comparisons on the way down, and where it went."""
+    path = []
+    if st["root"] is None:
+        st["root"] = _new_node(st, v)
+        return {"op": "insert", "v": v, "path": [], "parent": None, "side": None}
+    c = st["root"]
+    while True:
+        node = st["nodes"][c]
+        if v == node["v"]:
+            return {"op": "insert", "v": v, "path": path, "dup": True}
+        side = "l" if v < node["v"] else "r"
+        path.append((node["v"], "left" if side == "l" else "right"))
+        if node[side] is None:
+            node[side] = _new_node(st, v)
+            return {"op": "insert", "v": v, "path": path, "parent": node["v"], "side": side}
+        c = node[side]
+
+
+def bst_search(st: dict, v: int) -> dict:
+    path, c = [], st["root"]
+    while c is not None:
+        node = st["nodes"][c]
+        if v == node["v"]:
+            return {"op": "search", "v": v, "path": path, "found": True}
+        side = "l" if v < node["v"] else "r"
+        path.append((node["v"], "left" if side == "l" else "right"))
+        c = node[side]
+    return {"op": "search", "v": v, "path": path, "found": False}
+
+
+def bst_delete(st: dict, v: int) -> dict | str:
+    parent, c, side = None, st["root"], None
+    while c is not None and st["nodes"][c]["v"] != v:
+        parent, side = c, ("l" if v < st["nodes"][c]["v"] else "r")
+        c = st["nodes"][c][side]
+    if c is None:
+        return f"{v} isn't in the tree"
+    node = st["nodes"][c]
+
+    def relink(child):
+        if parent is None:
+            st["root"] = child
+        else:
+            st["nodes"][parent][side] = child
+
+    if node["l"] is None or node["r"] is None:
+        child = node["l"] if node["l"] is not None else node["r"]
+        case = "leaf" if child is None else "one child"
+        relink(child)
+        del st["nodes"][c]
+        return {"op": "delete", "v": v, "case": case,
+                "child": None if child is None else st["nodes"][child]["v"]}
+    sp, s = c, node["r"]  # two children: the in-order successor (the smallest on the right) takes its place
+    while st["nodes"][s]["l"] is not None:
+        sp, s = s, st["nodes"][s]["l"]
+    succ = st["nodes"][s]["v"]
+    if sp == c:
+        st["nodes"][sp]["r"] = st["nodes"][s]["r"]
+    else:
+        st["nodes"][sp]["l"] = st["nodes"][s]["r"]
+    del st["nodes"][s]
+    node["v"] = succ
+    return {"op": "delete", "v": v, "case": "two children", "succ": succ}
+
+
+def bt_depth(st: dict) -> int:
+    if st["kind"] != "bst":
+        n = len(st["heap"])
+        return n.bit_length()
+    def d(i):
+        return 0 if i is None else 1 + max(d(st["nodes"][i]["l"]), d(st["nodes"][i]["r"]))
+    return d(st["root"])
+
+
+def bt_order(st: dict, order: str) -> list[int]:
+    """The values in a traversal order: inorder, preorder, postorder or level."""
+    if st["kind"] != "bst":
+        h = st["heap"]
+        if order == "level":
+            return list(h)
+        def rec(i):
+            if i >= len(h):
+                return []
+            l, r = rec(2 * i + 1), rec(2 * i + 2)
+            return {"inorder": l + [h[i]] + r, "preorder": [h[i]] + l + r, "postorder": l + r + [h[i]]}[order]
+        return rec(0)
+    nodes = st["nodes"]
+    if order == "level":
+        out, q = [], [st["root"]] if st["root"] is not None else []
+        while q:
+            i = q.pop(0)
+            out.append(nodes[i]["v"])
+            q += [c for c in (nodes[i]["l"], nodes[i]["r"]) if c is not None]
+        return out
+    def rec(i):
+        if i is None:
+            return []
+        n = nodes[i]
+        l, r = rec(n["l"]), rec(n["r"])
+        return {"inorder": l + [n["v"]] + r, "preorder": [n["v"]] + l + r, "postorder": l + r + [n["v"]]}[order]
+    return rec(st["root"])
+
+
+def _better(st: dict, a: int, b: int) -> bool:
+    return a < b if st["kind"] == "min_heap" else a > b
+
+
+def heap_push(st: dict, v: int) -> dict:
+    h = st["heap"]
+    h.append(v)
+    i, swaps = len(h) - 1, []
+    while i > 0 and _better(st, h[i], h[(i - 1) // 2]):
+        p = (i - 1) // 2
+        swaps.append((i, p))
+        h[i], h[p] = h[p], h[i]
+        i = p
+    return {"op": "push", "v": v, "swaps": swaps}
+
+
+def _sift_down(st: dict, i: int, swaps: list) -> None:
+    h = st["heap"]
+    while True:
+        best = i
+        for c in (2 * i + 1, 2 * i + 2):
+            if c < len(h) and _better(st, h[c], h[best]):
+                best = c
+        if best == i:
+            return
+        swaps.append((i, best))
+        h[i], h[best] = h[best], h[i]
+        i = best
+
+
+def heap_pop(st: dict) -> dict | str:
+    h = st["heap"]
+    if not h:
+        return "the heap is empty"
+    top = h[0]
+    last = h.pop()
+    swaps: list = []
+    if h:
+        h[0] = last
+        _sift_down(st, 0, swaps)
+    return {"op": "pop", "v": top, "last": last, "swaps": swaps}
+
+
+def heap_heapify(st: dict) -> dict:
+    swaps: list = []
+    for i in range(len(st["heap"]) // 2 - 1, -1, -1):
+        _sift_down(st, i, swaps)
+    return {"op": "heapify", "swaps": swaps}
+
+
+class BTValueArgs(_Args):
+    value: int = Field(description="a whole number 0-99")
+
+
+class BTOrderArgs(_Args):
+    order: Literal["inorder", "preorder", "postorder", "level"]
+
+
+class BTValuesArgs(_Args):
+    values: list[int]
+    colour: Colour = "YELLOW"
+
+
+class BTGhostArgs(_Args):
+    parent: int = Field(description="the value of the node a wrong child hangs from")
+    side: Literal["left", "right"]
+    value: int
+    text: str = Field(description="the wrong idea, at most 24 characters")
+
+    _text = field_validator("text")(_short(24))
+
+
+def _bt_kind(kind: str):
+    def check(st: dict, a) -> str | None:
+        want = ("bst",) if kind == "bst" else ("min_heap", "max_heap")
+        return None if st["kind"] in want else f"this is a {st['kind'].replace('_', ' ')}: no such action"
+    return check
+
+
+def _check_bt_insert(st: dict, a: BTValueArgs) -> str | None:
+    if problem := _bt_kind("bst")(st, a):
+        return problem
+    if len(st["nodes"]) >= MAX_TREE_NODES:
+        return f"at most {MAX_TREE_NODES} nodes"
+    ev = bst_insert(st, a.value)
+    if ev.get("dup"):
+        return f"{a.value} is already in the tree"
+    if bt_depth(st) > MAX_TREE_DEPTH:
+        bst_delete(st, a.value)
+        return f"{a.value} would make the tree deeper than {MAX_TREE_DEPTH} levels"
+    st["last"] = ev
+    return None
+
+
+def _check_bt_search(st: dict, a: BTValueArgs) -> str | None:
+    if problem := _bt_kind("bst")(st, a):
+        return problem
+    st["last"] = bst_search(st, a.value)
+    return None
+
+
+def _check_bt_delete(st: dict, a: BTValueArgs) -> str | None:
+    if problem := _bt_kind("bst")(st, a):
+        return problem
+    ev = bst_delete(st, a.value)
+    if isinstance(ev, str):
+        return ev
+    st["last"] = ev
+    return None
+
+
+def _path_words(path) -> str:
+    return "; ".join(f"{'<' if d == 'left' else '>'} {v}, go {d}" for v, d in path)
+
+
+def _said_bt(st: dict, a) -> str:
+    ev = st["last"]
+    if ev["op"] == "insert":
+        if ev["parent"] is None:
+            return f"{ev['v']} becomes the root"
+        walk = "; ".join(f"{ev['v']} {'<' if d == 'left' else '>'} {v}, go {d}" for v, d in ev["path"])
+        return f"{walk}; {ev['v']} becomes {ev['parent']}'s {'left' if ev['side'] == 'l' else 'right'} child"
+    if ev["op"] == "search":
+        walk = "; ".join(f"{ev['v']} {'<' if d == 'left' else '>'} {v}, go {d}" for v, d in ev["path"])
+        end = f"{ev['v']} is found" if ev["found"] else f"the path runs out: {ev['v']} isn't in the tree"
+        return (walk + "; " if walk else "") + end + f" after {len(ev['path']) + (1 if ev['found'] else 0)} comparisons"
+    if ev["op"] == "delete":
+        if ev["case"] == "two children":
+            return (f"{ev['v']} has two children, so its in-order successor {ev['succ']} (the smallest on its "
+                    f"right) takes its place")
+        if ev["case"] == "one child":
+            return f"{ev['v']} has one child, {ev['child']}, which takes its place"
+        return f"{ev['v']} is a leaf and is simply removed"
+    if ev["op"] in ("push", "pop", "heapify"):
+        h = st["heap"]
+        moves = ", ".join(f"{h[j]} and {h[i]}" for i, j in ev["swaps"])  # after the swaps: the pair, in order
+        top = "smallest" if st["kind"] == "min_heap" else "largest"
+        if ev["op"] == "push":
+            out = f"{ev['v']} goes in the next free place" + (f", then rises: {len(ev['swaps'])} swap"
+                                                              f"{'s' if len(ev['swaps']) != 1 else ''}"
+                                                              if ev["swaps"] else ", and stays")
+        elif ev["op"] == "pop":
+            out = (f"the root {ev['v']}, the {top}, comes out; the last value {ev['last']} moves to the root"
+                   + (f" and sinks: {len(ev['swaps'])} swap{'s' if len(ev['swaps']) != 1 else ''}" if ev["swaps"]
+                      else ""))
+        else:
+            out = f"heapify sifts each parent down from the last: {len(ev['swaps'])} swaps"
+        del moves
+        return out + f"; the array reads {', '.join(map(str, h))}"
+    if ev["op"] == "traverse":
+        return (f"{ev['order']} visits {ev['v']}; visited so far: {', '.join(map(str, ev['seen']))}"
+                + ("; done" if ev["done"] else ""))
+    return ""
+
+
+def _check_heap(op: str):
+    def check(st: dict, a) -> str | None:
+        if problem := _bt_kind("heap")(st, a):
+            return problem
+        if op == "push":
+            if len(st["heap"]) >= MAX_TREE_NODES:
+                return f"at most {MAX_TREE_NODES} values"
+            st["last"] = heap_push(st, a.value)
+        elif op == "pop":
+            ev = heap_pop(st)
+            if isinstance(ev, str):
+                return ev
+            st["last"] = ev
+        else:
+            st["last"] = heap_heapify(st)
+        return None
+    return check
+
+
+def _check_traverse(st: dict, a: BTOrderArgs) -> str | None:
+    t = st["trav"]
+    if t is None or t["order"] != a.order or t["done"]:
+        t = st["trav"] = {"order": a.order, "seq": bt_order(st, a.order), "k": 0, "done": False}
+    if not t["seq"]:
+        return "the tree is empty"
+    v = t["seq"][t["k"]]
+    t["k"] += 1
+    t["done"] = t["k"] >= len(t["seq"])
+    st["last"] = {"op": "traverse", "order": a.order, "v": v, "seen": t["seq"][:t["k"]], "done": t["done"]}
+    return None
+
+
+def _check_bt_ghost(st: dict, a: BTGhostArgs) -> str | None:
+    if a.parent not in _bt_values(st):
+        return f"there is no node {a.parent}"
+    if st["kind"] == "bst":
+        node = next(n for n in st["nodes"].values() if n["v"] == a.parent)
+        child = node["l" if a.side == "left" else "r"]
+        taken = None if child is None else st["nodes"][child]["v"]
+    else:
+        i = st["heap"].index(a.parent)
+        c = 2 * i + (1 if a.side == "left" else 2)
+        taken = st["heap"][c] if c < len(st["heap"]) else None
+    if taken is not None:
+        return f"{a.parent}'s {a.side} child is {taken} already: draw the wrong idea on a free side"
+    return None
+
+
+def _bt_values(st: dict) -> list[int]:
+    return list(st["heap"]) if st["kind"] != "bst" else [n["v"] for n in st["nodes"].values()]
+
+
+def _describe_bt(p: BinaryTreeParams) -> str:
+    if p.kind == "bst":
+        st = bt_new("bst", list(p.values))
+        out = f"a binary search tree built from {', '.join(map(str, p.values))}" if p.values else "an empty BST"
+        if p.values:
+            out += f" (root {p.values[0]}, {bt_depth(st)} levels)"
+    else:
+        out = (f"a {p.kind.replace('_', '-')} tree" + (" with its array" if p.show_array else "")
+               + (f", the array {', '.join(map(str, p.values))}" if p.values else ", empty"))
+    return out + (f', titled "{p.title}"' if p.title else "")
+
+
+BINARY_TREE = TemplateSpec(
+    name="BinaryTree",
+    family="tree",
+    purpose="A binary search tree or a binary heap (the tree, and under it the array it lives in). BST, "
+            "computed: insert and search (each comparison on the way down lights up), delete (leaf, one child, "
+            "or two children: the in-order successor takes its place). Heap, computed: push (the value rises), "
+            "pop (the root comes out, the last value sinks), heapify. Both: traverse_step visits the next node in "
+            "inorder, preorder, postorder or level order. Needs at least half the frame.",
+    params=BinaryTreeParams,
+    min_rows=3,
+    init_state=lambda p: bt_new(p.kind, list(p.values)),
+    noun="tree",
+    describe=_describe_bt,
+    actions={
+        "insert": ActionSpec("BST: insert a value (computed): compare down from the root, left if smaller, right "
+                             "if larger, until a free place.", BTValueArgs, _check_bt_insert, _said_bt,
+                             reveals=True),
+        "search": ActionSpec("BST: search for a value (computed), comparing down from the root.", BTValueArgs,
+                             _check_bt_search, _said_bt, reveals=True),
+        "delete": ActionSpec("BST: delete a value (computed, by its case).", BTValueArgs, _check_bt_delete,
+                             _said_bt, reveals=True),
+        "push": ActionSpec("Heap: add a value (computed): it goes in the next free place and rises past larger "
+                           "parents (smaller, in a max-heap).", BTValueArgs, _check_heap("push"), _said_bt,
+                           reveals=True),
+        "pop": ActionSpec("Heap: take the root out (computed): the last value moves up and sinks.", NoArgs,
+                          _check_heap("pop"), _said_bt, reveals=True),
+        "heapify": ActionSpec("Heap: turn the array into a heap (computed), sifting each parent down from the "
+                              "last.", NoArgs, _check_heap("heapify"), _said_bt, reveals=True),
+        "traverse_step": ActionSpec("Visit the next node in this order (computed); the visited values are listed.",
+                                    BTOrderArgs, _check_traverse, _said_bt, reveals=True),
+        "highlight": ActionSpec("Colour the nodes holding these values.", BTValuesArgs,
+                                lambda s, a: next((f"there is no node {v}" for v in a.values
+                                                   if v not in _bt_values(s)), None),
+                                lambda s, a: f"{', '.join(map(str, a.values))} turn"
+                                             f"{'s' if len(a.values) == 1 else ''} {a.colour.lower()}"),
+        "ghost": ActionSpec("A wrong idea: a red dashed node hung on the wrong side, noted in red (on a free side).",
+                            BTGhostArgs, _check_bt_ghost,
+                            lambda s, a: f"a wrong idea: a red dashed {a.value} as {a.parent}'s {a.side} child, "
+                                         f'noted "{a.text}"'),
+        "note": ActionSpec("A short line of text above the tree.", NoteArgs,
+                           says=lambda s, a: f'note above the tree: "{a.text}"'),
+        "clear": ActionSpec("Remove highlights, the ghost and the note.",
+                            says=lambda s, a: "the tree's highlights, ghost and note clear"),
+    },
+    example=[
+        ['t = BinaryTree(kind="bst", values=[8, 3, 10, 1, 6], title="insert 7")'],
+        ["t.search(value=6)"],
+        ['t.ghost(parent=10, side="left", value=7, text="7 goes under 10?")'],
+        ["t.clear()", "t.insert(value=7)"],
+        ['t.traverse_step(order="inorder")', 't.traverse_step(order="inorder")'],
+        ["t.delete(value=3)"],
+    ],
+)
+
+
 REGISTRY: dict[str, TemplateSpec] = {s.name: s for s in (
-    ARRAY_BARS, MERGE_SORT, GRAPH, BAR_CHART, NUMBER_LINE, TABLE, FUNCTION_PLOT, LINEAR_MAP_2D, EQUATION_STEPS, NOTE)}
+    ARRAY_BARS, MERGE_SORT, GRAPH, BAR_CHART, NUMBER_LINE, TABLE, LINKED_LIST, STACK_QUEUE, HASH_TABLE,
+    BINARY_TREE, FUNCTION_PLOT, LINEAR_MAP_2D, EQUATION_STEPS, NOTE)}
 
 # Extra checks a template's parameters need beyond its model (the vectors fit the grid, the curves fit the axes).
 INIT_CHECKS: dict[str, Callable[[BaseModel], str | None]] = {"LinearMap2D": _init_map_check,

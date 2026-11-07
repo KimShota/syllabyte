@@ -27,8 +27,8 @@ from script_generation_agent.storyboard_example import SEGMENT_KEYS
 class Module:
     name: str
     families: frozenset[str]
-    ku: str  # the example's Knowledge Unit
-    example: dict
+    ku: str  # the example's Knowledge Unit ("" without one)
+    example: dict | None  # None: the generic example stays, the rules are added
     rules: str
 
 
@@ -526,8 +526,25 @@ for (cover, then uncover on the answer).
   - Keep each formula short (about twenty symbols): one step per line, not the whole derivation at once."""
 
 
+# --------------------------------------------------------------------------
+# Data structures: linked lists, stacks and queues, hash tables, trees and heaps (rules only, for now)
+# --------------------------------------------------------------------------
+
+STRUCTURES_RULES = """\
+  - Draw the structure itself (LinkedList, StackQueue, HashTable, BinaryTree), not a list of cells standing in for \
+it, and run every operation with its computed action (insert, delete, find_step, reverse_step, push, pop, enqueue, \
+dequeue, a hash table's insert and find, a heap's push and pop, traverse_step): the picture then shows what the \
+operation really does, and its sentence names the values.
+  - Name the pointers as the code does (head, curr, prev, top, front, rear) and show the invariant the idea is \
+about: the part already reversed, the top of the stack, the bucket a key hashes to, the BST's order, the heap's \
+smallest at the root (for a heap, keep the array under the tree: it is how the heap is stored).
+  - A predict line asks for the next state before the step that shows it (where 17 lands, what pop returns, which \
+node the traversal visits next): put the step on the answer line.
+  - The wrong idea is the wrong link, end, bucket or place, drawn as a ghost on a free spot."""
+
+
 MODULES: dict[str, Module] = {m.name: m for m in (
-    Module("boxes", frozenset({"graph", "flowchart", "call_tree", "tree", "state_machine", "linked_list"}),
+    Module("boxes", frozenset({"graph", "flowchart", "call_tree", "state_machine"}),
            "Recursion: the calls fib(3) makes, and why fib(1) is worked out twice", BOXES, BOXES_RULES),
     Module("bars", frozenset({"bar_meter", "probability", "series"}),
            "Expected value: counting outcomes, turning them into probabilities, weighting them", BARS, BARS_RULES),
@@ -540,6 +557,8 @@ MODULES: dict[str, Module] = {m.name: m for m in (
            "Growth of running time: why n squared outgrows n", PLOT, PLOT_RULES),
     Module("formulas", frozenset({"equation_steps", "proof_steps", "matrix_ops"}),
            "Expanding (a + b) squared: where the middle term 2ab comes from", FORMULAS, FORMULAS_RULES),
+    Module("structures", frozenset({"linked_list", "stack_queue", "hash_table", "tree"}), "", None,
+           STRUCTURES_RULES),
 )}
 
 

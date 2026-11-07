@@ -439,3 +439,55 @@ The 12 KUs with plan-then-write (`runs/plan-1`, $1.79, against $1.49 for one cal
 A steady small rise in visual alignment over the three runs and a rise in coherence with the split, but each step
 is within the critic's noise (6 up and 1 down is p of about 0.13 by a sign test), the critic is the same model as
 the writer, and no video passes all four at 7. Cost about 20% more, 3 s more per video.
+
+### Data structure and algorithm templates (2026-11-07)
+
+From the visualisation research (Hundhausen, Douglas and Stasko's meta-study of 24 experiments; Naps et al.'s
+engagement taxonomy: how learners engage matters more than what the picture shows; VisuAlgo's catalogue; heap
+tools that show the tree and its array together), each template keeps four rules: every operation is computed
+(shared by the checker and the drawing), the current operation and named pointers are shown as code names them,
+the invariant is visible (the reversed part, the sorted side, the settled nodes, a heap's order), and each result
+is a reveal, so a predict line can ask for it first (the closest a video gets to engagement).
+
+| Concept (CS2023 AL, VisuAlgo) | Template, computed actions |
+|---|---|
+| Linked lists, singly and doubly | **LinkedList**: insert, delete, find_step, in-place reverse_step (prev/curr, links flip), named pointers, advance |
+| Stacks, queues, deques, recursion's call stack | **StackQueue**: push/pop/peek, enqueue/dequeue, both ends of a deque, call frames returning values |
+| Hashing, chaining, linear probing | **HashTable**: h(k) = k mod m, collisions, probe sequences, find with its checks, delete, load factor |
+| BSTs, binary heaps, traversals | **BinaryTree**: BST insert/search/delete (leaf, one child, two children via the in-order successor); min/max heap push, pop, heapify with the array under the tree; inorder, preorder, postorder, level order |
+| Searching, elementary sorts, merge sort | ArrayBars (scan, bisection, bubble/selection/insertion), MergeSort (as before) |
+| Quicksort | ArrayBars **partition_step** (Lomuto: pivot, small and large sides, the pivot placed green) |
+| Graph traversal | Graph dfs_step, bfs_level (as before) |
+| Shortest paths, spanning trees, DAG order | Graph **dijkstra_step** (distances as badges), **prim_step**, **kruskal_step** (union-find; a skipped edge flashes red), **topo_step** (Kahn; a cycle is reported) |
+| Recursion trees, flowcharts, state machines | Graph (boxes, labels, walk, feed), as before |
+| Dynamic programming | Table rules: Fibonacci, grid paths, Pascal, truth tables, and now **lcs**, **edit_distance**, **knapsack**, **coin_change**, each cell filled from the cells it uses (far ones outlined) with why |
+| Growth of running time | FunctionPlot (as before) |
+
+Tests: `tests/test_dsa_templates.py` checks each computation against known answers (Dijkstra's distances, Prim and
+Kruskal's same tree, edit distance kitten -> sitin = 3, knapsack 35, a valid heap after heapify, BST delete's three
+cases); every example renders in both frames with no layout findings. The "structures" module (rules only, no
+worked example yet) gives linked lists, stacks and queues, hash tables and trees their drawing rules.
+
+Not built yet (in rough order of how often courses teach them): AVL or red-black rotations, union-find as a forest,
+tries, Bellman-Ford and Floyd-Warshall, sliding window and two pointers as computed steps, counting and radix sort,
+heapsort as one sequence, backtracking (N-queens), string matching (KMP), segment and Fenwick trees, B-trees,
+network flow and matching, suffix structures. Nothing here is tested in real videos yet.
+
+Tested on a real data structures course: MIT OCW 6.006 (Spring 2020) lecture notes 2 (data structures), 4
+(hashing), 6 (binary trees), 8 (heaps), 13 (Dijkstra), CC BY-NC-SA 4.0 (`data/courses/ocw-6006-ds`, 55 KUs). Seven
+KUs, one per new template; the picture plan routed every one to the intended template, and the writer used the
+computed actions (traverse_step 8 times, dijkstra_step 5, search 5, and insert, find, push, pop, enqueue).
+
+| | `runs/dsa-1` | `runs/dsa-2` (after the fixes) |
+|---|---|---|
+| Visual alignment, mean of 7 | 4.29 | 4.57 |
+| All four scores | 5.54 | 5.75 |
+| Layout findings | 140 | 20, then 0 when its segments are re-rendered with the later fixes |
+
+Real use showed what the examples hadn't: a heap sized for 12 nodes left two-digit values bursting their circles (98
+findings), stack cells in half a frame shorter than a line of text, edge weights on the nodes of a small graph, a
+long traversal note off screen, shares of an action's steps adding past 1 (a beat overran), and, from the critic:
+a hash table that could only hash k mod m (now (a k + b) mod m, so a bad hash piles every key into one chain), a
+linked-list insert that jumped to its result (now the new node points on, then the one before it points to it,
+then the row makes room; delete bypasses first), a traversal that jumped between nodes (a cursor now walks the
+recursion's route), and Dijkstra's relaxed edges never shown (now lit for that step).
