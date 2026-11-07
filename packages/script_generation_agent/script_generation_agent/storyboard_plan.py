@@ -359,7 +359,7 @@ def write_storyboard_planned(
     if example is _PLAN:  # the traced worked example, planned as in one call
         from script_generation_agent.picture_plan import plan_example as plan_traced
 
-        example = plan_traced(ku, picture, text_context, model=model, manifest=manifest)
+        example = plan_traced(ku, picture, text_context, model=model, manifest=manifest, images=image_blocks)
     ku_prompt = build_script_prompt(ku, text_context)
     head = ku_prompt.replace("Write the 5-segment CLT-bLM script for this Knowledge Unit now.", "")
 

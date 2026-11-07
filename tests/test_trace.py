@@ -133,3 +133,82 @@ def test_the_fix_call_cannot_change_the_examples_steps():
     assert out == [[[CREATE], []],
                    [["arr.bisect_check(target=13)", "arr.point(name=\"p\", index=3)"], ["arr.bisect_discard()"], []]]
     assert len(log) == 3
+
+
+# ---- Data structures ---------------------------------------------------------------------------------------------
+
+from animation_agent.visuals.trace import TreeOp  # noqa: E402
+
+BST_EX = Example(algorithm="bst", values=[50, 30, 70, 20, 40],
+                 ops=[TreeOp(op="insert", value=45), TreeOp(op="search", value=65)])
+GRAPH_EX = Example(algorithm="dijkstra", nodes=["s", "a", "b", "c"], start="s",
+                   edges=[["s", "a", "4"], ["s", "b", "1"], ["b", "a", "2"], ["a", "c", "1"], ["b", "c", "5"]])
+
+
+def test_a_trees_operations_are_traced_one_comparison_per_step():
+    trace = build_trace(BST_EX)
+    assert trace.template == "BinaryTree" and trace.create == 'kind="bst", values=[50, 30, 70, 20, 40]'
+    assert trace.steps == [".insert_step(value=45)"] * 3 + [".search_step(value=65)"] * 2
+    assert trace.said[2] == "45 > 40, go right: 40 has no right child, so 45 goes there."
+    brief = trace_brief(trace)
+    assert "insert 45, then search for 65, on a binary search tree built from 50, 30, 70, 20, 40" in brief
+    assert "5. 65 < 70, go left" in brief
+
+
+def test_a_heap_example_is_made_a_heap_first_unless_it_is_heapified():
+    pushed = build_trace(Example(algorithm="heap", values=[5, 3, 8, 1], ops=[TreeOp(op="push", value=0)]))
+    assert pushed.create == 'kind="min_heap", values=[1, 3, 8, 5]'
+    assert pushed.steps == [".push_step(value=0)"] * 3
+    built = build_trace(Example(algorithm="heap", heap="max", values=[1, 3, 2, 7], ops=[TreeOp(op="heapify")]))
+    assert built.create == 'kind="max_heap", values=[1, 3, 2, 7]' and set(built.steps) == {".heapify_step()"}
+
+
+def test_graph_and_list_algorithms_are_traced_to_their_end():
+    trace = build_trace(GRAPH_EX)
+    assert trace.steps == ['.dijkstra_step(start="s")'] * 4  # no empty fifth step
+    assert trace.said[0].startswith("Node s is settled at distance 0")
+    assert trace.task == "Dijkstra from s"
+    bfs = build_trace(Example(algorithm="bfs", nodes=["s", "a", "b"], edges=[["s", "a"], ["a", "b"]]))
+    assert len(bfs.steps) == 3 and bfs.steps[0] == '.bfs_level(start="s")'
+    rev = build_trace(Example(algorithm="linked_list", values=[3, 8, 5], ops=[TreeOp(op="reverse")]))
+    assert rev.steps == [".reverse_step()"] * 3 and rev.said[-1].endswith("the list reads 5 -> 8 -> 3 -> null.")
+    both = build_trace(Example(algorithm="linked_list", values=[3, 8, 5, 1],
+                               ops=[TreeOp(op="insert", index=0, value=6), TreeOp(op="find", value=5)]))
+    assert both.steps == [".insert(index=0, value=6)"] + [".find_step(value=5)"] * 4
+    assert both.task == "insert 6 at position 0, then search for 5" and "matches 5" in both.said[-1]
+
+
+def test_a_structure_example_that_does_not_fit_is_not_traced():
+    assert build_trace(Example(algorithm="bst", values=[1, 2, 3, 4, 5, 6], ops=[TreeOp(op="insert", value=7)])) is None
+    assert build_trace(Example(algorithm="bst", values=[5, 3], ops=[TreeOp(op="insert", value=3)])) is None  # dup
+    assert build_trace(Example(algorithm="dijkstra", nodes=["s", "a"], edges=[["s", "a"]])) is None  # no weight
+    assert build_trace(Example(algorithm="topological_sort", nodes=["a", "b"], edges=[["a", "b"]])) is None
+    assert build_trace(Example(algorithm="linked_list", values=[3, 8], ops=[TreeOp(op="find")])) is None
+    many = [TreeOp(op="insert", value=v) for v in (10, 20, 30, 40, 45, 47, 49, 1, 2, 3, 4)]
+    kept = build_trace(Example(algorithm="bst", values=[50], ops=many))
+    assert kept is not None and len(kept.steps) <= 20 and kept.task.count("insert") < len(many)
+
+
+def test_next_step_runs_a_traced_tree_and_graph():
+    trace = build_trace(BST_EX)
+    create = 't = BinaryTree(kind="bst", values=[50, 30, 70, 20, 40], title="insert 45")'
+    segments = [[[create], ["t.next_step()"], ["t.next_step(count=2)"], ["t.insert(value=10)"]]]
+    out, _, problems = apply_trace(segments, trace)
+    assert out[0][1:] == [["t.insert_step(value=45)"], ["t.insert_step(value=45)"] * 2, []]  # not a search step
+    assert [b for _, b, _ in problems] == [4] and check_script(out) == []
+    graph = build_trace(GRAPH_EX)
+    create = ('g = Graph(nodes=["s", "a", "b", "c"], edges=[["s", "a", "4"], ["s", "b", "1"], ["b", "a", "2"], '
+              '["a", "c", "1"], ["b", "c", "5"]])')
+    out, _, problems = apply_trace([[[create], ["g.next_step(count=2)"]]], graph)
+    assert out[0][1] == ['g.dijkstra_step(start="s")'] * 2 and problems == []
+    _, _, problems = apply_trace([[['g = Graph(nodes=["s", "a"], edges=[["s", "a", "1"]])'], ["g.next_step()"]]],
+                                 graph)
+    assert problems and "never created" in problems[-1][2]
+
+
+def test_a_stray_call_of_another_operation_is_dropped_not_turned_into_the_next_step():
+    trace = build_trace(Example(algorithm="linked_list", values=[7, 3, 9], ops=[TreeOp(op="find", value=9)]))
+    create = "lst = LinkedList(values=[7, 3, 9])"
+    out, _, problems = apply_trace([[[create], ["lst.insert(index=0, value=6)"], ["lst.find_step(value=3)"]]], trace)
+    assert out[0][1] == [] and "create a second object" in problems[0][2]  # an insert isn't a find step
+    assert out[0][2] == ["lst.find_step(value=9)"]  # its own find, for another value: the next step instead

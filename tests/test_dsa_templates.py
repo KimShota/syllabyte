@@ -107,6 +107,54 @@ def test_heaps_rise_sink_and_heapify():
                                        ['t.ghost(parent=3, side="left", value=2, text="x")']])[0]
 
 
+BST5 = 't = BinaryTree(kind="bst", values=[50, 30, 70, 20, 40])'
+
+
+def test_bst_steps_make_one_comparison_per_call_and_end_where_the_whole_operation_does():
+    out = said([BST5], *[["t.insert_step(value=45)"]] * 3, *[["t.search_step(value=65)"]] * 2)
+    assert out[1:] == ["45 < 50, go left, to 30.", "45 > 30, go right, to 40.",
+                       "45 > 40, go right: 40 has no right child, so 45 goes there.",
+                       "65 > 50, go right, to 70.",
+                       "65 < 70, go left: 70 has no left child, so 65 isn't in the tree (2 comparisons)."]
+    from animation_agent.visuals.specs import bt_order
+
+    stepped = state(BST5, *["t.insert_step(value=45)"] * 3, name="t")
+    whole = state(BST5, "t.insert(value=45)", name="t")
+    assert bt_order(stepped, "level") == bt_order(whole, "level") == [50, 30, 70, 20, 40, 45]
+    assert said([BST5], ["t.search_step(value=40)"], ["t.search_step(value=40)"])[-1] == \
+        "40 > 30, go right, to 40." and said([BST5], *[["t.search_step(value=40)"]] * 3)[-1].startswith("40 = 40: found")
+
+
+def test_nothing_else_changes_the_tree_while_an_operation_is_half_done():
+    problems = check_segment([[BST5], ["t.insert_step(value=45)"], ["t.search_step(value=20)"]])
+    assert "the insert of 45 is half done: finish it with insert_step(value=45) first" in problems[0]
+    assert check_segment([[BST5], ["t.insert_step(value=45)"], ["t.insert(value=10)"]])
+    assert check_segment([[BST5], ["t.insert_step(value=45)"], ['t.highlight(values=[30])']]) == []  # marks may
+    assert "already" in check_segment([[BST5], ["t.insert_step(value=40)"]])[0]
+    assert "no push_step" in check_segment([[BST5], ["t.push_step(value=4)"]])[0]
+
+
+def test_heap_steps_swap_once_per_call_and_end_where_the_whole_operation_does():
+    from animation_agent.visuals.specs import bt_new, heap_heapify, heap_pop, heap_push
+
+    h = 'h = BinaryTree(kind="min_heap", values=[2, 5, 4, 9])'
+    out = said([h], *[["h.push_step(value=1)"]] * 3)
+    assert out[1:] == ["1 goes in the next free place, index 4, under 5.", "1 is smaller than its parent 5, so they swap.",
+                       "1 is smaller than its parent 2, so they swap: 1 is the root now; the array reads 1, 2, 4, 9, 5."]
+    for values, ops in (([2, 5, 4, 9], ["push_step(value=1)"] * 3 + ["pop_step()"] * 3),
+                        ([1, 3, 2, 7, 4, 5, 6], ["pop_step()"] * 3)):
+        st = state(f"h = BinaryTree(kind=\"min_heap\", values={values})", *[f"h.{o}" for o in ops], name="h")
+        ref = bt_new("min_heap", values)
+        if ops[0].startswith("push"):
+            heap_push(ref, 1)
+        heap_pop(ref)
+        assert st["heap"] == ref["heap"] and st["op"] is None
+    st = state('h = BinaryTree(kind="max_heap", values=[1, 3, 2, 7, 4, 5])', *["h.heapify_step()"] * 4, name="h")
+    ref = bt_new("max_heap", [1, 3, 2, 7, 4, 5])
+    heap_heapify(ref)
+    assert st["heap"] == ref["heap"] == [7, 4, 5, 3, 1, 2] and st["op"] is None
+
+
 # ---- Graph algorithms --------------------------------------------------------------------------------------------
 
 G = ('g = Graph(nodes=["A", "B", "C", "D", "E"], edges=[["A", "B", "4"], ["A", "C", "1"], ["C", "B", "2"], '

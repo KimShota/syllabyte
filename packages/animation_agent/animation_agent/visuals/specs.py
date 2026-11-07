@@ -11,6 +11,7 @@ checker and the drawing compute the same thing.
 
 from __future__ import annotations
 
+import copy
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -20,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 # Bump when a template draws differently (or the call language changes): it is part of the cache key of every
 # video drawn with templates (syllabyte_common.video_jobs.video_key), so those videos are made again.
-TEMPLATES_VERSION = "7"  # 7: BarChart, NumberLine, Table, Graph boxes/edge labels/tree+flow/walk/feed, polar and parametric curves (6: MergeSort, Graph, FunctionPlot, computed sorts, picture plans, reveals held (5: overlapping formula pieces, doubled backslashes, a failed action skipped; 4: ghost outlines clear of notes; 3: storyboards)
+TEMPLATES_VERSION = "8"  # 8: BinaryTree _step actions (one comparison or swap per call), traced data structure examples (7: BarChart, NumberLine, Table, Graph boxes/edge labels/tree+flow/walk/feed, polar and parametric curves (6: MergeSort, Graph, FunctionPlot, computed sorts, picture plans, reveals held (5: overlapping formula pieces, doubled backslashes, a failed action skipped; 4: ghost outlines clear of notes; 3: storyboards)
 
 # --------------------------------------------------------------------------
 # Shared vocabulary
@@ -2173,7 +2174,7 @@ def _said_algo(kind: str):
         if kind == "dijkstra":
             if ev["settled"] is None:
                 return "every node reachable is settled"
-            out = f"{nm(ev['settled'])} is settled at distance {_num(ev['dist'])}, the smallest open"
+            out = f"node {nm(ev['settled'])} is settled at distance {_num(ev['dist'])}, the smallest open"
             if ev["updated"]:
                 out += "; its edges update " + ", ".join(f"{nm(v)} to {_num(x)}" for v, x in ev["updated"])
             return out
@@ -2193,7 +2194,7 @@ def _said_algo(kind: str):
         if ev["node"] is None:
             return "no node is left without incoming edges" + (f": {', '.join(map(nm, ev['cycle']))} form a cycle"
                                                               if ev["cycle"] else "")
-        return (f"{nm(ev['node'])} has no incoming edges left, so it comes next; order so far: "
+        return (f"node {nm(ev['node'])} has no incoming edges left, so it comes next; order so far: "
                 f"{', '.join(map(nm, d['order']))}")
     return says
 
@@ -4086,9 +4087,9 @@ def _check_ll_find(st: dict, a: LLFindArgs) -> str | None:
 def _said_ll_find(st: dict, a: LLFindArgs) -> str:
     ev = st["last"]
     if ev["id"] is None:
-        return f"curr reaches null after {ev['checks']} checks: {_fmt(a.value)} isn't in the list"
+        return f"\"curr\" reaches null after {ev['checks']} checks: {_fmt(a.value)} isn't in the list"
     v = _fmt(st["vals"][ev["id"]])
-    return (f"curr moves to the node holding {v} (check {ev['checks']}): "
+    return (f"\"curr\" moves to the node holding {v} (check {ev['checks']}): "
             + (f"it matches {_fmt(a.value)} and turns green" if ev["hit"] else f"{v} isn't {_fmt(a.value)}"))
 
 
@@ -4623,7 +4624,7 @@ class BinaryTreeParams(_Args):
 
 
 def bt_new(kind: str, values: list[int]) -> dict:
-    st = {"kind": kind, "nodes": {}, "root": None, "next_id": 0, "heap": [], "trav": None, "last": None}
+    st = {"kind": kind, "nodes": {}, "root": None, "next_id": 0, "heap": [], "trav": None, "last": None, "op": None}
     if kind == "bst":
         for v in values:
             bst_insert(st, v)
@@ -4794,6 +4795,222 @@ def heap_heapify(st: dict) -> dict:
     return {"op": "heapify", "swaps": swaps}
 
 
+# ---- One comparison or swap per call (insert_step, search_step, push_step, pop_step, heapify_step) ----------------
+# The whole operations above light up a whole path, or play every swap, in one call, so one line had to narrate
+# several steps at once. A step action does one comparison (and the move or swap it decides) per call; the
+# operation in progress is kept in st["op"] until its last step, and nothing else may change the tree meanwhile.
+
+_STEP_CALL = {"insert": "insert_step(value={v})", "search": "search_step(value={v})", "push": "push_step(value={v})",
+              "pop": "pop_step()", "heapify": "heapify_step()"}
+
+
+def bt_pending(st: dict) -> str | None:
+    """The problem with starting something else while an operation is half done, or None."""
+    o = st.get("op")
+    if o is None:
+        return None
+    of = f" of {o['v']}" if o.get("v") is not None else ""
+    return f"the {o['op']}{of} is half done: finish it with {_STEP_CALL[o['op']].format(v=o.get('v'))} first"
+
+
+def _heap_children(st: dict, i: int) -> list[int]:
+    return [c for c in (2 * i + 1, 2 * i + 2) if c < len(st["heap"])]
+
+
+def _heap_best_child(st: dict, i: int) -> int | None:
+    kids = _heap_children(st, i)
+    if not kids:
+        return None
+    best = kids[0]
+    for c in kids[1:]:
+        if _better(st, st["heap"][c], st["heap"][best]):
+            best = c
+    return best
+
+
+def _bst_find_id(st: dict, v: int) -> int | None:
+    return next((i for i, n in st["nodes"].items() if n["v"] == v), None)
+
+
+def bt_step(st: dict, op: str, value: int | None = None) -> dict | str:
+    """One step of an operation: a comparison (and the move or swap it decides), or the first move of a heap's
+    push or pop. Returns the event, or a problem. st["op"] holds the operation until its last step."""
+    o = st.get("op")
+    if o is not None and (o["op"] != op or o.get("v") != value):
+        return bt_pending(st)
+    heap = st["kind"] != "bst"
+    if op in ("insert", "search") and heap or op in ("push", "pop", "heapify") and not heap:
+        return f"this is a {st['kind'].replace('_', ' ')}: no {op}_step"
+    nodes, h = st["nodes"], st["heap"]
+    if op == "insert":
+        if o is None:
+            if _bst_find_id(st, value) is not None:
+                return f"{value} is already in the tree"
+            if len(nodes) >= MAX_TREE_NODES:
+                return f"at most {MAX_TREE_NODES} nodes"
+            trial = copy.deepcopy(st)
+            trial["op"] = None
+            bst_insert(trial, value)
+            if bt_depth(trial) > MAX_TREE_DEPTH:
+                return f"{value} would make the tree deeper than {MAX_TREE_DEPTH} levels"
+            if st["root"] is None:
+                st["root"] = _new_node(st, value)
+                return {"op": "insert_step", "v": value, "at": None, "new": st["root"], "parent": None, "k": 0}
+            o = st["op"] = {"op": "insert", "v": value, "at": st["root"], "k": 0}
+        at = o["at"]
+        node = nodes[at]
+        side = "l" if value < node["v"] else "r"
+        o["k"] += 1
+        ev = {"op": "insert_step", "v": value, "at": at, "with": node["v"], "dir": "left" if side == "l" else "right",
+              "k": o["k"]}
+        if node[side] is None:
+            node[side] = _new_node(st, value)
+            st["op"] = None
+            return ev | {"new": node[side], "parent": node["v"]}
+        o["at"] = node[side]
+        return ev | {"new": None, "next": nodes[node[side]]["v"]}
+    if op == "search":
+        if o is None:
+            if st["root"] is None:
+                return {"op": "search_step", "v": value, "at": None, "found": False, "k": 0, "end": True}
+            o = st["op"] = {"op": "search", "v": value, "at": st["root"], "k": 0}
+        at = o["at"]
+        node = nodes[at]
+        o["k"] += 1
+        ev = {"op": "search_step", "v": value, "at": at, "with": node["v"], "k": o["k"]}
+        if node["v"] == value:
+            st["op"] = None
+            return ev | {"found": True, "end": True}
+        side = "l" if value < node["v"] else "r"
+        ev |= {"dir": "left" if side == "l" else "right", "found": False}
+        if node[side] is None:
+            st["op"] = None
+            return ev | {"end": True}
+        o["at"] = node[side]
+        return ev | {"end": False, "next": nodes[node[side]]["v"]}
+    if op == "push":
+        if o is None:
+            if len(h) >= MAX_TREE_NODES:
+                return f"at most {MAX_TREE_NODES} values"
+            h.append(value)
+            i = len(h) - 1
+            if i > 0:
+                st["op"] = {"op": "push", "v": value, "i": i}
+            return {"op": "push_step", "v": value, "placed": i, "parent": h[(i - 1) // 2] if i else None,
+                    "end": i == 0}
+        i = o["i"]
+        p = (i - 1) // 2
+        ev = {"op": "push_step", "v": value, "at": i, "with": h[p], "other": p}
+        if _better(st, h[i], h[p]):
+            h[i], h[p] = h[p], h[i]
+            o["i"] = p
+            if p == 0:
+                st["op"] = None
+            return ev | {"swapped": True, "end": p == 0}
+        st["op"] = None
+        return ev | {"swapped": False, "end": True}
+    if op == "pop":
+        if o is None:
+            if not h:
+                return "the heap is empty"
+            top, last = h[0], h.pop()
+            if h:
+                h[0] = last
+            more = len(h) > 1
+            if more:
+                st["op"] = {"op": "pop", "v": None, "i": 0}
+            return {"op": "pop_step", "out": top, "last": last if h else None, "end": not more}
+        i = o["i"]
+        c = _heap_best_child(st, i)
+        ev = {"op": "pop_step", "at": i, "v": h[i], "with": h[c], "other": c}
+        if _better(st, h[c], h[i]):
+            h[i], h[c] = h[c], h[i]
+            o["i"] = c
+            end = not _heap_children(st, c)
+            if end:
+                st["op"] = None
+            return ev | {"swapped": True, "end": end}
+        st["op"] = None
+        return ev | {"swapped": False, "end": True}
+    # heapify: sift each parent down from the last, one comparison per call
+    if o is None:
+        if len(h) < 2:
+            return "there is nothing to heapify"
+        p = len(h) // 2 - 1
+        o = st["op"] = {"op": "heapify", "v": None, "p": p, "i": p}
+    i = o["i"]
+    c = _heap_best_child(st, i)
+    ev = {"op": "heapify_step", "at": i, "v": h[i], "with": h[c], "other": c, "parent": o["p"]}
+    swapped = _better(st, h[c], h[i])
+    if swapped:
+        h[i], h[c] = h[c], h[i]
+        o["i"] = c
+    if not swapped or not _heap_children(st, c):
+        o["p"] -= 1
+        o["i"] = o["p"]
+    end = o["p"] < 0
+    if end:
+        st["op"] = None
+    return ev | {"swapped": swapped, "end": end}
+
+
+def _check_bt_step(op: str):
+    def check(st: dict, a) -> str | None:
+        ev = bt_step(st, op, getattr(a, "value", None))
+        if isinstance(ev, str):
+            return ev
+        st["last"] = ev
+        return None
+    return check
+
+
+def _said_bt_step(st: dict, a) -> str:
+    ev, h = st["last"], st["heap"]
+    sign = lambda x, y: "<" if x < y else (">" if x > y else "=")  # noqa: E731
+    small = "smaller" if st["kind"] == "min_heap" else "larger"
+    array = f"; the array reads {', '.join(map(str, h))}" if ev.get("end") and st["kind"] != "bst" else ""
+    v = ev.get("v")
+    if ev["op"] == "insert_step":
+        if ev["at"] is None:
+            return f"the tree is empty: {v} becomes the root"
+        out = f"{v} {sign(v, ev['with'])} {ev['with']}, go {ev['dir']}"
+        if ev["new"] is None:
+            return out + f", to {ev['next']}"
+        return out + f": {ev['with']} has no {ev['dir']} child, so {v} goes there"
+    if ev["op"] == "search_step":
+        if ev["at"] is None:
+            return f"the tree is empty: {v} isn't in it"
+        if ev["found"]:
+            return f"{v} = {ev['with']}: found after {ev['k']} comparison{'s' if ev['k'] != 1 else ''}"
+        out = f"{v} {sign(v, ev['with'])} {ev['with']}, go {ev['dir']}"
+        if not ev["end"]:
+            return out + f", to {ev['next']}"
+        return out + f": {ev['with']} has no {ev['dir']} child, so {v} isn't in the tree ({ev['k']} comparisons)"
+    if ev["op"] == "push_step":
+        if "placed" in ev:
+            if ev["parent"] is None:
+                return f"{v} goes in the empty heap as its root"
+            return f"{v} goes in the next free place, index {ev['placed']}, under {ev['parent']}"
+        if ev["swapped"]:
+            return (f"{v} is {small} than its parent {ev['with']}, so they swap"
+                    + (f": {v} is the root now" if ev["end"] else "") + array)
+        return f"{v} isn't {small} than its parent {ev['with']}, so it stays" + array
+    if ev["op"] == "pop_step":
+        if "out" in ev:
+            top = "smallest" if st["kind"] == "min_heap" else "largest"
+            if ev["last"] is None:
+                return f"the root {ev['out']}, the {top}, comes out: the heap is empty"
+            return (f"the root {ev['out']}, the {top}, comes out; the last value {ev['last']} moves to the root"
+                    + array)
+        if ev["swapped"]:
+            return f"{v}'s {small} child is {ev['with']}, {small} than {v}, so they swap" + array
+        return f"{v}'s {small} child is {ev['with']}, not {small} than {v}, so {v} stays" + array
+    # heapify_step
+    if ev["swapped"]:
+        return f"{v}'s {small} child is {ev['with']}, {small} than {v}, so they swap" + array
+    return f"{v}'s {small} child is {ev['with']}, not {small} than {v}, so {v} stays" + array
+
+
 class BTValueArgs(_Args):
     value: int = Field(description="a whole number 0-99")
 
@@ -4824,7 +5041,7 @@ def _bt_kind(kind: str):
 
 
 def _check_bt_insert(st: dict, a: BTValueArgs) -> str | None:
-    if problem := _bt_kind("bst")(st, a):
+    if problem := _bt_kind("bst")(st, a) or bt_pending(st):
         return problem
     if len(st["nodes"]) >= MAX_TREE_NODES:
         return f"at most {MAX_TREE_NODES} nodes"
@@ -4839,14 +5056,14 @@ def _check_bt_insert(st: dict, a: BTValueArgs) -> str | None:
 
 
 def _check_bt_search(st: dict, a: BTValueArgs) -> str | None:
-    if problem := _bt_kind("bst")(st, a):
+    if problem := _bt_kind("bst")(st, a) or bt_pending(st):
         return problem
     st["last"] = bst_search(st, a.value)
     return None
 
 
 def _check_bt_delete(st: dict, a: BTValueArgs) -> str | None:
-    if problem := _bt_kind("bst")(st, a):
+    if problem := _bt_kind("bst")(st, a) or bt_pending(st):
         return problem
     ev = bst_delete(st, a.value)
     if isinstance(ev, str):
@@ -4901,7 +5118,7 @@ def _said_bt(st: dict, a) -> str:
 
 def _check_heap(op: str):
     def check(st: dict, a) -> str | None:
-        if problem := _bt_kind("heap")(st, a):
+        if problem := _bt_kind("heap")(st, a) or bt_pending(st):
             return problem
         if op == "push":
             if len(st["heap"]) >= MAX_TREE_NODES:
@@ -4919,6 +5136,8 @@ def _check_heap(op: str):
 
 
 def _check_traverse(st: dict, a: BTOrderArgs) -> str | None:
+    if problem := bt_pending(st):
+        return problem
     t = st["trav"]
     if t is None or t["order"] != a.order or t["done"]:
         t = st["trav"] = {"order": a.order, "seq": bt_order(st, a.order), "k": 0, "done": False}
@@ -4969,7 +5188,8 @@ BINARY_TREE = TemplateSpec(
     purpose="A binary search tree or a binary heap (the tree, and under it the array it lives in). BST, "
             "computed: insert and search (each comparison on the way down lights up), delete (leaf, one child, "
             "or two children: the in-order successor takes its place). Heap, computed: push (the value rises), "
-            "pop (the root comes out, the last value sinks), heapify. Both: traverse_step visits the next node in "
+            "pop (the root comes out, the last value sinks), heapify. Each of these but delete also has a _step "
+            "form, one comparison or swap per call, for a line per step. Both: traverse_step visits the next node in "
             "inorder, preorder, postorder or level order. Needs at least half the frame.",
     params=BinaryTreeParams,
     min_rows=3,
@@ -4991,6 +5211,23 @@ BINARY_TREE = TemplateSpec(
                           _check_heap("pop"), _said_bt, reveals=True),
         "heapify": ActionSpec("Heap: turn the array into a heap (computed), sifting each parent down from the "
                               "last.", NoArgs, _check_heap("heapify"), _said_bt, reveals=True),
+        "insert_step": ActionSpec("BST: insert one comparison at a time (computed): each call compares the value "
+                                  "with the next node down and goes left or right; the call that finds a free "
+                                  "place puts it there. Call it again with the same value until it is in.",
+                                  BTValueArgs, _check_bt_step("insert"), _said_bt_step, reveals=True),
+        "search_step": ActionSpec("BST: search one comparison at a time (computed): each call compares the value "
+                                  "with the next node down; it ends found (green) or at a missing child.",
+                                  BTValueArgs, _check_bt_step("search"), _said_bt_step, reveals=True),
+        "push_step": ActionSpec("Heap: push one swap at a time (computed): the first call puts the value in the "
+                                "next free place, each later one compares it with its parent and swaps or stops. "
+                                "Same value each call until it settles.", BTValueArgs, _check_bt_step("push"),
+                                _said_bt_step, reveals=True),
+        "pop_step": ActionSpec("Heap: pop one swap at a time (computed): the first call takes the root out and "
+                               "moves the last value up, each later one compares it with its better child and "
+                               "swaps or stops.", NoArgs, _check_bt_step("pop"), _said_bt_step, reveals=True),
+        "heapify_step": ActionSpec("Heap: heapify one comparison at a time (computed), sifting each parent down "
+                                   "from the last.", NoArgs, _check_bt_step("heapify"), _said_bt_step,
+                                   reveals=True),
         "traverse_step": ActionSpec("Visit the next node in this order (computed); the visited values are listed.",
                                     BTOrderArgs, _check_traverse, _said_bt, reveals=True),
         "highlight": ActionSpec("Colour the nodes holding these values.", BTValuesArgs,

@@ -724,24 +724,24 @@ TREE = {
          "{peer}, where should sixty-five go in this tree?"),
         ("b2_peer_answer_wrong_idea", ['t.ghost(parent=20, side="left", value=65, text="first free spot?")'],
          "Not gonna lie, the first free spot, under twenty on the left."),
-        ("b3_explainer_feedback", ["t.clear()", "t.insert(value=65)"],
-         "No, that breaks the order: sixty-five beats fifty, so it goes right."),
-        ("b4_peer_build", ['t.highlight(values=[70], colour="YELLOW")'],
-         "Then sixty-five is smaller than seventy, so it goes left of seventy."),
+        ("b3_explainer_feedback", ["t.clear()", "t.insert_step(value=65)"],
+         "No, that breaks the order: sixty-five beats fifty, so it goes right, to seventy."),
+        ("b4_peer_build", ["t.insert_step(value=65)"],
+         "Then it's smaller than seventy, and seventy's left is free: it lands there."),
         ("b5_explainer_build", ['t.highlight(values=[65], colour="GOLD")'],
          "Right, one comparison per level, and it lands in the only place that fits."),
     ],
     "deliver_2": [
-        ("b1_explainer_build", ["t.clear()", 't.highlight(values=[50], colour="GOLD")'],
-         "Now search for forty-five, starting at the root, fifty, like before."),
+        ("b1_explainer_build", ["t.clear()", "t.search_step(value=45)"],
+         "Now search for forty-five: it's smaller than the root, fifty, so go left, to thirty."),
         ("b2_peer_question", [],
          "For real, how do we know when to stop looking?"),
-        ("b3_explainer_feedback", ['t.highlight(values=[30, 40], colour="YELLOW")'],
-         "We stop when we match, or when the side we need has no child."),
+        ("b3_explainer_feedback", ["t.search_step(value=45)"],
+         "We stop at a match or a missing child. Forty-five beats thirty, so right, to forty."),
         ("b4_explainer_predict", [],
          "Pause: is forty-five in this tree?"),
-        ("b5_peer_build", ["t.clear()", "t.search(value=45)"],
-         "No: left at fifty, right at thirty, right at forty, and it runs out."),
+        ("b5_peer_build", ["t.search_step(value=45)"],
+         "No: it beats forty, but forty has no right child, so the search runs out."),
         ("b6_explainer_build", ['t.highlight(values=[50, 30, 40], colour="TEAL")'],
          "Yes, three comparisons for a tree three levels deep, never more."),
     ],
@@ -754,8 +754,11 @@ TREE = {
 }
 
 TREE_RULES = _SHARED_DS_RULES + """
-  - A BST's insert, search and delete light their path from the root; a heap keeps its array under the tree (the \
-array is how it is stored) and push, pop and heapify swap in both; traverse_step visits one node per line.
+  - Step through an operation with its _step form, one comparison or swap per line: insert_step, search_step \
+(BST), push_step, pop_step, heapify_step (heap), each called again until the operation ends. The whole insert, \
+search, push, pop and heapify play every comparison in one call, so only use them when the line sums the result. \
+A heap keeps its array under the tree (the array is how it is stored), and its swaps show in both; traverse_step \
+visits one node per line.
   - Build the tree the slide uses (BST: insert a middle value first, or it grows lopsided; at most five levels)."""
 
 _DIJKSTRA = ('g = Graph(nodes=["S", "A", "B", "C"], edges=[["S", "A", "4"], ["S", "B", "1"], ["B", "A", "2"], '

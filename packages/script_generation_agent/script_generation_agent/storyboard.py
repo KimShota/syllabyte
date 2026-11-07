@@ -787,7 +787,8 @@ def write_storyboard(
         "Write the 5-segment CLT-bLM script for this Knowledge Unit now.",
         "Fill in the storyboard for this Knowledge Unit now: every beat's picture, then its line.")
     schema = storyboard_model(plan)
-    trace = plan_example(ku, picture, text_context, model=model, manifest=manifest) if example is _PLAN else example
+    trace = (plan_example(ku, picture, text_context, model=model, manifest=manifest, images=image_blocks)
+             if example is _PLAN else example)
     if trace is not None:
         from animation_agent.visuals.trace import trace_brief
 

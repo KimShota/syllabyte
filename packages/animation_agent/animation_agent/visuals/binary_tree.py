@@ -32,6 +32,7 @@ from animation_agent.visuals.specs import (
     bst_delete,
     bst_insert,
     bt_new,
+    bt_step,
     heap_heapify,
     heap_pop,
     heap_push,
@@ -46,7 +47,8 @@ INDEX_ROW = 0.32
 class BinaryTree(Template):
     spec = BINARY_TREE
     durations = {"create": 1.0, "insert": 1.3, "search": 1.2, "delete": 1.1, "push": 1.3, "pop": 1.4,
-                 "heapify": 1.8, "traverse_step": 0.7, "ghost": 0.7}
+                 "heapify": 1.8, "traverse_step": 0.7, "ghost": 0.7, "insert_step": 0.9, "search_step": 0.9,
+                 "push_step": 0.9, "pop_step": 1.0, "heapify_step": 0.9}
 
     def __init__(self, scene, params, uses=None):
         super().__init__(scene, params, uses)
@@ -281,6 +283,78 @@ class BinaryTree(Template):
         after = copy.deepcopy(self.st)
         ev = heap_heapify(after)
         yield from self._swaps(ev["swaps"], after["heap"])
+
+    # ---- one comparison or swap per call ------------------------------------------------------------------------
+
+    def insert_step(self, a) -> Steps:
+        ev = bt_step(self.st, "insert", a.value)
+        if ev["new"] is None:
+            self.colours = {ev["at"]: "YELLOW"}
+            yield Step(self._refresh() + self._note(f"insert {a.value}: {a.value} "
+                                                    f"{'<' if ev['dir'] == 'left' else '>'} {ev['with']}, go "
+                                                    f"{ev['dir']}", colour("GOLD")))
+            return
+        self.colours = {ev["new"]: "GOLD"}
+        where = "the root" if ev["at"] is None else f"{ev['with']}'s {ev['dir']} child"
+        yield Step(self._refresh() + self._note(f"{a.value} becomes {where}", colour("GOLD")))
+
+    def search_step(self, a) -> Steps:
+        ev = bt_step(self.st, "search", a.value)
+        if ev["at"] is None:
+            yield Step(self._note(f"{a.value} isn't in the tree", colour("RED")))
+            return
+        if ev["found"]:
+            self.colours = {ev["at"]: "GREEN"}
+            yield Step(self._refresh() + self._note(f"{a.value} = {ev['with']}: found", colour("GREEN")))
+            return
+        self.colours = {ev["at"]: "YELLOW"}
+        sign = "<" if ev["dir"] == "left" else ">"
+        note = (f"find {a.value}: {a.value} {sign} {ev['with']}, go {ev['dir']}" if not ev["end"]
+                else f"{a.value} {sign} {ev['with']}: no {ev['dir']} child")
+        yield Step(self._refresh() + self._note(note, colour("RED") if ev["end"] else colour("GOLD")))
+
+    def _swap_step(self, ev) -> Steps:
+        """A comparison of two places in the heap (already swapped in self.st if `swapped`)."""
+        i, j = ev["at"], ev["other"]
+        if ev["swapped"]:
+            h = self.st["heap"]
+            h[i], h[j] = h[j], h[i]  # the values as they were, both yellow; then swapped
+            self.colours = {i: "YELLOW", j: "YELLOW"}
+            yield Step(self._refresh(), 0.4)
+            h[i], h[j] = h[j], h[i]
+            self.colours = {j: "GOLD"}
+            yield Step(self._refresh() + self._note(f"swap {ev['v']} and {ev['with']}", colour("GOLD")), 0.6)
+        else:
+            self.colours = {i: "GOLD", j: "YELLOW"}
+            yield Step(self._refresh() + self._note(f"{ev['v']} stays", colour("GREY")))
+        if ev["end"]:
+            self.colours = {}
+
+    def push_step(self, a) -> Steps:
+        ev = bt_step(self.st, "push", a.value)
+        if "placed" in ev:
+            self.colours = {ev["placed"]: "GOLD"}
+            yield Step(self._refresh() + self._note(f"push {a.value}", colour("GOLD")))
+            return
+        yield from self._swap_step(ev)
+
+    def pop_step(self, a) -> Steps:
+        before = list(self.st["heap"])
+        ev = bt_step(self.st, "pop")
+        if "out" in ev:
+            after = self.st["heap"]
+            self.st["heap"] = before
+            self.colours = {0: "GOLD"}
+            yield Step(self._refresh() + self._note(f"out: {ev['out']}", colour("GOLD")), 0.45)
+            self.st["heap"] = after
+            self.colours = {0: "YELLOW"} if after else {}
+            yield Step(self._refresh(), 0.55)
+            return
+        yield from self._swap_step(ev)
+
+    def heapify_step(self, a) -> Steps:
+        ev = bt_step(self.st, "heapify")
+        yield from self._swap_step(ev)
 
     def traverse_step(self, a) -> Steps:
         from animation_agent.visuals.specs import _check_traverse

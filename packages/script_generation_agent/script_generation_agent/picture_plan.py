@@ -107,34 +107,56 @@ def plan_picture(ku: KnowledgeUnit, *, model: str = DEFAULT_MODEL, manifest: Run
 # --------------------------------------------------------------------------
 
 # The families whose main template runs an algorithm code can trace.
-TRACED_FAMILIES = ("array_bars", "merge_sort")
+TRACED_FAMILIES = ("array_bars", "merge_sort", "tree", "graph", "linked_list")
 
 EXAMPLE_SYSTEM = """\
 You pick the worked example for a short educational video (about a minute). Code will run the algorithm on it \
 step by step, and the video narrates those steps, so pick the algorithm the video is about and an example small \
 enough to show.
 
-algorithm: the one the video runs step by step on the example: linear_search, bisection (binary search), \
-bubble_sort, selection_sort, insertion_sort, merge_sort, merge (two sorted lists merged into one), or none when \
-the idea isn't one of these run on a list (e.g. indexing, pointers, a sort's cost discussed in words, a \
-comparison of several algorithms, or any other algorithm).
+algorithm: the one the video runs step by step on the example, or none when the idea isn't one of these (e.g. \
+indexing, a cost discussed in words, a comparison of several algorithms, a definition with no operation run, or \
+any other algorithm):
+- on a list: linear_search, bisection (binary search), bubble_sort, selection_sort, insertion_sort, merge_sort, \
+merge (two sorted lists merged into one);
+- bst: operations on a binary search tree (insert, search, delete, traversals), given as `ops`;
+- heap: operations on a binary heap (push, pop, heapify, traversals), given as `ops`, with `heap` min or max;
+- on a graph: dfs, bfs, dijkstra (shortest paths), prim, kruskal (minimum spanning trees), topological_sort;
+- linked_list: operations on a linked list (insert or delete at a position, find node by node, the in-place \
+reversal), given as `ops`.
 
-The example: use the slides' own example if it fits; else make one up. 4-8 whole numbers from 0 to 99, at most \
-7 if any has two digits (one-digit numbers are easiest to follow). Bisection needs the values sorted; pick a \
-target it takes at least three checks to find (or one that isn't there, if the idea is about a failed search). \
-A linear search's target sits a few cells in, not first. A sort's values start out of order, so every step \
-does something. merge takes `runs`: two sorted lists, 2-8 numbers in all."""
+The example: use the slides' own example if it fits, copied exactly: every value, and for a graph every node, \
+edge, direction and weight in its figure (the slide images show it; the critic checks the video against them). \
+Only when the slides have none that fits, make one up. Small numbers are easiest to follow. Cover what the idea \
+is about: if it is an insert and then a search, give both ops.
+- A list: 4-8 whole numbers from 0 to 99, at most 7 if any has two digits (one-digit numbers are easiest). \
+Bisection needs the values sorted; pick a target it takes at least three checks to find (or one that isn't there, \
+if the idea is about a failed search). A linear search's target sits a few cells in, not first. A sort's values \
+start out of order, so every step does something. merge takes `runs`: two sorted lists, 2-8 numbers in all.
+- bst: `values` are the tree's values in the order inserted (5-8, distinct, 0-99; the first is the root, so pick \
+a middle value first and keep it at most 4 levels deep); then 1-2 `ops`, e.g. insert a value that lands 3 \
+levels down, then search for one that is (or isn't) there. One traverse op visits every node, one per step.
+- heap: `values` are its array (5-8 numbers; code makes it a heap first, unless the first op is heapify); then \
+1-2 `ops`, e.g. push a value that rises two levels, then pop. heapify alone shows building a heap from an array.
+- a graph: 4-7 `nodes` with 1-2 character names, at most 10 `edges`, `start` the first node; dijkstra, prim and \
+kruskal need every edge's weight (a whole number 1-9) as its third item, and an example where the cheapest \
+first choice isn't the final answer (a shorter path through another node, a skipped edge). topological_sort \
+needs `directed` and no cycle.
+- linked_list: 3-5 one-digit `values` from the head; then 1-3 `ops`: insert (`index`, `value`; index 0 links a \
+new head), delete (`index`), find (`value`, a few nodes in, or missing), reverse."""
 
 
 def _example_key(ku: KnowledgeUnit, slides: str) -> str:
-    raw = json.dumps([ku.title, ku.summary, ku.visual_idea, slides[:4000], EXAMPLE_SYSTEM])
+    raw = json.dumps([ku.title, ku.summary, ku.visual_idea, slides[:4000], EXAMPLE_SYSTEM, "images"])
     return f"example:{ku.id}:{hashlib.sha256(raw.encode()).hexdigest()[:12]}"
 
 
 def plan_example(ku: KnowledgeUnit, plan: PicturePlan, slides: str, *, model: str = DEFAULT_MODEL,
-                 manifest: RunManifest | None = None, use_cache: bool = True):
+                 manifest: RunManifest | None = None, use_cache: bool = True, images: list | None = None):
     """The KU's traced worked example (animation_agent.visuals.trace.Trace), or None when its picture doesn't
-    step through an algorithm code can trace. One short call, cached like the picture plan."""
+    step through an algorithm code can trace. One short call, cached like the picture plan. `images` are the
+    slides' image blocks: a graph or tree is often only drawn there (in runs/dsa-trace the call, given the text
+    alone, rebuilt the Dijkstra slide's graph from its table and left out two of its edges)."""
     from animation_agent.visuals.trace import Example, build_trace
 
     if plan.family not in TRACED_FAMILIES:
@@ -147,7 +169,8 @@ def plan_example(ku: KnowledgeUnit, plan: PicturePlan, slides: str, *, model: st
         listing = (f"title: {ku.title}\nsummary: {ku.summary[:500]}\nplanned visual: {ku.visual_idea}\n\n"
                    f"slides:\n{slides[:4000]}")
         try:
-            example = structured(schema=Example, content=[text_block(listing)], system=EXAMPLE_SYSTEM,
+            example = structured(schema=Example, content=[text_block(listing), *(images or [])],
+                                 system=EXAMPLE_SYSTEM,
                                  stage="example_plan", ku_id=ku.id, model=model, max_tokens=1500,
                                  manifest=manifest)
         except Exception as e:  # best effort: without an example the writer calls the steps, as before
@@ -161,8 +184,10 @@ def plan_example(ku: KnowledgeUnit, plan: PicturePlan, slides: str, *, model: st
             tmp.write_text(json.dumps(cache, indent=1))
             tmp.replace(CACHE)
     trace = build_trace(example)
-    print(f"[example_plan] {ku.id}: {example.algorithm} {example.values or example.runs}"
+    shown = example.values or example.runs or example.nodes
+    print(f"[example_plan] {ku.id}: {example.algorithm} {shown}"
           + (f" for {example.target}" if example.target is not None else "")
+          + (f" ({trace.task})" if trace and trace.task else "")
           + (f": {len(trace.steps)} steps" if trace else ": not traced"), file=sys.stderr, flush=True)
     return trace
 

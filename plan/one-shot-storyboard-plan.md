@@ -514,3 +514,47 @@ call with the same prompt (5 up, 2 the same, none down), all four 5.54 -> 6.14; 
 better on 19 KUs, so it is now the default (`SYLLABYTE_STORYBOARD=one_call` keeps the one call). Still no video
 passes all four at 7; next is trace-first for the data-structure algorithms, with heap and BST operations one swap
 or comparison per call.
+
+Trace-first for the data structures (2026-11-07): BinaryTree has insert_step, search_step, push_step, pop_step and
+heapify_step (one comparison or swap per call; the operation is held until its last step and nothing else may
+change the tree meanwhile), and the traced worked example covers BST and heap operations, DFS, BFS, Dijkstra,
+Prim, Kruskal, topological order and linked-list operations (insert, delete, find, reverse). Code runs the
+templates' own checks until each algorithm ends, so the steps are what the checker and the renderer compute.
+`scripts/compare_critic.py` prints two stores' critic scores side by side.
+
+First run (`runs/dsa-trace`, 7 KUs, about $0.90): visual alignment 5.00 -> 4.43 against `runs/dsa-plan`. Three
+causes, fixed: the example call saw only the slides' text, so it rebuilt the Dijkstra slide's graph from its
+table and left out two edges (it now gets the slide images and is told to copy the figure exactly); a
+linked-list example could only search, so the KU's insert at the head never appeared (lists now take ops); and a
+stray call of another operation on the example (the writer's insert) was turned into the next search step (only
+the same action is converted now; another is dropped and reported). The heap video's drop was the critic's own
+arithmetic: it put index 7's parent at 18, but in [20, 15, 18, 7, 10, 12, 9] it is 7, as the script said.
+
+Second run, the five traced KUs only (`runs/dsa-trace-2`, about $0.65): visual alignment 5.00 -> 4.40 against
+plan-then-write (0 up, 2 down, 3 the same), all four lower too. No gain. The same BST example scored 6 in the
+first run and 4 in the second, and the untraced chaining KU fell 5 -> 3 in the first, so one KU moves by two
+points between runs: on five KUs a 0.6 difference is inside the critic's noise. The complaints are now seldom
+about the steps (the Dijkstra edges match the slide): the writer's own highlights reveal the answer before the
+question (a search path, a subtree), ghosts hang where the wrong idea doesn't put them (a ghost may only use a
+free side), lines run a step ahead of or behind the picture, and the critic reads repeated identical step calls
+(`dijkstra_step(start="s")` five times) as identical pictures. Next: measure the critic's noise (score the same
+scripts three times) before more changes are judged on five to seven KUs.
+
+The critic's noise, measured (2026-11-07, `scripts/critic_noise.py`, `runs/critic-noise`, $0.60): the 12 scripts
+of `runs/dsa-plan` and `runs/dsa-trace-2`, each scored three times (the recorded score and two more). The critic
+is close to deterministic: pedagogical coherence never moved, visual alignment moved by at most one point (on 4
+of 12 scripts), conceptual accuracy by one on 5. A mean over five KUs moves about ±0.1 when the same scripts are
+scored again. So the swings above are not the critic's: the same BST example scored 6 and then 4 because the
+writer wrote two different scripts. The noise a comparison has to beat is the writer's (one KU written twice),
+not yet measured; and the critic's mistakes are steady too (the heap parent it miscomputed would be miscomputed
+every time). Trace-first's 4.40 against 5.00 is the critic's steady judgement of those five scripts, one script
+per KU.
+
+The writer's noise (2026-11-07, `scripts/critic_noise.py write`, `runs/writer-noise`, $0.69): the five traced KUs
+written once more with trace-first and the same cached examples, scored, no video. Against the `runs/dsa-trace-2`
+scripts (same code, same examples) visual alignment went 4.40 -> 5.40 (+2, +1, +1, +1, 0): one script of a KU is
+about 0.8 of a point from the next (SD), so a mean over five KUs carries ±0.37 and a difference of two such means
+±0.53. Trace-first's two scripts per KU average 4.90 against plan-then-write's 5.00: no measurable effect either
+way. A change has to move a five-KU mean by about a point (two SDs) to show; a half-point effect needs about 20
+scripts a side (e.g. ten KUs written twice). Comparisons so far on 5-12 KUs, one script each (worked examples,
+modules, plan-then-write's 4.14 -> 5.00 on seven), sit near that line.

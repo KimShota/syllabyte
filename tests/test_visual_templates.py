@@ -303,3 +303,34 @@ def test_course_test_formulas_render(beats, tmp_path):
     ok, error, _, _ = _try_render(Path(tmp_path), code, "Seg0", "low", len(durations), sum(durations),
                                   check_formulas=False, frame="dialogue")
     assert ok, error
+
+
+# One comparison or swap per call: the BinaryTree _step actions, as the traced worked examples call them.
+STEP_SEGMENTS = {
+    "bst": [['t = BinaryTree(kind="bst", values=[50, 30, 70, 20, 40], title="insert 65")'],
+            ["t.insert_step(value=65)"], ["t.insert_step(value=65)"], ["t.search_step(value=45)"],
+            ["t.search_step(value=45)", "t.search_step(value=45)"], ["t.search_step(value=40)"],
+            ["t.search_step(value=40)", "t.search_step(value=40)"]],
+    "heap": [['h = BinaryTree(kind="min_heap", values=[1, 3, 2, 7, 4, 5])'],
+             ["h.push_step(value=0)"], ["h.push_step(value=0)"], ["h.push_step(value=0)"],
+             ["h.pop_step()"], ["h.pop_step()", "h.pop_step()"]],
+    "heapify": [['h = BinaryTree(kind="max_heap", values=[1, 3, 2, 7, 4, 5])'],
+                ["h.heapify_step()", "h.heapify_step()"], ["h.heapify_step()", "h.heapify_step()"]],
+}
+
+
+@pytest.mark.skipif(not os.environ.get("SYLLABYTE_RENDER_TESTS"), reason="set SYLLABYTE_RENDER_TESTS=1 to render")
+@pytest.mark.parametrize("which", sorted(STEP_SEGMENTS))
+def test_tree_steps_render_with_no_layout_findings(which, tmp_path):
+    from animation_agent.layout import BEATS_FILE
+    from animation_agent.renderer import _try_render
+
+    beats = STEP_SEGMENTS[which]
+    assert check_segment(beats) == []
+    code = build_spec_scene(segment(*beats), "Seg0")
+    durations = [2.5] * len(beats)
+    (tmp_path / BEATS_FILE).write_text(json.dumps(durations))
+    ok, error, _, layout = _try_render(Path(tmp_path), code, "Seg0", "low", len(durations), sum(durations),
+                                       check_formulas=False, frame="dialogue")
+    assert ok, error
+    assert layout.findings == [], layout.findings
