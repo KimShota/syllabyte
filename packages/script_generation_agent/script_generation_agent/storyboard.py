@@ -31,7 +31,7 @@ from script_generation_agent.prompts import (
     build_script_prompt,
     storyboard_system_prompt,
 )
-from script_generation_agent.picture_plan import PicturePlan, plan_picture
+from script_generation_agent.picture_plan import PicturePlan, plan_example, plan_picture
 from script_generation_agent.slang import MIN_SLANG, find_slang, lexicon_for_prompt, max_slang
 from syllabyte_common.llm import DEFAULT_MODEL, structured, text_block
 from syllabyte_common.models import (
@@ -335,14 +335,15 @@ def _calls_listing(script: TemplatedDialogueScript, segments) -> str:
     return "\n".join(out)
 
 
-def _fix_calls(script, segments, problems, *, ku_id: str, model: str, manifest, system: str):
+def _fix_calls(script, segments, problems, *, ku_id: str, model: str, manifest, system: str, note: str = ""):
     """One call that corrects the calls of the segments with problems code couldn't fix."""
     bad = sorted({p.segment for p in problems})
     listing = (_calls_listing(script, segments) + "\n\nProblems an automatic checker found (what is on screen carries "
                "over between segments; code places every object, so give no areas):\n"
                + "\n".join(f"  - segment {p.segment}: {p.message}" for p in problems)
-               + f"\n\nThe lines are final (their voices are recorded), so make the pictures match them. Return "
-                 f"corrected `draw` lists for segments {bad} only, one entry per beat, changing only what you must.")
+               + f"\n\nThe lines stay as they are, so make the pictures match them. Return "
+                 f"corrected `draw` lists for segments {bad} only, one entry per beat, changing only what you must."
+                 + note)
     print(f"[storyboard] {ku_id}: fixing calls in segments {bad}: {'; '.join(p.message for p in problems)[:500]}",
           file=sys.stderr, flush=True)
     try:
@@ -364,8 +365,9 @@ def _drop_broken(segments, lines, allowed=None):
     from animation_agent.visuals.calls import MAX_CALLS_PER_BEAT, simulate_script
 
     for _ in range(80):
-        problems = [p for p in simulate_script(segments, lines, allowed=allowed).problems if p.call is not None
-                    or p.kind == "too_many_calls"]
+        # A change the line doesn't say stays (only logged): dropping a step would change every state after it.
+        problems = [p for p in simulate_script(segments, lines, allowed=allowed).problems
+                    if (p.call is not None and p.kind != "unsaid_change") or p.kind == "too_many_calls"]
         if not problems:
             break
         p = problems[0]
@@ -392,22 +394,24 @@ def _missing_main(segments, main: str | None):
                     "idea is first shown (by the deliver segment at the latest) and keep acting on it")]
 
 
-def finish(script: TemplatedDialogueScript, *, ku_id: str, model: str = DEFAULT_MODEL,
-           manifest: RunManifest | None = None, system: str = "", allowed: set[str] | None = None,
-           main: str | None = None) -> TemplatedDialogueScript:
-    """The storyboard's calls made safe to render and its visual sentences written: code fixes (a result shown
-    during a question or predict line moves to the line that answers; normalize), one fix call for what code
-    can't fix (including a template the picture plan didn't choose, `allowed`, or its main template, `main`, never
-    drawn), then code drops whatever is still rejected. Each drawn beat's `visual` is then what its calls show."""
-    from animation_agent.visuals.calls import describe_script, script_segments
+def settle_picture(script: TemplatedDialogueScript, *, ku_id: str, model: str = DEFAULT_MODEL,
+                   manifest: RunManifest | None = None, system: str = "", allowed: set[str] | None = None,
+                   main: str | None = None, trace=None) -> list:
+    """The storyboard's calls made safe to render, per segment and beat: code fixes (a result shown during a
+    question or predict line moves to the line that answers; normalize), one fix call for what code can't fix
+    (including a template the picture plan didn't choose, `allowed`, or its main template, `main`, never drawn),
+    then code drops whatever is still rejected. The fix call can't change the worked example's steps (`trace`,
+    animation_agent.visuals.trace): code puts them back as they were. This is the picture as it renders: nothing changes it after, so
+    the lines can be matched to it (match_lines) before the voices start."""
+    from animation_agent.visuals.calls import script_segments
     from animation_agent.visuals.normalize import (
         fill_still,
         hold_reveals,
         normalize_script,
         point_beats,
-        still_beats,
         still_problems,
     )
+    from animation_agent.visuals.trace import FIX_NOTE, STEP_ACTIONS, example_name, keep_steps
 
     segments = script_segments(script)
     lines = [[b.narration for b in seg.beats] for seg in script.segments]
@@ -416,32 +420,68 @@ def finish(script: TemplatedDialogueScript, *, ku_id: str, model: str = DEFAULT_
 
     def held(segs):
         segs, moved = hold_reveals(segs, steps, lines)
-        for line in moved:
-            print(f"[storyboard] {ku_id}: {line}", file=sys.stderr, flush=True)
+        _log(ku_id, moved)
         return segs
-
-    def log(entries):
-        for line in entries:
-            print(f"[storyboard] {ku_id}: {line}", file=sys.stderr, flush=True)
 
     # A line that makes a point changes the picture: code highlights the cells it names where it can, and a
     # note-only beat there goes to the fix call (to be drawn) instead of being cleared.
     segments, filled = fill_still(held(segments), steps, lines)
-    log(filled)
+    _log(ku_id, filled)
     fixed = normalize_script(segments, lines, allowed, keep_text=point_beats(steps))
-    log(fixed.log)
+    _log(ku_id, fixed.log)
     segments = fixed.segments
     # Only problems that break or contradict the picture are worth a call; a segment showing only notes or a
     # count the words don't match is left to the critic.
     worth = ([p for p in fixed.left if p.kind not in ("notes_only", "count")] + _missing_main(segments, main)
              + still_problems(segments, steps))
     if worth:
-        segments = _fix_calls(script, segments, worth, ku_id=ku_id, model=model, manifest=manifest, system=system)
+        note = ""
+        if trace is not None and (name := example_name(segments, trace)):
+            note = FIX_NOTE.format(name=name, actions=", ".join(sorted(STEP_ACTIONS[trace.template])))
+        before = segments
+        segments = _fix_calls(script, segments, worth, ku_id=ku_id, model=model, manifest=manifest, system=system,
+                              note=note)
+        if trace is not None:
+            segments, kept = keep_steps(before, segments, trace)
+            _log(ku_id, kept)
         segments = normalize_script(held(segments), lines, allowed).segments
-    segments = _drop_broken(segments, lines, allowed)
+    return _drop_broken(segments, lines, allowed)
+
+
+def _log(ku_id: str, entries) -> None:
+    for line in entries:
+        print(f"[storyboard] {ku_id}: {line}", file=sys.stderr, flush=True)
+
+
+# What a line can say that its picture contradicts: the measure of how well the two match, logged for every video
+# once its lines are final (scratchpad compare scripts read it back from work.log).
+MISMATCH_KINDS = ("unshown_number", "wrong_front", "unsaid_change")
+
+
+def mismatches(script: TemplatedDialogueScript, segments=None, allowed: set[str] | None = None) -> list:
+    """The checker's problems between the lines and the picture (MISMATCH_KINDS)."""
+    from animation_agent.visuals.calls import check_script, script_segments
+
+    lines = [[b.narration for b in seg.beats] for seg in script.segments]
+    segments = script_segments(script) if segments is None else segments
+    return [p for p in check_script(segments, lines, allowed) if p.kind in MISMATCH_KINDS]
+
+
+def with_pictures(script: TemplatedDialogueScript, segments, *, ku_id: str = "",
+                  allowed: set[str] | None = None) -> TemplatedDialogueScript:
+    """The script with these calls, and each drawn beat's `visual` written from them (what its calls show)."""
+    from animation_agent.visuals.calls import describe_script
+    from animation_agent.visuals.normalize import still_beats
+
+    steps = [[(getattr(b, "step", ""), bool(getattr(b, "misconception", False))) for b in seg.beats]
+             for seg in script.segments]
+    left = mismatches(script, segments, allowed)
+    _log(ku_id, [f"lines vs picture: {len(left)} mismatches"
+                 + (" (" + "; ".join(f"segment {p.segment} beat {p.beat} {p.kind}" for p in left) + ")"
+                    if left else "")])
     if still := still_beats(segments, steps):
-        log([f"still picture on {len(still)} point-making lines: "
-             + ", ".join(f"segment {s} beat {b}" for s, b in still)])
+        _log(ku_id, [f"still picture on {len(still)} point-making lines: "
+                     + ", ".join(f"segment {s} beat {b}" for s, b in still)])
     said = describe_script(segments)
     data = script.model_dump(mode="json")
     for seg, draws, seg_said in zip(data["segments"], segments, said):
@@ -452,9 +492,120 @@ def finish(script: TemplatedDialogueScript, *, ku_id: str, model: str = DEFAULT_
     return TemplatedDialogueScript.model_validate(data)
 
 
+def finish(script: TemplatedDialogueScript, *, ku_id: str, model: str = DEFAULT_MODEL,
+           manifest: RunManifest | None = None, system: str = "", allowed: set[str] | None = None,
+           main: str | None = None) -> TemplatedDialogueScript:
+    """settle_picture, then with_pictures: the calls made safe and each drawn beat's `visual` written from them
+    (the lines as they are; write_storyboard matches them to the settled picture in between)."""
+    segments = settle_picture(script, ku_id=ku_id, model=model, manifest=manifest, system=system,
+                              allowed=allowed, main=main)
+    return with_pictures(script, segments, ku_id=ku_id, allowed=allowed)
+
+
 # --------------------------------------------------------------------------
 # The whole step
 # --------------------------------------------------------------------------
+
+
+# --------------------------------------------------------------------------
+# The lines say what the pictures show
+# --------------------------------------------------------------------------
+# The writer narrates its own run of an algorithm, and its run can be wrong where the picture's is computed: in
+# runs/state-fix-1 bisection on 1, 3, 4, 7, 9, 11, 13, 15 for 11 compared 7, then 11, while the lines said "the
+# middle value is nine", then "the middle is thirteen, so we discard the right part". Lines like that name values on
+# screen and the right words, so no rule catches them. So before the voices start, one call reads each line beside
+# the sentence code computes from its picture (as code will draw it), and rewrites only the lines that contradict
+# it; each rewrite is kept only if the script still passes the dialogue checks.
+
+LINES_SYSTEM = """You check a short teaching video's lines against its pictures. Two characters talk; under each \
+line is a sentence saying what the picture does during it. Those sentences are computed from the animation itself, \
+so they are always right. The lines were written before the animation ran, so a line may be wrong about it.
+
+Rewrite a line only when it contradicts its picture or the pictures before it: it names a different value, middle, \
+front, order, count, swap or result than the picture shows, or describes a step the picture doesn't take, or skips \
+one it does. "The picture stays as it is" means the line can still talk about the picture before it. Leave every \
+other line exactly as it is.
+
+When you rewrite a line:
+  - keep its speaker's voice, its job and its length (within a few words). A question stays a question. A predict \
+line still asks without giving the answer (its picture's result shows in the next line on purpose). The peer's \
+wrong idea stays wrong: it is the misconception the next line corrects, and its picture is a ghost of that idea;
+  - keep any opener or slang it has, and add none;
+  - write numbers as words, as the lines do;
+  - talk about the idea, not the screen ("the middle is seven", never "the picture shows seven");
+  - if later lines build on the wrong fact, rewrite them too, so the story stays consistent.
+Return only the lines you rewrite, or none if every line fits its picture."""
+
+
+class _LineFix(BaseModel):
+    segment_index: int
+    beat: int = Field(description="1-based, within the segment")
+    line: str = Field(description="the rewritten line")
+
+
+class _LineFixes(BaseModel):
+    fixes: list[_LineFix]
+
+
+def _picture_sentences(script: TemplatedDialogueScript, allowed: set[str] | None) -> list[list[str]]:
+    """What each beat's picture shows, as code will draw it (reveals held back, still lines filled, problems code
+    can fix fixed), before the fix call."""
+    from animation_agent.visuals.calls import describe_script, script_segments
+    from animation_agent.visuals.normalize import fill_still, hold_reveals, normalize_script, point_beats
+
+    lines = [[b.narration for b in seg.beats] for seg in script.segments]
+    steps = [[(b.step, b.misconception) for b in seg.beats] for seg in script.segments]
+    segments, _ = hold_reveals(script_segments(script), steps, lines)
+    segments, _ = fill_still(segments, steps, lines)
+    segments = normalize_script(segments, lines, allowed, keep_text=point_beats(steps)).segments
+    return describe_script(segments)
+
+
+def match_lines(script: TemplatedDialogueScript, *, ku_id: str, model: str = DEFAULT_MODEL,
+                manifest: RunManifest | None = None, allowed: set[str] | None = None,
+                accept: Callable[[TemplatedDialogueScript], bool] = lambda s: True,
+                segments=None) -> TemplatedDialogueScript:
+    """The script with each line that contradicts its picture rewritten (one call). The picture is `segments`
+    (settle_picture's calls, as they render), or else what code alone would draw from the script's calls. A
+    rewrite is kept only if `accept` still passes the script and the line stays about as long."""
+    from animation_agent.visuals.calls import describe_script
+
+    said = _picture_sentences(script, allowed) if segments is None else describe_script(segments)
+    listing = []
+    for i, (seg, seg_said) in enumerate(zip(script.segments, said)):
+        if seg.drawn_by != "templates":
+            continue
+        listing.append(f"Segment {i} ({seg.phase}):")
+        for k, (b, picture) in enumerate(zip(seg.beats, seg_said), 1):
+            role = b.step + (", the wrong idea" if b.misconception else "")
+            listing.append(f"  beat {k} [{b.speaker}, {role}]: {b.narration}\n    picture: {picture}")
+    if not listing:
+        return script
+    try:
+        fixes = structured(schema=_LineFixes, content=[text_block("\n".join(listing))], system=LINES_SYSTEM,
+                           stage="storyboard_lines", ku_id=ku_id, model=model, max_tokens=4000, manifest=manifest)
+    except Exception as e:  # best effort: the lines as written still pass every check
+        print(f"[storyboard] {ku_id}: the line-matching call failed: {e}", file=sys.stderr, flush=True)
+        return script
+    for fix in fixes.fixes:
+        i, k, new = fix.segment_index, fix.beat - 1, " ".join(fix.line.split())
+        if not (0 <= i < len(script.segments) and 0 <= k < len(script.segments[i].beats)):
+            continue
+        old = script.segments[i].beats[k].narration
+        n_old, n_new = len(old.split()), len(new.split())
+        if new == old or not (0.7 * n_old - 2 <= n_new <= 1.3 * n_old + 2):
+            continue
+        data = script.model_dump(mode="json")
+        data["segments"][i]["beats"][k]["narration"] = new
+        candidate = TemplatedDialogueScript.model_validate(data)
+        if accept(candidate):
+            script = candidate
+            print(f"[storyboard] {ku_id}: segment {i} beat {k + 1}: matched the line to its picture: "
+                  f"{old!r} -> {new!r}", file=sys.stderr, flush=True)
+        else:
+            print(f"[storyboard] {ku_id}: segment {i} beat {k + 1}: kept the line (the rewrite fails the dialogue "
+                  f"checks): {new!r}", file=sys.stderr, flush=True)
+    return script
 
 
 # Where the lines and the picture disagree, only a new storyboard helps: the lines are final once they pass (the
@@ -496,6 +647,28 @@ def _over_limit(problem: str, script) -> bool:
     return problem.startswith("word_count=") and script.word_count > DIALOGUE_MAX_WORDS
 
 
+_PLAN = object()  # write_storyboard(example=...) not given: plan one
+
+
+def _traced(script: TemplatedDialogueScript, trace, ku_id: str):
+    """The script with the worked example's next_step calls expanded into its computed steps, and the problems
+    where the draft strayed from them (as checker problems, for the redo)."""
+    from animation_agent.visuals.calls import Problem, script_segments
+    from animation_agent.visuals.trace import apply_trace
+
+    if trace is None:
+        return script, []
+    segments, log, strays = apply_trace(script_segments(script), trace)
+    _log(ku_id, log + [f"off the worked example: {m}" for _, _, m in strays])
+    data = script.model_dump(mode="json")
+    for seg, draws in zip(data["segments"], segments):
+        if draws is not None:
+            for beat, d in zip(seg["beats"], draws):
+                beat["draw"] = d
+    return (TemplatedDialogueScript.model_validate(data),
+            [Problem(s, b, None, "off_trace", m) for s, b, m in strays])
+
+
 def _example(explainer: str, peer: str, level: int) -> str:
     from script_generation_agent.storyboard_example import render_example
 
@@ -513,10 +686,14 @@ def write_storyboard(
     on_lines_ready: Callable | None = None,
     writer_model: str = STORYBOARD_MODEL,
     picture: PicturePlan | None = None,
+    example=_PLAN,
 ) -> TemplatedDialogueScript:
     """A dialogue script with its template calls, from one storyboard call (on `writer_model`; `model` makes
-    the fix call and, when `picture` isn't given, the picture plan that picks the templates). `on_lines_ready` gets
-    the script as soon as its lines are final (before the calls are checked), so the voices can start."""
+    the fix call and, when `picture` isn't given, the picture plan that picks the templates). For a KU that steps
+    through an algorithm, `example` is its traced worked example (animation_agent.visuals.trace.Trace), planned
+    with one short call unless given (None: no trace). `on_lines_ready` gets
+    the script once its lines are final: after the picture is settled and the lines matched to it, so a fix to
+    the picture can't leave a recorded line contradicting it."""
     from script_generation_agent.script_writer import ScriptValidationError, gather_source_material, validate_dialogue
     from syllabyte_common.cast import load_cast
 
@@ -534,6 +711,11 @@ def write_storyboard(
         "Write the 5-segment CLT-bLM script for this Knowledge Unit now.",
         "Fill in the storyboard for this Knowledge Unit now: every beat's picture, then its line.")
     schema = storyboard_model(plan)
+    trace = plan_example(ku, picture, text_context, model=model, manifest=manifest) if example is _PLAN else example
+    if trace is not None:
+        from animation_agent.visuals.trace import trace_brief
+
+        prompt += trace_brief(trace)
 
     problems: list[str] = []
     feedback = ""
@@ -546,13 +728,14 @@ def write_storyboard(
         script = assemble(board, plan, ku)
         for line in fix_slang(script, plan, (cast.explainer.name, cast.peer.name)):
             print(f"[storyboard] {ku.id}: {line}", file=sys.stderr, flush=True)
+        script, off_trace = _traced(script, trace, ku.id)
         found = validate_dialogue(script)
         problems = [p for p in found if not _over_limit(p, script)]
         if len(problems) < len(found):
             print(f"[storyboard] {ku.id}: kept at {script.word_count} words, over the {DIALOGUE_MAX_WORDS}-word "
                   "limit", file=sys.stderr, flush=True)
         if not problems:
-            redo = _redo_problems(script, set(picture.templates)) if attempt == 0 else []
+            redo = off_trace + _redo_problems(script, set(picture.templates)) if attempt == 0 else []
             if not redo:
                 break
             first = script
@@ -569,11 +752,17 @@ def write_storyboard(
                     + ". Fix these.")
     else:
         raise ScriptValidationError(f"KU {ku.id}: {'; '.join(problems)}")
+    # The picture first, settled as it will render; then the lines matched to it; nothing changes either after.
+    allowed = set(picture.templates)
+    segments = settle_picture(script, ku_id=ku.id, model=model, manifest=manifest, system=system, allowed=allowed,
+                              main=picture.main, trace=trace)
+    script = match_lines(script, ku_id=ku.id, model=model, manifest=manifest, allowed=allowed, segments=segments,
+                         accept=lambda s: not [p for p in validate_dialogue(s) if not _over_limit(p, s)])
     if on_lines_ready is not None:
         on_lines_ready(script)
-    return finish(script, ku_id=ku.id, model=model, manifest=manifest, system=system,
-                  allowed=set(picture.templates), main=picture.main)
+    return with_pictures(script, segments, ku_id=ku.id, allowed=allowed)
 
 
-__all__ = ["BeatPlan", "SegmentPlan", "assemble", "finish", "fix_slang", "skeleton", "storyboard_model",
-           "write_storyboard", "DIALOGUE_MAX_WORDS", "DIALOGUE_MIN_WORDS"]
+__all__ = ["BeatPlan", "SegmentPlan", "assemble", "finish", "fix_slang", "match_lines", "mismatches",
+           "settle_picture", "skeleton", "with_pictures",
+           "storyboard_model", "write_storyboard", "DIALOGUE_MAX_WORDS", "DIALOGUE_MIN_WORDS"]

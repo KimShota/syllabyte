@@ -157,7 +157,7 @@ _KINDS = [
     ("calls; at most", "too_many_calls"), ("repeats the line", "echo"), ("only put text", "text_only"),
     ("only Notes", "notes_only"), ("the line says", "count"), ("names none of the", "unmentioned"),
     ("doesn't draw this idea", "wrong_template"), ("isn't on screen", "unshown_number"),
-    ("the line compares", "wrong_front"),
+    ("the line compares", "wrong_front"), ("but the line doesn't say so", "unsaid_change"),
 ]
 
 
@@ -335,6 +335,8 @@ def simulate_script(segments: list[list[list[str]] | None], lines: list[list[str
                     if not problem and seg_lines is not None and b <= len(seg_lines) and report:
                         if mention := _unmentioned(b, text, call, live, seg_lines[b - 1]):
                             flag(b, c, mention)
+                        elif unsaid := _unsaid_change(b, text, call, what, live, seg_lines[b - 1]):
+                            flag(b, c, unsaid)
                 except CallError as e:
                     problem, what = str(e), None
                 if problem:
@@ -453,6 +455,65 @@ _COMPARING = [re.compile(p) for p in (
 def _compared_pairs(line: str) -> list[tuple[float, float]]:
     text = " ".join(f"#{_fmt_num(t)}" if isinstance(t, float) else t for t in _number_tokens(line))
     return [(float(m[1]), float(m[2])) for p in _COMPARING for m in p.finditer(text)]
+
+
+# --------------------------------------------------------------------------
+# Every change of state is said by its line
+# --------------------------------------------------------------------------
+# The critic's state complaints after the line checks above (runs/still-fix-1, runs/course-test-2) were mostly the
+# picture changing on a line that says nothing of it: 15 turning green ("found") during a line about divide and
+# conquer, restore() putting the pointers back to the start while the line says one cell is left, a selection step
+# during a recap line. Of 74 state changes in those runs, 11 were like that.
+
+# A word for each change, if the line says no value of it.
+_CHANGE_WORDS = {
+    "swap": r"swap|switch|trade|carr|bubble|in place", "set_value": r"chang|becom|set|now|replac",
+    "bubble": r"swap|bubble|pass|largest|biggest|bigger|larger", "selection": r"smallest|minimum|select|swap",
+    "insertion": r"insert|left|place|slide|shift|moves", "scan": r"check|look|compar|next|cell",
+    "bisect": r"middle|mid\b|half|halves|halv|discard|throw|rule|left|right|side|becomes",
+    "found": r"found|match|there|got it|equals|is at|sits|in place|done", "restore": r"again|back|start|fresh|reset|restore|whole|now|new|another|try",
+    "grey_out": r"rule|discard|half|out|ignore|can't|cannot|not there|skip|in place|done", "split": r"split|half|halves",
+    "merge": r"merg|front|smaller|moves? down|cop(y|ies)|result|combin", "dfs": r"visit|go|next|neighbo|back|deep",
+    "bfs": r"level|distance|layer|neighbo|visit|ring",
+}
+STATE_CHANGES = {"swap", "set_value", "bubble_step", "bubble_pass", "selection_step", "insertion_step", "scan",
+                 "bisect_check", "bisect_discard", "bisect_step", "found", "restore", "grey_out", "split",
+                 "merge_step", "merge", "merge_level", "dfs_step", "bfs_level"}
+
+
+def _says_nodes(line: str, nodes: list[str]) -> bool:
+    words = re.findall(r"[A-Za-z0-9]+|[,.;:!?]", line)
+    for k, w in enumerate(words):
+        if w not in nodes and w.lower() not in nodes:
+            continue
+        if w.lower() not in ("a", "i"):
+            return True
+        nxt = words[k + 1] if k + 1 < len(words) else "."
+        prev = words[k - 1].lower() if k else ""
+        if nxt in ",.;:!?" or nxt.lower() in ("and", "to", "or", "then") or prev in ("from", "to", "at", "node",
+                                                                                     "vertex", "and"):
+            return True
+    return False
+
+
+def _unsaid_change(b: int, text: str, call: Call, what: str | None, live: dict[str, _Live], line: str) -> str | None:
+    """A call that changes a list's, a merge's or a search's state on a line that doesn't say it: it names no value
+    or node of the change and no word for it."""
+    if call.action not in STATE_CHANGES or not what:
+        return None
+    said = {t for t in _number_tokens(line) if isinstance(t, float)}
+    if said & {float(x) for x in re.findall(r"\d+(?:\.\d+)?", what)}:
+        return None
+    words = next((w for k, w in _CHANGE_WORDS.items() if call.action.startswith(k)), None)
+    if words and re.search(words, line, re.IGNORECASE):
+        return None
+    if call.template == "Graph" and call.target in live:
+        nodes = live[call.target].state["nodes"]
+        if _says_nodes(line, [n for n in nodes if re.search(rf"\b{re.escape(n)}\b", what)]):
+            return None
+    return (f"beat {b}, `{text}`: the picture changes ({what}) but the line doesn't say so; do this step in the "
+            "beat whose line talks about it (or leave the picture as it is here), so the picture never runs ahead "
+            "of the words")
 
 
 def live_after(segments: list[list[list[str]] | None]) -> dict[str, _Live]:

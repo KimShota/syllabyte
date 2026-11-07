@@ -274,13 +274,15 @@ def test_a_storyboard_whose_lines_and_picture_disagree_is_written_again(monkeypa
               example_board()]
 
     def fake(**kw):
+        if kw["stage"] == "storyboard_lines":
+            return storyboard._LineFixes(fixes=[])
         sent.append(kw["content"][0]["text"])
         return boards[len(sent) - 1]
 
     monkeypatch.setattr(storyboard, "structured", fake)
     monkeypatch.setattr("script_generation_agent.script_writer.gather_source_material", lambda c, k: ("slides", []))
     picture = PicturePlan(family="array_bars", also=[], reason="a list searched cell by cell")
-    script = storyboard.write_storyboard(KU, None, level=2, picture=picture)
+    script = storyboard.write_storyboard(KU, None, level=2, picture=picture, example=None)
     assert len(sent) == 2 and "lines and the pictures disagree" in sent[1] and "17" in sent[1]
     assert "seventeen" not in " ".join(b.narration for s in script.segments for b in s.beats)
 
@@ -293,7 +295,7 @@ def test_the_first_draft_is_kept_when_the_redo_breaks_the_dialogue(monkeypatch):
     calls = []
 
     def fake(**kw):
-        if kw["stage"] == "storyboard_fix":  # the line left over still goes to the fix call
+        if kw["stage"] in ("storyboard_fix", "storyboard_lines"):  # the line left over still goes to the fix call
             raise RuntimeError("no network in tests")
         calls.append(1)
         return first
@@ -304,7 +306,7 @@ def test_the_first_draft_is_kept_when_the_redo_breaks_the_dialogue(monkeypatch):
     monkeypatch.setattr(script_writer, "validate_dialogue",
                         lambda s: real(s) if len(calls) == 1 else ["segment 2 is too short"])
     picture = PicturePlan(family="array_bars", also=[], reason="a list searched cell by cell")
-    script = storyboard.write_storyboard(KU, None, level=2, picture=picture)
+    script = storyboard.write_storyboard(KU, None, level=2, picture=picture, example=None)
     assert len(calls) == 2 and "seventeen" in " ".join(b.narration for s in script.segments for b in s.beats)
 
 
@@ -358,3 +360,114 @@ def test_the_examples_never_keep_the_picture_on_a_point_line():
         script = storyboard.assemble(example_board(plan, level), plan, KU)
         steps = [[(b.step, b.misconception) for b in seg.beats] for seg in script.segments]
         assert still_beats(script_segments(script), steps) == [], level
+
+
+# --------------------------------------------------------------------------
+# Every change of state is said by its line
+# --------------------------------------------------------------------------
+
+
+def _unsaid(draws, lines):
+    return [p.beat for p in check_script([draws], [lines]) if p.kind == "unsaid_change"]
+
+
+def test_a_change_the_line_never_mentions_is_flagged():
+    # runs/still-fix-1: 15 turned green during a line about divide and conquer
+    draws = [['a = ArrayBars(values=[1, 7, 11, 15, 18])'], ['a.found(index=3)'], ['a.found(index=3)']]
+    lines = ["A sorted list.", "A smaller list, plus simple work.", "And fifteen is found at index three."]
+    assert _unsaid(draws, lines) == [2]
+
+
+@pytest.mark.parametrize("call, line", [
+    ("a.selection_step()", "The smallest, one, swaps to the front."),  # a value of the change
+    ("a.selection_step()", "Now pick the minimum and put it first."),  # a word for it
+    ("a.restore()", "Now search the same list for nine."),  # a fresh start
+    ("a.grey_out(start=2, end=3)", "Those cells can't hold it."),
+])
+def test_a_change_the_line_says_passes(call, line):
+    draws = [['a = ArrayBars(values=[4, 1, 9, 7])'], [call]]
+    assert _unsaid(draws, ["A list.", line]) == []
+
+
+def test_a_graph_step_is_said_by_naming_its_nodes():
+    draws = [['g = Graph(nodes=["a", "b", "c"], edges=[["a", "b"], ["b", "c"]])'], ['g.dfs_step(start="a")'],
+             ['g.dfs_step(start="a")']]
+    lines = ["A small graph.", "We start the search at a.", "It all seems simple."]
+    assert _unsaid(draws, lines) == [3]
+
+
+def test_an_unsaid_change_goes_to_the_fix_call_and_is_never_dropped(monkeypatch):
+    from script_generation_agent import storyboard
+    from test_storyboard import KU, example_board
+
+    sent = []
+
+    def fake(**kw):
+        sent.append(kw["content"][0]["text"])
+        raise RuntimeError("no network in tests")
+
+    monkeypatch.setattr(storyboard, "structured", fake)
+    plan = storyboard.skeleton(2)
+    board = example_board(plan)
+    board.end.b2_explainer_check.draw = ["lst.found(index=0)"]  # "Exactly, and in the worst case ..." says no 4
+    script = storyboard.finish(storyboard.assemble(board, plan, KU), ku_id="ku-x")
+    assert sent and "the picture changes" in sent[0]
+    assert script.segments[4].beats[1].draw == ["lst.found(index=0)"]  # kept: dropping a step changes what follows
+
+
+# --------------------------------------------------------------------------
+# The lines say what the pictures show
+# --------------------------------------------------------------------------
+
+
+def _example_script():
+    from script_generation_agent import storyboard
+    from test_storyboard import KU, example_board
+
+    plan = storyboard.skeleton(2)
+    return storyboard.assemble(example_board(plan), plan, KU)
+
+
+def test_each_line_is_read_beside_what_its_picture_computes(monkeypatch):
+    from script_generation_agent import storyboard
+
+    sent = []
+
+    def fake(**kw):
+        sent.append((kw["stage"], kw["content"][0]["text"]))
+        return storyboard._LineFixes(fixes=[])
+
+    monkeypatch.setattr(storyboard, "structured", fake)
+    storyboard.match_lines(_example_script(), ku_id="ku-x")
+    stage, listing = sent[0]
+    assert stage == "storyboard_lines"
+    assert "beat 2 [peer, answer, the wrong idea]" in listing  # the wrong idea is marked, so it stays wrong
+    assert "picture: The cell holding 7 turns green: found." in listing  # computed from the calls
+
+
+def test_a_line_that_contradicts_its_picture_is_rewritten_if_it_still_passes(monkeypatch):
+    from script_generation_agent import storyboard
+
+    old = "Right, that took four checks: one for each cell up to the match."
+    fixes = [storyboard._LineFix(segment_index=2, beat=5, line="Right, seven matched on the fourth check, cell by cell."),
+             storyboard._LineFix(segment_index=3, beat=6, line="Yes, " + "six " * 40),  # far too long
+             storyboard._LineFix(segment_index=4, beat=1, line="So it checks each cell once, in order.")]
+    monkeypatch.setattr(storyboard, "structured", lambda **kw: storyboard._LineFixes(fixes=fixes))
+    script = _example_script()
+    assert script.segments[2].beats[4].narration == old
+    out = storyboard.match_lines(script, ku_id="ku-x", accept=lambda s: "once, in order" not in s.segments[4]
+                                 .beats[0].narration)  # a rewrite the dialogue checks reject
+    assert out.segments[2].beats[4].narration.startswith("Right, seven matched on the fourth check")
+    assert out.segments[3].beats[5].narration == script.segments[3].beats[5].narration
+    assert out.segments[4].beats[0].narration == script.segments[4].beats[0].narration
+
+
+def test_a_failed_line_call_keeps_the_lines(monkeypatch):
+    from script_generation_agent import storyboard
+
+    def broken(**kw):
+        raise RuntimeError("no network in tests")
+
+    monkeypatch.setattr(storyboard, "structured", broken)
+    script = _example_script()
+    assert storyboard.match_lines(script, ku_id="ku-x") is script

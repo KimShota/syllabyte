@@ -187,6 +187,8 @@ def test_write_storyboard_is_one_call(monkeypatch):
 
     def fake(**kw):
         stages.append(kw["stage"])
+        if kw["stage"] == "storyboard_lines":  # every line of the example fits its picture
+            return storyboard._LineFixes(fixes=[])
         assert "Fill in the storyboard" in kw["content"][0]["text"] and kw["effort"] == "medium"
         assert kw["model"] == "claude-sonnet-5-5"
         return example_board()
@@ -194,8 +196,9 @@ def test_write_storyboard_is_one_call(monkeypatch):
     monkeypatch.setattr(storyboard, "structured", fake)
     monkeypatch.setattr("script_generation_agent.script_writer.gather_source_material", lambda c, k: ("slides", []))
     picture = PicturePlan(family="array_bars", also=[], reason="a list searched cell by cell")
-    script = storyboard.write_storyboard(KU, None, level=2, on_lines_ready=ready.append, picture=picture)
-    assert stages == ["storyboard_l2"] and len(ready) == 1
+    script = storyboard.write_storyboard(KU, None, level=2, on_lines_ready=ready.append, picture=picture,
+                                         example=None)
+    assert stages == ["storyboard_l2", "storyboard_lines"] and len(ready) == 1
     assert script.visuals == "templates" and all(s.drawn_by == "templates" for s in script.segments)
     assert script.segments[0].beats[0].visual.startswith("A row of 6 blue cells")
 

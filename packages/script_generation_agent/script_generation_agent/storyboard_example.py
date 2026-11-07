@@ -71,7 +71,7 @@ EXAMPLE = {
          "Six checks, one per cell, because one is at the very end."),
         ("b6_explainer_build",
          ["lst.found(index=5)"],
-         "Yes, six checks for six cells: the worst case looks at every cell."),
+         "Yes, one is found at the sixth check: the worst case looks at every cell."),
     ],
     "end": [
         ("b1_peer_check",
@@ -190,7 +190,7 @@ EXAMPLE_L3 = {
          "So one goes all the way to the front: it's smaller than all of them."),
         ("b5_explainer_build",
          ["bars.insertion_step()"],
-         "Right: comparisons count how far values travel, so the input's order sets the cost."),
+         "Right: three passes two larger values, so the input's order sets the comparisons."),
     ],
     "deliver_2": [
         ("b1_peer_question",
@@ -218,8 +218,8 @@ EXAMPLE_L3 = {
          ["bars.insertion_step()"],
          "So insertion sort's cost tracks how far its input is from sorted."),
         ("b2_explainer_check",
-         ["bars.insertion_step()"],
-         "Yes, which is why it suits data that is already nearly in order."),
+         ['bars.highlight(indices=[0, 1, 2, 3, 4], colour="GOLD")'],
+         "Yes: it suits nearly sorted data, and a reversed list like this one costs the most."),
     ],
 }
 

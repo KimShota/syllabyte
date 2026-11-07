@@ -102,4 +102,69 @@ def plan_picture(ku: KnowledgeUnit, *, model: str = DEFAULT_MODEL, manifest: Run
     return plan
 
 
-__all__ = ["PicturePlan", "plan_picture"]
+# --------------------------------------------------------------------------
+# The worked example, for a KU that steps through an algorithm (animation_agent.visuals.trace)
+# --------------------------------------------------------------------------
+
+# The families whose main template runs an algorithm code can trace.
+TRACED_FAMILIES = ("array_bars", "merge_sort")
+
+EXAMPLE_SYSTEM = """\
+You pick the worked example for a short educational video (about a minute). Code will run the algorithm on it \
+step by step, and the video narrates those steps, so pick the algorithm the video is about and an example small \
+enough to show.
+
+algorithm: the one the video runs step by step on the example: linear_search, bisection (binary search), \
+bubble_sort, selection_sort, insertion_sort, merge_sort, merge (two sorted lists merged into one), or none when \
+the idea isn't one of these run on a list (e.g. indexing, pointers, a sort's cost discussed in words, a \
+comparison of several algorithms, or any other algorithm).
+
+The example: use the slides' own example if it fits; else make one up. 4-8 whole numbers from 0 to 99, at most \
+7 if any has two digits (one-digit numbers are easiest to follow). Bisection needs the values sorted; pick a \
+target it takes at least three checks to find (or one that isn't there, if the idea is about a failed search). \
+A linear search's target sits a few cells in, not first. A sort's values start out of order, so every step \
+does something. merge takes `runs`: two sorted lists, 2-8 numbers in all."""
+
+
+def _example_key(ku: KnowledgeUnit, slides: str) -> str:
+    raw = json.dumps([ku.title, ku.summary, ku.visual_idea, slides[:4000], EXAMPLE_SYSTEM])
+    return f"example:{ku.id}:{hashlib.sha256(raw.encode()).hexdigest()[:12]}"
+
+
+def plan_example(ku: KnowledgeUnit, plan: PicturePlan, slides: str, *, model: str = DEFAULT_MODEL,
+                 manifest: RunManifest | None = None, use_cache: bool = True):
+    """The KU's traced worked example (animation_agent.visuals.trace.Trace), or None when its picture doesn't
+    step through an algorithm code can trace. One short call, cached like the picture plan."""
+    from animation_agent.visuals.trace import Example, build_trace
+
+    if plan.family not in TRACED_FAMILIES:
+        return None
+    key = _example_key(ku, slides)
+    example = None
+    if use_cache and (hit := _load().get(key)):
+        example = Example.model_validate(hit)
+    if example is None:
+        listing = (f"title: {ku.title}\nsummary: {ku.summary[:500]}\nplanned visual: {ku.visual_idea}\n\n"
+                   f"slides:\n{slides[:4000]}")
+        try:
+            example = structured(schema=Example, content=[text_block(listing)], system=EXAMPLE_SYSTEM,
+                                 stage="example_plan", ku_id=ku.id, model=model, max_tokens=1500,
+                                 manifest=manifest)
+        except Exception as e:  # best effort: without an example the writer calls the steps, as before
+            print(f"[example_plan] {ku.id}: the call failed: {e}", file=sys.stderr, flush=True)
+            return None
+        with _LOCK:
+            cache = _load()
+            cache[key] = example.model_dump()
+            CACHE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = CACHE.with_suffix(f".{os.getpid()}.tmp")
+            tmp.write_text(json.dumps(cache, indent=1))
+            tmp.replace(CACHE)
+    trace = build_trace(example)
+    print(f"[example_plan] {ku.id}: {example.algorithm} {example.values or example.runs}"
+          + (f" for {example.target}" if example.target is not None else "")
+          + (f": {len(trace.steps)} steps" if trace else ": not traced"), file=sys.stderr, flush=True)
+    return trace
+
+
+__all__ = ["PicturePlan", "TRACED_FAMILIES", "plan_example", "plan_picture"]

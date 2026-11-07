@@ -224,3 +224,56 @@ complaints 6 to 3 (two of them on question or predict lines), visual alignment u
 5). The fix call mostly adds highlights, which are honest but weak; a `replay()` for recap lines is the next step if
 this matters. What holds the scores down now is the line and the picture disagreeing about state (bisection: found
 shown early, pointers reset while the line says "one cell left", the counter at 2 while the line says three checks).
+
+### Every change of state is said by its line (2026-11-07)
+
+After the checks above, the critic's state complaints were mostly the picture changing on a line that says nothing of
+it: bisection's 15 turning green during "a smaller list, plus simple work", `restore()` putting the pointers back to
+the start during a recap, a selection step under "at the i'th step the first i are sorted". Lines that state the
+state outright ("three checks", "mid is seven", "two cells left") are rare (14, 5 and 1 lines in 59 scripts), so
+checking those claims would catch little; checking the changes catches what the critic saw.
+
+| | Now |
+|---|---|
+| A call that changes a list's, a merge's or a search's state (a sort, merge or search step, found, scan, grey_out, restore, swap, set_value, split) on a line that names no value or node of the change and no word for it | problem `unsaid_change` for the fix call (lines final: move the step to the line that says it) |
+| Left after the fix call | kept and logged, not dropped: dropping a step would change every state after it |
+| Worked examples | three lines tripped it (a found, an insertion step, a recap running another step) and were rewritten |
+
+Over the 59 finished scripts: 55 changes in 15 videos (most in course-test-1, before the picture plan); in the 17
+videos since, 8 in 4 videos, each one the critic had also marked down.
+
+### The picture first, then the lines; worked examples traced by code (2026-11-07)
+
+Across five runs of the bisection and selection-sort videos (`runs/course-test-1` .. `runs/lines-fix-1`) each fix
+did what it targeted, but visual alignment stayed at 3-5: the lines were matched to the picture, then the fix call
+changed the picture after them, and the writer's own plan of the algorithm's steps was incoherent (a search
+restarted, a target changed half way, a hand-made swap inside a computed sort).
+
+| | Before | Now |
+|---|---|---|
+| Order | storyboard, match lines, voices start, then code fixes and the fix call change the picture | storyboard, code fixes and the fix call (`settle_picture`), match lines to that picture, voices start, nothing changes either (`with_pictures`) |
+| A KU on linear search, bisection, a bubble, selection or insertion sort, merge sort or a merge | the writer chose every step call | one short call picks the example (`picture_plan.plan_example`, cached), code computes every step (`visuals/trace.py`), the writer is shown them as numbered sentences and shows them with `name.next_step()` |
+| A step call of the writer's own on the example, or a next_step past the last step | rendered | brought onto the trace and reported; a first draft with any is written again |
+| The fix call | could run, restart or rewind the example | told not to; code puts the example's steps back as they were (`trace.keep_steps`) |
+| Measure | the critic only | also `lines vs picture: N mismatches` logged per video (`unshown_number`, `wrong_front`, `unsaid_change`) |
+
+The mismatch count is weak on its own: the state-fix-1 bisection video's lines named the wrong middles ("nine",
+"thirteen") and it counted 0, since 9 and 13 are on screen. It catches numbers and changes, not wrong claims about
+values that are shown.
+
+Measured on the same two KUs (L2), one video each, so within the critic's noise for anything under about 2 points:
+
+| Run | Bisection: all four scores (VA last) | Selection sort | Mismatches (bisection, selection) | Cost |
+|---|---|---|---|---|
+| `runs/lines-fix-1` (before) | 4, 4, 5, 3 | 5, 4, 6, 4 | 2, 0 | |
+| `runs/trace-fix-1` (both steps, fix call unguarded) | 4, 5, 5, 3 | 6, 6, 7, 4 | 4, 0 | $0.22 |
+| `runs/trace-fix-2` (fix call kept off the steps) | 6, 6, 6, 5 | 5, 5, 5, 4 | 1, 0 | $0.21 |
+
+In trace-fix-1 the writer's bisection followed the trace, then the fix call (asked to make text-only beats "take a
+step") ran two steps of its own in the objective and restarted the search twice, and the line call rewrote right
+lines to fit; hence `keep_steps`. In trace-fix-2 every bisection line names the middle the picture compares (21,
+then 35, then 42): the first of the six runs to do so, and its first visual alignment above 4. Selection sort's
+steps were right in both; what the critic marks down there is the writer's own highlights (an unsorted 5, 2, 8 turned
+green under the objective, twice; the predict line highlighting its answer; a colour outside the key) and a line
+that corrects itself ("the last four... I mean the last three"). Those are the next thing to check in code: green is
+the template's colour for sorted and found, so a highlight may not paint it on cells that aren't.
