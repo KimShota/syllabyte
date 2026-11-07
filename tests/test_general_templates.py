@@ -191,3 +191,42 @@ def test_a_five_by_five_grid_of_decimals_fits_and_a_polar_cell_is_computed():
     assert "no row_labels" in check_segment([[labelled]])[0]  # "-0.4" is 0.63 wide, a sixth column leaves 0.57
     out = said([PLOT], ['p.sector(r_from=1, r_to=1.5, t_from=0.5, t_to=1.0, label="dA")'])
     assert "sides are dr = 0.5 and an arc r dtheta = 0.62 long, its area 0.31" in out[1]
+
+
+def test_the_writer_is_told_to_draw_what_the_lines_name_and_let_code_compute():
+    from script_generation_agent.prompts import storyboard_system_prompt
+
+    system = storyboard_system_prompt(2, None, explainer="P", peer="S", lexicon="-", example="",
+                                      templates=["BarChart", "EquationSteps", "Note"], family="series")
+    for rule in ("Plan the diagram from what the lines will name", "Never type a value code can compute",
+                 "at its real size", "The wrong idea is drawn as the wrong picture", "A line that works something out"):
+        assert rule in system, rule
+
+
+def test_a_polar_cell_drawn_again_is_relabelled_not_stacked():
+    import os
+
+    if not os.environ.get("SYLLABYTE_RENDER_TESTS"):
+        pytest.skip("set SYLLABYTE_RENDER_TESTS=1 to render")
+    import json
+    from pathlib import Path as _Path
+    from types import SimpleNamespace
+
+    from animation_agent.layout import BEATS_FILE
+    from animation_agent.renderer import _try_render
+    from animation_agent.visuals.scene_code import build_spec_scene
+
+    beats = [['plot = FunctionPlot(x_range=[-3, 3], y_range=[-3, 3], equal_scale=True)'],
+             ['plot.sector(r_from=1, r_to=1.5, t_from=0.6, t_to=1.0, label="dA")'],
+             ['plot.sector(r_from=1, r_to=1.5, t_from=0.6, t_to=1.0, label="cell")',
+              'plot.sector(r_from=2, r_to=2.5, t_from=0.6, t_to=1.0, label="far")'],
+             ['plot.sector(r_from=1, r_to=1.5, t_from=0.6, t_to=1.0, label="r=1")',
+              'plot.sector(r_from=2, r_to=2.5, t_from=0.6, t_to=1.0, label="r=2")']]
+    seg = SimpleNamespace(beats=[SimpleNamespace(narration="x", visual="y", draw=b) for b in beats])
+    tmp = _Path(os.environ.get("TMPDIR", "/tmp")) / "sector-render-test"
+    tmp.mkdir(parents=True, exist_ok=True)
+    (tmp / BEATS_FILE).write_text(json.dumps([2.0] * len(beats)))
+    ok, error, _, layout = _try_render(tmp, build_spec_scene(seg, "Seg0"), "Seg0", "low", len(beats), 2.0 * len(beats),
+                                       check_formulas=False, frame="dialogue")
+    assert ok, error
+    assert layout.findings == [], layout.findings

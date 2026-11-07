@@ -342,3 +342,26 @@ the same geometry the drawing uses; boxes round a `circle` for a loop of up to 5
 off past 8, said in the sentence); bar numbers staggered when they collide; the title dropped its y label when both
 don't fit; `BarChart.series` builds bars from a formula (so a discounted or geometric sequence is computed); and
 `FunctionPlot.sector` shades a polar cell with its sides and area computed.
+
+Second videos (`runs/general-2`, the four KUs the fixes touched, $0.53): visual alignment polar 3 -> 5, MDP 5 -> 6,
+gridworld 5 -> 5 (now the full 5x5 grid), discounted return 4 -> 4 (now computed with `series`, 8, 4, 2, 1).
+
+Then (2026-11-07):
+- FunctionPlot labels (named points, dot_t, sector) keep clear of every word on the plot and of the other cells,
+  trying eight sides and then further out; a sector drawn again with the same bounds is relabelled, not stacked
+  (one cell had been drawn four times, its labels piling up, "far" landing on the near cell).
+- The writer's prompt gets "Using the picture well", from the critic's picture complaints in these ten videos: plan
+  the diagram from what the lines will name (the reward and next state of a loop, r and theta); label on the
+  diagram what the line measures; let code compute (series, cumulative, normalize, fill_next, feed, dot_t,
+  sector), never type a value code can compute; use the slide's example at its real size; start the picture where
+  the lines start; draw a thing once and keep acting on it; draw the wrong idea as the wrong picture; write out a
+  line that works something out.
+
+Third videos (`runs/general-3`, all six KUs, with the prompt rules, $0.83): visual alignment mean 4.0 -> 4.5, all four
+5.25 -> 5.5 against the first run (within the critic's noise). Its renders showed a drawing bug: a cell emptied and
+filled again, or bars that left their numbers off, morphed a text into nothing, which stayed on screen at font size
+0 (34 findings in one video). `Template.morph` now uses `become` only between mobjects with the same parts, else
+fades one out and the other in (Table, BarChart, NumberLine points); the Graph marker sits outside a box's corner.
+What holds the scores now is the writer's plan of the picture (a 3-box loop for a trajectory that runs on, all 13
+bars lit during a question); the next step is a worked example per new template in the prompt (every Level 2 KU
+sees the same linear-search example now).

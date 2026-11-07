@@ -1558,7 +1558,8 @@ FUNCTION_PLOT = TemplateSpec(
                                          f"{_num(a.t_to)}, is drawn in {a.colour.lower()}"),
         "sector": ActionSpec("Shade a polar cell: between radii r_from and r_to and angles t_from and t_to (a pie "
                              "slice from r_from = 0); its sides and area are computed (area = (r_to^2 - r_from^2) / 2 "
-                             "x dtheta).", SectorArgs, _check_sector, _said_sector),
+                             "x dtheta). The same cell drawn again only changes its label.", SectorArgs,
+                             _check_sector, _said_sector),
         "dot_t": ActionSpec("A dot on a parametric or polar curve at parameter t (computed).", DotTArgs, _check_dot_t,
                             lambda s, a: "a dot on {} at t = {}, the point ({}, {})".format(
                                 a.curve, _num(a.t), *(_num(v) for v in _path_point(s, a.curve, a.t)))),

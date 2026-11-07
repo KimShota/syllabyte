@@ -118,13 +118,15 @@ class NumberLine(Template):
         where = self._name_pos(name, x)
         dot = Dot(self.x2p(x), radius=DOT_R, color=colour(col)).set_z_index(2)
         label = text(name, MIN_FONT, colour(col)).move_to(where)
-        self.points[name] = {"x": x, "col": col, "dot": dot, "label": label, "x_screen": where[0], "y": where[1],
-                             "w": label.width}
+        entry = {"x": x, "col": col, "dot": dot, "label": label, "x_screen": where[0], "y": where[1],
+                 "w": label.width}
+        self.points[name] = entry
         if old is None:
             return self.add(dot, label)
-        self.group.remove(old["dot"], old["label"])
-        self.group.add(dot, label)
-        return [old["dot"].animate.become(dot), old["label"].animate.become(label)]
+        # The mobjects on screen stay the ones tracked, so a later clear or move acts on what is shown.
+        dot_moves, entry["dot"] = self.morph(old["dot"], dot)
+        label_moves, entry["label"] = self.morph(old["label"], label)
+        return dot_moves + label_moves
 
     # ---- actions ----------------------------------------------------------
 

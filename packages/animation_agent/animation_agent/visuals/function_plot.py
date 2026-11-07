@@ -10,6 +10,8 @@ from __future__ import annotations
 import numpy as np
 from manim import (
     GREY_B,
+    MathTex,
+    Text,
     WHITE,
     Create,
     DashedLine,
@@ -120,6 +122,7 @@ class FunctionPlot(Template):
         y_name = text(y_name_t, MIN_FONT, WHITE)
         y_name.move_to([self.left - 0.07 - y_name.width / 2, (self.top + self.bottom) / 2, 0])
         labels = [x_lo, x_hi, y_hi, y_lo, y_name]
+        self.axis_labels = labels
         if x_name.get_left()[0] > x_lo.get_right()[0] + 0.05 and x_name.get_right()[0] < x_hi.get_left()[0] - 0.05:
             labels.append(x_name)
         return parts + labels
@@ -318,28 +321,46 @@ class FunctionPlot(Template):
         self._mark(*names)
         yield Step([GrowFromCenter(d) for d in dots] + [FadeIn(n) for n in names])
 
-    def _beside(self, label, p: np.ndarray, away_from: np.ndarray):
-        """The label next to the point p: on the side away from `away_from` if it fits there (clear of the tick
-        numbers and the note row, off the dot), else the next side round."""
+    def _words_on_screen(self) -> list:
+        """Every piece of text the plot shows: tick numbers, axis names, curve labels, marks' labels, the note."""
+        out = list(getattr(self, "axis_labels", []))
+        out += [c["label"] for c in self.curves.values()]
+        out += [m for m in self.marks if isinstance(m, Text | MathTex)]
+        return out + ([self.note_mob] if self.note_mob is not None else [])
+
+    def _beside(self, label, p: np.ndarray, away_from: np.ndarray, avoid: tuple = ()):
+        """The label next to the point p, clear of its dot and of every word already on the plot: first on the
+        side away from `away_from`, else the next side round, then a little further out. In runs/general-2 two
+        sectors at the same angles put "r=1" on top of "dA"."""
         d = p - away_from
         d = np.array([1.0, 0.6, 0.0]) if np.linalg.norm(d[:2]) < 1e-6 else d / np.linalg.norm(d)
         box = self.bounds
         lo_x, hi_x = self.left + 0.05, box.right
         lo_y, hi_y = self.bottom + 0.05, box.top - NOTE_ROW
+        others = [(o.get_left()[0], o.get_right()[0], o.get_bottom()[1], o.get_top()[1])
+                  for o in [*self._words_on_screen(), *avoid]]
+
+        def free() -> bool:
+            l, r, b, t = label.get_left()[0], label.get_right()[0], label.get_bottom()[1], label.get_top()[1]
+            off_dot = (abs(label.get_center()[0] - p[0]) > label.width / 2 + DOT_R * 1.4
+                       or abs(label.get_center()[1] - p[1]) > label.height / 2 + DOT_R * 1.4)
+            return off_dot and all(r < ol - 0.04 or l > orr + 0.04 or t < ob - 0.04 or b > ot + 0.04
+                                   for ol, orr, ob, ot in others)
+
         best = None
-        for turn in (0, 1, -1, 2, -2, 4):
-            a = turn * np.pi / 4
-            v = np.array([d[0] * np.cos(a) - d[1] * np.sin(a), d[0] * np.sin(a) + d[1] * np.cos(a), 0.0])
-            label.move_to(p + v * (0.14 + 0.5 * (abs(v[0]) * label.width + abs(v[1]) * label.height)))
-            dx = max(0.0, lo_x - label.get_left()[0]) - max(0.0, label.get_right()[0] - hi_x)
-            dy = max(0.0, lo_y - label.get_bottom()[1]) - max(0.0, label.get_top()[1] - hi_y)
-            label.shift(np.array([dx, dy, 0.0]))
-            clear = (abs(label.get_center()[0] - p[0]) > label.width / 2 + DOT_R * 1.4
-                     or abs(label.get_center()[1] - p[1]) > label.height / 2 + DOT_R * 1.4)
-            if clear and dx == 0 and dy == 0:
-                return label
-            if clear and best is None:
-                best = label.get_center().copy()
+        for reach in (1.0, 1.7, 2.4):
+            for turn in (0, 1, -1, 2, -2, 3, -3, 4):
+                a = turn * np.pi / 4
+                v = np.array([d[0] * np.cos(a) - d[1] * np.sin(a), d[0] * np.sin(a) + d[1] * np.cos(a), 0.0])
+                label.move_to(p + v * reach * (0.14 + 0.5 * (abs(v[0]) * label.width + abs(v[1]) * label.height)))
+                dx = max(0.0, lo_x - label.get_left()[0]) - max(0.0, label.get_right()[0] - hi_x)
+                dy = max(0.0, lo_y - label.get_bottom()[1]) - max(0.0, label.get_top()[1] - hi_y)
+                label.shift(np.array([dx, dy, 0.0]))
+                if free():
+                    if dx == 0 and dy == 0:
+                        return label
+                    if best is None:
+                        best = label.get_center().copy()
         if best is not None:
             label.move_to(best)
         return label
@@ -379,6 +400,16 @@ class FunctionPlot(Template):
         yield Step(self._path(a.name, "polar", a.r, None, a.t_from, a.t_to, a.colour))
 
     def sector(self, a) -> Steps:
+        """A shaded polar cell. The same cell drawn again is relabelled, not stacked (in runs/general-2 one cell
+        was drawn four times as "dA", "cell", "rΔθ" and "r=1", and the labels piled up round it)."""
+        key = (a.r_from, a.r_to, a.t_from, a.t_to)
+        self.sectors = getattr(self, "sectors", {})
+        anims = []
+        if key in self.sectors:
+            old = [m for m in self.sectors.pop(key) if m in self.marks]
+            for m in old:
+                self.marks.remove(m)
+            anims += self.drop(*old)
         ts = np.linspace(a.t_from, a.t_to, 40)
         outer = [self.c2p(a.r_to * np.cos(t), a.r_to * np.sin(t)) for t in ts]
         inner = [self.c2p(a.r_from * np.cos(t), a.r_from * np.sin(t)) for t in ts[::-1]]
@@ -389,9 +420,11 @@ class FunctionPlot(Template):
             mid_t = (a.t_from + a.t_to) / 2
             inner_p = self.c2p(a.r_from * np.cos(mid_t), a.r_from * np.sin(mid_t))
             outer_p = self.c2p(a.r_to * np.cos(mid_t), a.r_to * np.sin(mid_t))
-            mobs.append(self._beside(text(a.label, MIN_FONT, col), inner_p, outer_p))
+            shapes = tuple(m for ms in self.sectors.values() for m in ms[:1])  # keep off the other cells
+            mobs.append(self._beside(text(a.label, MIN_FONT, col), inner_p, outer_p, avoid=shapes))
         self._mark(*mobs)
-        yield Step([FadeIn(m) for m in mobs])
+        self.sectors[key] = mobs
+        yield Step(anims + [FadeIn(m) for m in mobs])
 
     def dot_t(self, a) -> Steps:
         kind, f1, f2 = self.curves[a.curve]["path"]
@@ -422,6 +455,7 @@ class FunctionPlot(Template):
     def clear(self, a) -> Steps:
         anims = self.drop(*self.marks, self.ghost_mob, self.note_mob)
         self.marks, self.ghost_mob, self.note_mob = [], None, None
+        self.sectors = {}
         if anims:
             yield Step(anims)
 

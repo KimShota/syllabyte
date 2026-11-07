@@ -94,7 +94,11 @@ class Table(Template):
         yield Step(anims)
 
     def _redraw(self, cells) -> list:
-        return [self.cells[r][c].animate.become(self._cell(r, c)) for r, c in cells]
+        anims = []
+        for r, c in cells:
+            moves, self.cells[r][c] = self.morph(self.cells[r][c], self._cell(r, c))
+            anims += moves
+        return anims
 
     def _arrows(self, to: tuple[int, int], frm: list) -> list:
         """Arrows from each cell in `frm` to `to`, edge to edge, replacing the last fill's arrows."""

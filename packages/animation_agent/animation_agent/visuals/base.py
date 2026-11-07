@@ -149,6 +149,13 @@ def fit_width(mob: VMobject, max_width: float) -> VMobject:
     return mob
 
 
+def same_parts(a: VMobject, b: VMobject) -> bool:
+    """Whether two mobjects have the same tree of parts, each part with points or each without."""
+    if len(a.submobjects) != len(b.submobjects) or (a.has_points() != b.has_points()):
+        return False
+    return all(same_parts(x, y) for x, y in zip(a.submobjects, b.submobjects))
+
+
 @dataclass
 class Step:
     anims: list[Animation]
@@ -202,6 +209,17 @@ class Template:
             self.group.remove(m)
             anims.append(FadeOut(m))
         return anims
+
+    def morph(self, old: VMobject, new: VMobject) -> tuple[list[Animation], VMobject]:
+        """Animations that turn `old` into `new`, and the mobject that is on screen afterwards. `become` when the
+        two have the same parts, so a bar grows and a cell recolours in place; else a fade out and in. Morphing
+        a part into nothing (a cell emptied, a bar's number left off) squeezes it to a point that stays on screen:
+        in runs/general-3 that left "8.8" and eight bar numbers at font size 0, black on black."""
+        if same_parts(old, new):
+            return [old.animate.become(new)], old
+        self.group.remove(old)
+        self.group.add(new)
+        return [FadeOut(old), FadeIn(new)], new
 
     def swap_in(self, old: VMobject, new: VMobject) -> None:
         """Replaces `old` with `new` at once (no animation): e.g. a formula rebuilt with a piece isolated."""

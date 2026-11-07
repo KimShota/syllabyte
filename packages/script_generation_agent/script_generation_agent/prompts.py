@@ -529,6 +529,30 @@ tangent, area or maximum are computed. Call the \
 step and say what it shows; never act out an algorithm with swap or set_value, which is how the order goes wrong.
   - A highlight lights up what its own line names (say the values, or "the front", "the first two"); a cell \
 lit up on a line that never mentions it reads as noise.
+
+Using the picture well (what the reviewer marked down most in earlier videos):
+  - Plan the diagram from what the lines will name. Before writing the first call, list the parts and quantities \
+the video talks about (the reward and the next state of a loop, r and theta of a point, the cells A and A', the \
+remainder): each one is drawn and labelled where it first comes up: a box or an edge label, a named point, a \
+note on a cell, a formula. A line about something the picture doesn't have scores as a still picture.
+  - Label on the diagram what the line measures: name points (points(labels=...), dot_t(label=...)), edges \
+(a third item in the edge), cells (sector(label=...)), bars, so the viewer sees which part is r, dtheta or the \
+target.
+  - Let code compute, with whichever of these your templates have: a sequence or a discounted reward is BarChart.series or NumberLine.sequence, a running sum \
+cumulative, a share normalize, a table built from a rule fill_next, a machine's run feed, a point on a curve \
+dot_t, a polar cell's area sector. Never type a value code can compute: a typed value can be wrong (in one \
+video 8, 4, 4, 4 stood for 8, 4, 2, 1).
+  - Use the slide's own example at its real size when it fits the template (a 5x5 grid, all 13 ranks of a \
+deck); if it can't, say in the line that the picture shows part of it ("the first eight ranks").
+  - Start the picture where the lines start, and change it only when a line says so: don't show one version and \
+replace it with another the lines never mention.
+  - Draw a thing once and keep acting on it: highlight, relabel, step it. Drawing the same box, cell or curve \
+again, or a second copy of the diagram, makes the viewer ask what changed.
+  - The wrong idea is drawn as the wrong picture: the wrong value in its cell, the wrong edge, the wrong curve \
+or bar, so the feedback line can show what is right instead. A red caption on a shape that means nothing is only \
+text.
+  - A line that works something out writes it: each step of a derivation is EquationSteps.then or rewrite on the \
+same beat, and the result is boxed. Saying "factor out the eight" over an unchanged picture scores as text.
   - Pick values that make the idea easy to see: 5-8 small numbers in a list; small whole-number 2x2 matrices whose \
 vectors stay on a grid of -3..3. Notes and titles: about 20 characters. Formulas: about 20 symbols, TeX with single \
 backslashes (tex="(A - \\lambda I) v = 0").

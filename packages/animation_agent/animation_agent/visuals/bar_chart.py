@@ -110,7 +110,8 @@ class BarChart(Template):
             self._fit_numbers()
         anims = []
         for i in range(len(self.labels)) if indices is None else indices:
-            anims.append(self.bars[i].animate.become(self._bar(i)))
+            moves, self.bars[i] = self.morph(self.bars[i], self._bar(i))
+            anims += moves
         return anims
 
     def _rescale_for(self, v: float) -> bool:

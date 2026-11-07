@@ -247,8 +247,8 @@ class Graph(Template):
     def _corner(self, n: str) -> np.ndarray:
         """Where the marker sits on a node: its top right corner, clear of the words."""
         hw, hh = self.half
-        if self.boxes:
-            return self.pos[n] + np.array([hw, hh, 0])
+        if self.boxes:  # just outside the top right corner, clear of words that run to the box's edge
+            return self.pos[n] + np.array([hw + MARKER_R * 0.5, hh + MARKER_R * 0.5, 0])
         return self.pos[n] + np.array([0.7, -0.7, 0]) * (self.r + MARKER_R)  # outside the circle, below right
 
     def _node_colour(self, n: str):
