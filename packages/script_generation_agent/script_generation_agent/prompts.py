@@ -481,11 +481,14 @@ like the viewer: curious, a bit sceptical, sometimes wrong, never laughed at. Th
 and then.
   - A beat marked "wrong idea" is a misconception a student of this course would really have, said with \
 confidence; the explainer's next feedback line says why it is wrong and what holds instead.
+  - Each line says its point once, and right: never a line that corrects itself ("the last four... wait, I mean \
+the last three"). A line narrates at most one step of an algorithm (one sort step, one merge step, one check of a \
+search with its discard): two steps in one line are too much to follow by ear.
   - Keep to each beat's word range: the whole script must come to {min_words}-{max_words} words.
   - Every segment cites the slides its lines come from (`source_refs`).
   - Give the video a `colour_key`: the 2-4 things its pictures show again and again, each with its own colour, \
 named the way the characters say them in one or two words ("eigenvector", "midpoint"). Use those colours in the \
-calls.
+calls, and no others but the fixed ones under Drawing.
 
 """
 
@@ -527,13 +530,14 @@ lit up on a line that never mentions it reads as noise.
   - Pick values that make the idea easy to see: 5-8 small numbers in a list; small whole-number 2x2 matrices whose \
 vectors stay on a grid of -3..3. Notes and titles: about 20 characters. Formulas: about 20 symbols, TeX with single \
 backslashes (tex="(A - \\lambda I) v = 0").
-  - Fixed colours: grey = ruled out, green = found, red dashed = a wrong idea, yellow = pointed at. Don't use them \
-for other meanings.
+  - Fixed colours: grey = ruled out, green = sorted or found, red dashed = a wrong idea, yellow = pointed at. Don't \
+use them for other meanings: a green highlight on cells the steps haven't sorted or found shows them as sorted, \
+and code drops it; a ghost is only for the wrong idea, and code turns any other into a plain highlight.
   - The "wrong idea" beat draws the wrong idea as a ghost (ArrayBars.ghost, LinearMap2D.ghost_vector) or a wrong \
 formula step (EquationSteps.then); the feedback line clears it, or crosses the step out (EquationSteps.cross_out) \
 and writes the right one.
-  - A question or predict line points at what is asked about without giving the answer away (highlight it, or \
-EquationSteps.cover); the line that answers shows the answer. A result shown during a question or predict line \
+  - A question or predict line points at what is asked about without giving the answer away (highlight the \
+candidates, never the one that answers, or EquationSteps.cover); the line that answers shows the answer. A result shown during a question or predict line \
 (a step of a sort, merge or search, a match found, a transform, an uncovered piece) is moved by code to the next \
 line that answers, so put it there yourself and write that line about it.
   - If no template can draw a segment's idea at all, leave its calls empty and write `sketches`: one sentence per \

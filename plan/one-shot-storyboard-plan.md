@@ -277,3 +277,27 @@ steps were right in both; what the critic marks down there is the writer's own h
 green under the objective, twice; the predict line highlighting its answer; a colour outside the key) and a line
 that corrects itself ("the last four... I mean the last three"). Those are the next thing to check in code: green is
 the template's colour for sorted and found, so a highlight may not paint it on cells that aren't.
+
+### Highlights that say what they show; lines that say it once (2026-11-07, branch `highlights-and-lines`)
+
+With the steps traced, what the critic still marked down in selection sort was the writer's own highlights and two
+muddled lines. Code rules now run on every list before and after the fix call (`visuals/highlights.py`):
+
+| Rule | Over the 66 earlier scripts |
+|---|---|
+| GREEN only on cells the steps sorted or found (`specs.green_cells`), else dropped; a list changed by hand with swap or set_value is left alone | 14 times in 8 videos (12 in course-test-1, before computed sorts; the other 3: an objective painting an unsorted 5, 2, 8 green) |
+| A question or predict line can't highlight the cell its answer step (in this segment or a later one) lands on | 7 in 6 |
+| A highlight of one or two cells in a colour outside the key takes the colour of the one key term its line names (never a false green) | 7 in 6 |
+| A ghost outside the wrong-idea line becomes a highlight of the same cells | 4 in 4 |
+| A line that corrects itself ("... wait, I mean ...") is marked for the line call, which must rewrite it; a rewrite that still does is refused | 2 in 2 |
+
+The writer is also told: green is sorted or found, no colours outside the key, a question highlights the candidates
+and never the answer, one algorithm step per line, no self-corrections. Lines showing two steps are logged.
+
+`runs/highlight-fix-1` (same two KUs and examples, $0.21): selection sort 5, 5, 5, 4 -> 6, 6, 7, 4: no false green,
+the predict line lights the candidates (8, 5, 9, 3) instead of its answer, no self-correction, one step per line;
+visual alignment unchanged, the critic now naming a hook question highlighting the minimum (caught since by the
+rule's look into later segments), a still objective (a recolour to green then dropped, fixed since), the pointer
+"i" left under the last cell, and an unexplained comparisons counter. Bisection unchanged at 6, 6, 6, 5: its
+complaints are a predict line naming the middle 35 while the check is held for the next line, the objective greying
+the left half before any comparison, and lo and mid drawn on the same cell at the end.

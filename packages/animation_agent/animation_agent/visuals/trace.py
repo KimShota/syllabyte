@@ -307,14 +307,16 @@ def trace_brief(trace: Trace) -> str:
     """The example as the writer is shown it: how to create it, and its steps in order."""
     ex = trace.example
     numbered = "\n".join(f"  {i}. {said}" for i, said in enumerate(trace.said, 1))
+    pair = (": a check and its discard may share one (`name.next_step(count=2)`)"
+            if ex.algorithm == "bisection" else ": a line can't follow two")
     target = f" for {ex.target}" if ex.target is not None else ""
     return f"""
 
 The worked example (code picked it and computed every step, so the steps below are exactly what the picture shows):
   {ex.algorithm.replace("_", " ")} on {trace.create.split(", style")[0].split("=", 1)[1]}{target}.
 Create it once as `name = {trace.template}({trace.create}, ...)`: choose the name and a title, keep these values. \
-Then show its steps only with `name.next_step()`: each call shows the next step below, in order \
-(`name.next_step(count=2)` shows two in one beat). Its steps:
+Then show its steps only with `name.next_step()`: each call shows the next step below, in order. One step per \
+line{pair}. Its steps:
 {numbered}
 You needn't show every step, but you can't skip or reorder them, and the example has no other step calls \
 ({", ".join(sorted(STEP_ACTIONS[trace.template]))} are not used on it) and isn't created again with other values. \

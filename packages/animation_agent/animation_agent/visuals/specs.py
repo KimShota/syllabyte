@@ -318,7 +318,7 @@ def _said_scan(state: dict, a) -> str:
 
 
 def _array_state(p: ArrayParams) -> dict:
-    return {"values": list(p.values), "pointers": set(), "bisect": None}
+    return {"values": list(p.values), "pointers": set(), "bisect": None, "found": set()}
 
 
 def _in_range(state: dict, *indices: int) -> str | None:
@@ -383,6 +383,7 @@ def _check_set_value(state: dict, a: SetValueArgs) -> str | None:
     if problem := _in_range(state, a.index):
         return problem
     state["values"][a.index] = a.value
+    state["edited"] = True  # changed by hand: code no longer knows which cells are in place
     return None
 
 
@@ -391,12 +392,43 @@ def _check_swap(state: dict, a: PairArgs) -> str | None:
         return problem
     v = state["values"]
     v[a.i], v[a.j] = v[a.j], v[a.i]
+    state["edited"] = True
     return None
 
 
 def _check_scan(state: dict, a: ScanArgs) -> str | None:
     state["pointers"].add("i")
-    return _in_range(state, a.index)
+    if problem := _in_range(state, a.index):
+        return problem
+    if a.target is not None and state["values"][a.index] == a.target:
+        state.setdefault("found", set()).add(a.index)
+    return None
+
+
+def _check_found(state: dict, a: IndexArgs) -> str | None:
+    if problem := _in_range(state, a.index):
+        return problem
+    state.setdefault("found", set()).add(a.index)
+    return None
+
+
+def green_cells(state: dict) -> set[int]:
+    """The cells the list's steps have turned green (sorted, or found): the only cells a GREEN highlight may
+    colour, since green is what sorted and found look like."""
+    n = len(state["values"])
+    out = set(state.get("found") or ())
+    b = state.get("bisect")
+    if b and b.get("last") and b["last"][3]:
+        out.add(b["last"][0])
+    st = state.get("sort")
+    if st:
+        if st["done"]:
+            out |= set(range(n))
+        elif st["kind"] == "selection":
+            out |= set(range(st["k"]))
+        elif st["kind"] == "bubble":
+            out |= set(range(st["end"] + 1, n))
+    return out
 
 
 # ---- Sorts, computed --------------------------------------------------------
@@ -606,7 +638,7 @@ ARRAY_BARS = TemplateSpec(
         "bisect_step": ActionSpec("bisect_check and bisect_discard in one line.", TargetArgs, _check_bisect_step,
                                   lambda s, a: f"{_said_bisect_check(s, a)}; {_said_bisect_discard(s, a)}",
                                   reveals=True),
-        "found": ActionSpec("Mark this cell green: found.", IndexArgs, lambda s, a: _in_range(s, a.index),
+        "found": ActionSpec("Mark this cell green: found.", IndexArgs, _check_found,
                             lambda s, a: f"{_cells(s, [a.index])} turns green: found", reveals=True),
         "ghost": ActionSpec("A wrong idea: dashed red outline around these cells, with the idea noted in red.",
                             GhostArgs, lambda s, a: _in_range(s, *a.indices),

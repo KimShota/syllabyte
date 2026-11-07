@@ -400,7 +400,9 @@ def settle_picture(script: TemplatedDialogueScript, *, ku_id: str, model: str = 
     """The storyboard's calls made safe to render, per segment and beat: code fixes (a result shown during a
     question or predict line moves to the line that answers; normalize), one fix call for what code can't fix
     (including a template the picture plan didn't choose, `allowed`, or its main template, `main`, never drawn),
-    then code drops whatever is still rejected. The fix call can't change the worked example's steps (`trace`,
+    then code drops whatever is still rejected. Before and after the fix call, highlights are made to say what
+    they show (visuals/highlights.py: green only on sorted or found cells, no answer shown during its question,
+    key colours, ghosts only for the wrong idea). The fix call can't change the worked example's steps (`trace`,
     animation_agent.visuals.trace): code puts them back as they were. This is the picture as it renders: nothing changes it after, so
     the lines can be matched to it (match_lines) before the voices start."""
     from animation_agent.visuals.calls import script_segments
@@ -411,6 +413,7 @@ def settle_picture(script: TemplatedDialogueScript, *, ku_id: str, model: str = 
         point_beats,
         still_problems,
     )
+    from animation_agent.visuals.highlights import fix_highlights
     from animation_agent.visuals.trace import FIX_NOTE, STEP_ACTIONS, example_name, keep_steps
 
     segments = script_segments(script)
@@ -423,9 +426,16 @@ def settle_picture(script: TemplatedDialogueScript, *, ku_id: str, model: str = 
         _log(ku_id, moved)
         return segs
 
+    key = {t.term: t.colour for t in script.colour_key}
+
+    def highlighted(segs):
+        segs, changed = fix_highlights(segs, steps, lines, key)
+        _log(ku_id, changed)
+        return segs
+
     # A line that makes a point changes the picture: code highlights the cells it names where it can, and a
     # note-only beat there goes to the fix call (to be drawn) instead of being cleared.
-    segments, filled = fill_still(held(segments), steps, lines)
+    segments, filled = fill_still(highlighted(held(segments)), steps, lines)
     _log(ku_id, filled)
     fixed = normalize_script(segments, lines, allowed, keep_text=point_beats(steps))
     _log(ku_id, fixed.log)
@@ -444,7 +454,7 @@ def settle_picture(script: TemplatedDialogueScript, *, ku_id: str, model: str = 
         if trace is not None:
             segments, kept = keep_steps(before, segments, trace)
             _log(ku_id, kept)
-        segments = normalize_script(held(segments), lines, allowed).segments
+        segments = normalize_script(highlighted(held(segments)), lines, allowed).segments
     return _drop_broken(segments, lines, allowed)
 
 
@@ -467,6 +477,20 @@ def mismatches(script: TemplatedDialogueScript, segments=None, allowed: set[str]
     return [p for p in check_script(segments, lines, allowed) if p.kind in MISMATCH_KINDS]
 
 
+def _two_steps(segments) -> list[tuple[int, int]]:
+    """(segment, 1-based beat) of each beat showing two or more results (a bisection check with its discard is
+    one)."""
+    from animation_agent.visuals.calls import _call_name, reveal_flags
+
+    out = []
+    for s, (draws, flags) in enumerate(zip(segments, reveal_flags(segments))):
+        for b, (calls, f) in enumerate(zip(draws or [], flags or []), 1):
+            names = [_call_name(c)[1] for c, hit in zip(calls, f) if hit]
+            if len([n for n in names if n != "bisect_check"]) >= 2:
+                out.append((s, b))
+    return out
+
+
 def with_pictures(script: TemplatedDialogueScript, segments, *, ku_id: str = "",
                   allowed: set[str] | None = None) -> TemplatedDialogueScript:
     """The script with these calls, and each drawn beat's `visual` written from them (what its calls show)."""
@@ -479,6 +503,11 @@ def with_pictures(script: TemplatedDialogueScript, segments, *, ku_id: str = "",
     _log(ku_id, [f"lines vs picture: {len(left)} mismatches"
                  + (" (" + "; ".join(f"segment {p.segment} beat {p.beat} {p.kind}" for p in left) + ")"
                     if left else "")])
+    if crowded := _two_steps(segments):
+        _log(ku_id, ["lines showing two steps: " + ", ".join(f"segment {i} beat {k}" for i, k in crowded)])
+    if muddled := [(i, k) for i, seg in enumerate(script.segments) for k, b in enumerate(seg.beats, 1)
+                   if self_corrects(b.narration)]:
+        _log(ku_id, ["lines that correct themselves: " + ", ".join(f"segment {i} beat {k}" for i, k in muddled)])
     if still := still_beats(segments, steps):
         _log(ku_id, [f"still picture on {len(still)} point-making lines: "
                      + ", ".join(f"segment {s} beat {b}" for s, b in still)])
@@ -521,7 +550,8 @@ LINES_SYSTEM = """You check a short teaching video's lines against its pictures.
 line is a sentence saying what the picture does during it. Those sentences are computed from the animation itself, \
 so they are always right. The lines were written before the animation ran, so a line may be wrong about it.
 
-Rewrite a line only when it contradicts its picture or the pictures before it: it names a different value, middle, \
+Rewrite a line when it is marked as correcting itself ("the last four... wait, I mean the last three"): say \
+the right thing once. Otherwise rewrite a line only when it contradicts its picture or the pictures before it: it names a different value, middle, \
 front, order, count, swap or result than the picture shows, or describes a step the picture doesn't take, or skips \
 one it does. "The picture stays as it is" means the line can still talk about the picture before it. Leave every \
 other line exactly as it is.
@@ -532,9 +562,22 @@ line still asks without giving the answer (its picture's result shows in the nex
 wrong idea stays wrong: it is the misconception the next line corrects, and its picture is a ghost of that idea;
   - keep any opener or slang it has, and add none;
   - write numbers as words, as the lines do;
+  - never correct yourself mid-line, and narrate at most one step of the picture;
   - talk about the idea, not the screen ("the middle is seven", never "the picture shows seven");
   - if later lines build on the wrong fact, rewrite them too, so the story stays consistent.
 Return only the lines you rewrite, or none if every line fits its picture."""
+
+
+# A line that corrects itself is hard to follow by ear: in runs/trace-fix-2 the writer's predict line asked about
+# "the last three cells, 5, 9 and 3... I mean 5, 9 and 8", and the line call, asked only to fix contradictions,
+# made it "the last four cells, 5, 9, 8... wait, I mean the last three". "Wait" alone is a casual opener ("Wait, so
+# why...?"), so it counts only after a trailing "...", or before "I mean"/"no"/"actually".
+_SELF_CORRECTION = re.compile(r"\bI mean\b|\.\.\.\s*(?:wait|no|sorry|actually|oops)\b|\bscratch that\b"
+                              r"|\b(?:wait|sorry|oops),?\s+(?:no|actually)\b", re.IGNORECASE)
+
+
+def self_corrects(line: str) -> bool:
+    return bool(_SELF_CORRECTION.search(line))
 
 
 class _LineFix(BaseModel):
@@ -578,7 +621,8 @@ def match_lines(script: TemplatedDialogueScript, *, ku_id: str, model: str = DEF
         listing.append(f"Segment {i} ({seg.phase}):")
         for k, (b, picture) in enumerate(zip(seg.beats, seg_said), 1):
             role = b.step + (", the wrong idea" if b.misconception else "")
-            listing.append(f"  beat {k} [{b.speaker}, {role}]: {b.narration}\n    picture: {picture}")
+            mark = " (corrects itself: rewrite it)" if self_corrects(b.narration) else ""
+            listing.append(f"  beat {k} [{b.speaker}, {role}]{mark}: {b.narration}\n    picture: {picture}")
     if not listing:
         return script
     try:
@@ -593,7 +637,7 @@ def match_lines(script: TemplatedDialogueScript, *, ku_id: str, model: str = DEF
             continue
         old = script.segments[i].beats[k].narration
         n_old, n_new = len(old.split()), len(new.split())
-        if new == old or not (0.7 * n_old - 2 <= n_new <= 1.3 * n_old + 2):
+        if new == old or not (0.7 * n_old - 2 <= n_new <= 1.3 * n_old + 2) or self_corrects(new):
             continue
         data = script.model_dump(mode="json")
         data["segments"][i]["beats"][k]["narration"] = new
