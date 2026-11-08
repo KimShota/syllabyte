@@ -3,10 +3,9 @@ import { setStatusBarHidden, setStatusBarStyle } from "expo-status-bar";
 import { FlatList, View } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { PlayerPage } from "./PlayerPage";
-import { api } from "@syllabyte/core/api/client";
 import { kuEyebrow } from "@/data/selectors";
 import type { Ku } from "@/data/types";
-import { usePrefs, useQuery, type Speed } from "@/state/app";
+import { usePrefs, type Speed } from "@/state/app";
 
 type FeedItem = { kind: "video"; ku: Ku } | { kind: "end" };
 
@@ -24,19 +23,15 @@ export function useDarkStatusBar() {
 }
 
 /**
- * A vertical swipe feed of full-screen videos: one page at a time, and only the page on screen plays. Speed and
- * captions carry from page to page; a quick check waiting for its answer stops the swiping. `end`, if given, is
+ * A vertical swipe feed of full-screen videos: one page at a time, and only the page on screen plays. Speed
+ * carries from page to page; a quick check waiting for its answer stops the swiping. `end`, if given, is
  * one more page after the last video.
  */
 export function VideoFeed({ kus, startIndex, end }: { kus: readonly Ku[]; startIndex: number; end?: ReactNode }) {
   const prefs = usePrefs();
-  const me = useQuery(() => api.getMe());
   const [height, setHeight] = useState(0);
   const [activeIndex, setActiveIndex] = useState(startIndex);
   const [speed, setSpeed] = useState<Speed>(prefs.speed);
-  // captions start from the student's setting; toggling them here is for this sitting only
-  const [captionsHere, setCaptions] = useState<boolean | null>(null);
-  const captions = captionsHere ?? me?.settings.captions ?? true;
   // the page on screen is waiting for its quick check to be answered
   const [blocked, setBlocked] = useState(false);
 
@@ -82,8 +77,6 @@ export function VideoFeed({ kus, startIndex, end }: { kus: readonly Ku[]; startI
                 active={index === activeIndex}
                 speed={speed}
                 onSpeed={setSpeed}
-                captions={captions}
-                onCaptions={setCaptions}
                 onBlockSwipe={setBlocked}
               />
             ) : (

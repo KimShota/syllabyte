@@ -25,7 +25,6 @@ export default function Profile() {
   useCourseVersion();
   const insets = useSafeAreaInsets();
   const { speed, photoUri } = usePrefs();
-  const captions = useQuery(() => api.getMe())?.settings.captions ?? true;
   // the study's "About you" questionnaire, for research participants: always here, whatever was put off on Home
   const aboutYou = useQuery(() => api.getBattery(ABOUT_YOU));
   const aboutYouStatus = !aboutYou ? null : aboutYou.submitted ? "Done" : Object.keys(aboutYou.answers).length ? "In progress" : "Not started";
@@ -89,9 +88,6 @@ export default function Profile() {
 
           <View style={styles.list}>
             <Group label="Academic Preferences" />
-            <Row icon="closed-caption" label="Captions on by default">
-              <Toggle value={captions} label="Captions on by default" onChange={(on) => void api.updateSettings({ captions: on })} />
-            </Row>
             <Row icon="speed" label="Playback speed default">
               <Pressable
                 accessibilityRole="button"
@@ -202,21 +198,6 @@ function Row({ icon, label, children, onPress, chevron }: { icon: IconName; labe
   );
 }
 
-function Toggle({ value, onChange, label }: { value: boolean; onChange: (v: boolean) => void; label: string }) {
-  return (
-    <Pressable
-      accessibilityRole="switch"
-      accessibilityLabel={label}
-      accessibilityState={{ checked: value }}
-      onPress={() => onChange(!value)}
-      hitSlop={8}
-      style={[styles.toggle, { backgroundColor: value ? colors.primaryDeep : colors.surfaceVariant }]}
-    >
-      <View style={[styles.thumb, { transform: [{ translateX: value ? 20 : 0 }] }]} />
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.surface },
   content: { paddingHorizontal: space.gutter, paddingTop: 8 },
@@ -243,8 +224,6 @@ const styles = StyleSheet.create({
   rowIcon: { width: 32, height: 32, borderRadius: radius.md, backgroundColor: colors.surfaceContainer, alignItems: "center", justifyContent: "center" },
   statusChip: { height: 28, paddingHorizontal: 10, marginRight: 4, borderRadius: radius.full, backgroundColor: colors.primaryTint, alignItems: "center", justifyContent: "center" },
   speedChip: { minWidth: 48, height: 32, paddingHorizontal: 12, borderRadius: radius.full, backgroundColor: colors.surfaceContainer, alignItems: "center", justifyContent: "center" },
-  toggle: { width: 48, height: 28, borderRadius: 14, padding: 4, justifyContent: "center" },
-  thumb: { width: 20, height: 20, borderRadius: 10, backgroundColor: colors.surfaceContainerLowest, ...shadow.card },
   signOut: {
     marginTop: 12,
     minHeight: 48,

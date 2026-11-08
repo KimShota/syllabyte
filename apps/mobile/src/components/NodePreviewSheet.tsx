@@ -8,7 +8,6 @@ import { precheckHref } from "./TaskCards";
 import { kuMinutes } from "@/data/selectors";
 import type { Ku, KuStatus } from "@/data/types";
 import type { PrecheckView } from "@syllabyte/core/types";
-import { toggleNotify, usePrefs } from "@/state/app";
 import { colors, fonts, radius } from "@/theme/tokens";
 import { lectureNumber } from "@/data/course";
 
@@ -17,7 +16,7 @@ function slideSpan(ku: Ku) {
   return a === b ? `slide ${a}` : `slides ${a}–${b}`;
 }
 
-/** Tapping a node on the lecture roadmap: what it is, and watch / review / get notified. */
+/** Tapping a node on the lecture roadmap: what it is, and watch or review when ready. */
 export function NodePreviewSheet({
   ku,
   status,
@@ -30,7 +29,6 @@ export function NodePreviewSheet({
   check: PrecheckView | null;
   onClose: () => void;
 }) {
-  const prefs = usePrefs();
   const visible = !!ku && !!status;
 
   const locked = !!check && !!ku && ku.lectureN === check.lecture_n && status !== "drafting";
@@ -52,24 +50,14 @@ export function NodePreviewSheet({
         action = <Button label="Review Concept" icon="replay" kind="success" onPress={play} style={styles.action} />;
         break;
       case "drafting": {
-        const on = prefs.notifyKuIds.includes(ku.id);
         badge = { text: "Being made from slides", bg: colors.surfaceContainerHigh, fg: colors.onSurfaceVariant };
         description = `SyllaByte is turning ${slideSpan(ku)} into a short video. It will appear here when it's ready.`;
-        action = (
-          <Button
-            label={on ? "We'll Notify You" : "Notify When Ready"}
-            icon={on ? "notifications-active" : "notifications-none"}
-            kind="tonal"
-            onPress={() => toggleNotify(ku.id)}
-            style={styles.action}
-          />
-        );
         break;
       }
       case "next":
       case "available":
         badge = { text: status === "next" ? "Recommended Next" : "Available Now", bg: colors.primaryFixed, fg: colors.onPrimaryFixed };
-        description = `${ku.title}. A ${kuMinutes(ku)}-minute video from ${slideSpan(ku)}, with captions and a transcript.`;
+        description = `${ku.title}. A ${kuMinutes(ku)}-minute video from ${slideSpan(ku)}.`;
         action = <Button label={`Watch Video (${kuMinutes(ku)} min)`} icon="play-arrow" onPress={play} style={styles.action} />;
         break;
     }
@@ -99,7 +87,7 @@ export function NodePreviewSheet({
           <T variant="body" color={colors.onSurfaceVariant}>
             {description}
           </T>
-          <View style={styles.actions}>{action}</View>
+          {action ? <View style={styles.actions}>{action}</View> : null}
         </View>
       ) : null}
     </Sheet>

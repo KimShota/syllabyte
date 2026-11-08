@@ -10,13 +10,12 @@ import { Icon, type IconName } from "../Icon";
 import { T } from "../T";
 import { QuickCheck } from "./QuickCheck";
 import { SceneView } from "./SceneView";
-import { StudySheet, activeLine, type StudyMode } from "./StudySheet";
 import { useAutoHide } from "./useAutoHide";
 import { usePlayback } from "./usePlayback";
 import { api } from "@syllabyte/core/api/client";
 import { track } from "@syllabyte/core/events";
 import { formatTime } from "@/data/selectors";
-import type { Ku, Note } from "@/data/types";
+import type { Ku } from "@/data/types";
 import { SPEEDS, speedLabel, useQuery, type Speed } from "@/state/app";
 import { colors, fonts, radius, shadow } from "@/theme/tokens";
 
@@ -30,8 +29,6 @@ export function PlayerPage({
   active,
   speed,
   onSpeed,
-  captions,
-  onCaptions,
   onBlockSwipe,
 }: {
   ku: Ku;
@@ -40,13 +37,10 @@ export function PlayerPage({
   active: boolean;
   speed: Speed;
   onSpeed: (s: Speed) => void;
-  captions: boolean;
-  onCaptions: (on: boolean) => void;
   /** the quick check is waiting for an answer: the feed must not swipe away */
   onBlockSwipe: (blocked: boolean) => void;
 }) {
   const insets = useSafeAreaInsets();
-  const [sheet, setSheet] = useState<StudyMode | null>(null);
   const [speedOpen, setSpeedOpen] = useState(false);
   const videoId = ku.videoId;
   const variant = useQuery(async () => (videoId ? api.getVariant(videoId) : null), [videoId]);
@@ -54,7 +48,7 @@ export function PlayerPage({
   const [check, setCheck] = useState<"waiting" | "open" | "closed">("waiting");
   const [answered, setAnswered] = useState(false);
   const checkOpen = check === "open";
-  const pb = usePlayback(ku, { active, hold: sheet !== null || checkOpen, rate: speed });
+  const pb = usePlayback(ku, { active, hold: checkOpen, rate: speed });
   const cp = variant?.video.checkpoint;
   const checkDue = !!variant && !variant.checkpoint_answered && !!cp;
   if (check === "waiting" && checkDue && pb.time >= cp!.t) setCheck("open");
@@ -66,14 +60,6 @@ export function PlayerPage({
   useEffect(() => {
     if (checkOpen && cp) track("checkpoint_shown", { type: "item", id: cp.item_id });
   }, [checkOpen, cp]);
-  const notes = useQuery<Note[]>(
-    async () => (videoId ? (await api.listNotes(videoId)).map((n) => ({ id: n.id, at: n.video_t, text: n.text })) : []),
-    [videoId],
-  ) ?? [];
-  const noteCount = notes.length;
-  const lineIdx = activeLine(ku.transcript, pb.time);
-  // a dialogue video draws its own captions, so the overlay would only repeat them
-  const caption = lineIdx >= 0 && !ku.captionsBurnedIn ? ku.transcript[lineIdx].text : null;
 
   // a view counts once per visit to this page, the first time it passes WATCHED_AT
   const counted = useRef(false);
@@ -99,7 +85,6 @@ export function PlayerPage({
   if (active !== prevActive) {
     setPrevActive(active);
     if (!active) {
-      setSheet(null);
       setSpeedOpen(false);
       if (checkOpen && answered) setCheck("closed");
     }
@@ -117,12 +102,11 @@ export function PlayerPage({
       ]).start();
   }, [pb.playing, glyph]);
 
-  // while it plays untouched, everything but the video (and captions, if on) fades away
+  // while it plays untouched, the controls fade away
   const [scrubbing, setScrubbing] = useState(false);
-  const controls = useAutoHide({ active, pinned: !pb.playing || sheet !== null || speedOpen || scrubbing || checkOpen });
+  const controls = useAutoHide({ active, pinned: !pb.playing || speedOpen || scrubbing || checkOpen });
   const shown = controls.shown;
   const chrome = useState(() => new Animated.Value(1))[0];
-  const [metaHeight, setMetaHeight] = useState(0);
   useEffect(() => {
     Animated.timing(chrome, { toValue: shown ? 1 : 0, duration: shown ? 160 : 450, useNativeDriver: true }).start();
   }, [shown, chrome]);
@@ -190,23 +174,6 @@ export function PlayerPage({
 
       {checkOpen ? null : (
         <Animated.View style={[styles.rail, { bottom: insets.bottom + 128 }, hideable]} pointerEvents={touchable}>
-          <RailItem label="Notes">
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Open study notes, ${noteCount} saved`}
-              onPress={() => setSheet("notes")}
-              style={[styles.railBtn, sheet === "notes" && styles.railBtnOn]}
-            >
-              <Icon name="edit-note" size={22} color="#fff" />
-              {noteCount > 0 ? (
-                <View style={styles.badge}>
-                  <T variant="codeSm" color="#fff" style={{ fontSize: 10, fontFamily: fonts.monoBold, letterSpacing: 0 }}>
-                    {noteCount}
-                  </T>
-                </View>
-              ) : null}
-            </Pressable>
-          </RailItem>
           <RailItem label="Speed">
             <Pressable accessibilityRole="button" accessibilityLabel={`Playback speed, ${speedLabel(speed)}`} onPress={() => setSpeedOpen((o) => !o)} style={styles.railBtn}>
               <T variant="codeSm" color={colors.secondaryContainer} style={{ fontSize: 11, fontFamily: fonts.monoBold, letterSpacing: 0 }}>
@@ -234,19 +201,6 @@ export function PlayerPage({
               </View>
             ) : null}
           </RailItem>
-          <RailItem label="Captions">
-            <Pressable
-              accessibilityRole="switch"
-              accessibilityState={{ checked: captions }}
-              accessibilityLabel="Captions"
-              onPress={() => onCaptions(!captions)}
-              style={[styles.railBtn, captions && { backgroundColor: "rgba(255,255,255,0.2)", borderColor: "rgba(255,255,255,0.3)" }]}
-            >
-              <T variant="codeSm" color={captions ? colors.secondaryContainer : "rgba(255,255,255,0.5)"} style={{ fontFamily: fonts.monoBold, letterSpacing: 1 }}>
-                CC
-              </T>
-            </Pressable>
-          </RailItem>
         </Animated.View>
       )}
 
@@ -255,21 +209,7 @@ export function PlayerPage({
           <Animated.View style={[StyleSheet.absoluteFill, hideable]} pointerEvents="none">
             <LinearGradient colors={["transparent", "rgba(0,0,0,0.85)", "#000"]} style={StyleSheet.absoluteFill} />
           </Animated.View>
-          {captions && caption ? (
-            <Animated.View
-              style={[styles.caption, { transform: [{ translateY: chrome.interpolate({ inputRange: [0, 1], outputRange: [metaHeight, 0] }) }] }]}
-              accessibilityLiveRegion="polite"
-              pointerEvents="none"
-            >
-              <T variant="caption" color="#fff" style={{ fontSize: 13 }}>
-                <T variant="codeSm" color={colors.secondaryContainer} style={{ fontFamily: fonts.monoSemibold }}>
-                  [AI Voice]:{" "}
-                </T>
-                “{caption}”
-              </T>
-            </Animated.View>
-          ) : null}
-          <Animated.View style={hideable} pointerEvents={touchable} onLayout={(e) => setMetaHeight(e.nativeEvent.layout.height)}>
+          <Animated.View style={hideable} pointerEvents={touchable}>
             <View style={styles.meta}>
               <T variant="codeSm" color={colors.secondaryContainer} style={{ fontSize: 11, fontFamily: fonts.monoSemibold, textTransform: "uppercase", letterSpacing: 1 }}>
                 {eyebrow}
@@ -277,21 +217,12 @@ export function PlayerPage({
               <T variant="cardTitle" color="#fff" style={{ fontFamily: fonts.bold, fontSize: 18, lineHeight: 24 }} accessibilityRole="header">
                 {ku.shortTitle}
               </T>
-              {ku.transcript.length ? (
-                <Pressable accessibilityRole="button" onPress={() => setSheet("transcript")} hitSlop={8} style={styles.transcriptLink}>
-                  <Icon name="notes" size={14} color="rgba(255,255,255,0.7)" />
-                  <T variant="caption" color="rgba(255,255,255,0.7)" style={{ fontSize: 12 }}>
-                    Transcript
-                  </T>
-                </Pressable>
-              ) : null}
             </View>
             <Scrubber time={pb.time} duration={ku.durationS} mark={checkDue && check === "waiting" ? cp!.t : null} onSeek={pb.seek} onScrubbing={setScrubbing} />
           </Animated.View>
         </View>
       )}
 
-      <StudySheet ku={ku} notes={notes} mode={sheet} time={pb.time} onClose={() => setSheet(null)} onSeek={pb.seek} />
     </View>
   );
 }
@@ -429,19 +360,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     ...shadow.float,
   },
-  railBtnOn: { backgroundColor: colors.primary, borderColor: "rgba(255,255,255,0.3)" },
-  badge: {
-    position: "absolute",
-    top: -4,
-    right: -4,
-    minWidth: 18,
-    height: 18,
-    paddingHorizontal: 4,
-    borderRadius: 9,
-    backgroundColor: colors.primary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
   speedMenu: {
     position: "absolute",
     right: 58,
@@ -457,18 +375,7 @@ const styles = StyleSheet.create({
   },
   speedOpt: { paddingHorizontal: 8, paddingVertical: 6, borderRadius: radius.md },
   footer: { position: "absolute", left: 0, right: 0, bottom: 0, paddingHorizontal: 16, paddingTop: 64 },
-  caption: {
-    marginRight: 56,
-    marginBottom: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: radius.lg,
-    backgroundColor: "rgba(0,0,0,0.75)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
-  },
   meta: { marginRight: 56, marginBottom: 12, gap: 4 },
-  transcriptLink: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2, alignSelf: "flex-start", minHeight: 24 },
   scrubHit: { height: 28, justifyContent: "center" },
   scrubTrack: { height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.2)" },
   scrubFill: { height: 6, borderRadius: 3, backgroundColor: colors.primary },

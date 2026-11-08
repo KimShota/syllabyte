@@ -13,9 +13,9 @@ import { T } from "@/components/T";
 import { useScrollToFocus } from "@/components/useScrollToFocus";
 import { REMOTE } from "@/data/backend";
 import { COURSE, OTHER_COURSES, useCourseVersion, lectureNumber } from "@/data/course";
-import { courseFeed, courseLectures, type LectureNodeView } from "@/data/selectors";
+import { courseLectures, type LectureNodeView } from "@/data/selectors";
 import type { LectureStatus } from "@/data/types";
-import { usePrecheck, useProgress } from "@/state/progress";
+import { useProgress } from "@/state/progress";
 import { courseCalls } from "@/state/session";
 import { pickAndAddSlides } from "@/state/uploads";
 import { colors, fonts, radius, shadow, space } from "@/theme/tokens";
@@ -54,9 +54,6 @@ export default function CourseRoadmap() {
   // open where the student is: the lecture in progress, else the first one not completed
   const current = lectures.find((l) => l.status === "active") ?? lectures.find((l) => l.status !== "completed");
   const focusKey = !stub && current ? rowKey(current.lecture.n) : null;
-  // unknown until the check due (if any) loads, since the feed stops there
-  const check = usePrecheck();
-  const feedCount = check === undefined ? 0 : courseFeed(COURSE, check?.lecture_n ?? null).kus.length;
   const { scrollRef, contentRef, focusRef, onScrollLayout, onScrollBeginDrag, onFocusLayout } = useScrollToFocus(focusKey);
 
   return (
@@ -101,18 +98,6 @@ export default function CourseRoadmap() {
               {stub ? `${stub.code} · ${stub.term}` : [COURSE.code, COURSE.term].filter(Boolean).join(" · ")}
             </T>
           </View>
-
-          {/* every video so far as one swipe feed, up to the lecture whose check is due */}
-          {!stub && feedCount > 0 ? (
-            <Button
-              label={`Watch all · ${feedCount} ${feedCount === 1 ? "video" : "videos"}`}
-              icon="smart-display"
-              height={44}
-              accessibilityHint="Swipe through every video so far, in lecture order"
-              onPress={() => router.push({ pathname: "/course/[courseId]/feed", params: { courseId: COURSE.id } })}
-              style={{ marginTop: 16 }}
-            />
-          ) : null}
 
           {/* an uploaded course: slides are added here, all at once or a lecture at a time (plan/slide-uploads-plan.md) */}
           {REMOTE && !stub ? (

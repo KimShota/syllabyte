@@ -151,9 +151,6 @@ export function CoursesDrawer({ visible, onClose, currentId }: { visible: boolea
               else router.dismissTo({ pathname: "/", params: { upload: String(Date.now()) } });
             }}
           />
-          <T variant="caption" color={colors.onSurfaceVariant} style={{ fontSize: 11, textAlign: "center" }}>
-            Upload syllabus or slides to generate learning roadmaps
-          </T>
         </View>
       </View>
     </Sheet>
