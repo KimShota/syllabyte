@@ -79,13 +79,24 @@ export default function Welcome() {
           <T variant="titleMobile" style={{ fontFamily: fonts.extraBold, textAlign: "center" }} accessibilityRole="header">
             {hasCourses ? "Add a course" : "Welcome to SyllaByte"}
           </T>
-          <T variant="body" color="#606474" style={{ textAlign: "center", marginTop: 8, maxWidth: 300, fontFamily: fonts.medium }}>
-            {hasCourses
-              ? "Upload the syllabus of the course you want to add. Add slides now, or as the semester goes."
-              : REMOTE
-                ? "Start with your syllabus: it lists your lectures. Add slides now, or as the semester goes."
-                : "Upload your course materials to auto-generate interactive study roadmaps."}
-          </T>
+          {REMOTE ? (
+            <View style={styles.instructions}>
+              {[
+                "Upload your syllabus first.",
+                "If you have all your slide decks, upload them all.",
+                "Otherwise, upload what you have now and add the rest later.",
+              ].map((instruction) => (
+                <View key={instruction} style={styles.instructionRow}>
+                  <T variant="body" color="#606474" style={styles.instructionBullet}>•</T>
+                  <T variant="body" color="#606474" style={styles.instructionText}>{instruction}</T>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <T variant="body" color="#606474" style={{ textAlign: "center", marginTop: 8, maxWidth: 300, fontFamily: fonts.medium }}>
+              Upload your course materials to auto-generate interactive study roadmaps.
+            </T>
+          )}
         </View>
 
         <View style={styles.card}>
@@ -189,6 +200,10 @@ const styles = StyleSheet.create({
   topBar: { paddingHorizontal: 12, alignItems: "flex-start" },
   content: { paddingHorizontal: 16, paddingTop: 24, paddingBottom: 24 },
   header: { alignItems: "center", marginBottom: 28 },
+  instructions: { width: "100%", maxWidth: 340, marginTop: 16, gap: 8 },
+  instructionRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
+  instructionBullet: { fontSize: 13, lineHeight: 19 },
+  instructionText: { flex: 1, fontFamily: fonts.medium, fontSize: 13, lineHeight: 19 },
   logo: {
     width: 56,
     height: 56,
