@@ -45,6 +45,15 @@ on a laptop, from the repository root:
 SYLLABYTE_WORKER_TOKEN=... uv run python -m ingestion_agent.worker --server http://localhost:8788   # add --once to stop when the queue is empty
 ```
 
+For videos, add `--kinds video`: this runs up to three videos at once. Use `--concurrency N` to choose another
+limit, including `--concurrency 1` for sequential generation. Other worker kinds default to one job at a time.
+Restart an existing worker to apply a new concurrency setting. Paused jobs must be retried separately.
+
+For uploaded courses, answering a new KU's precheck question settles its level and immediately requests its video.
+The worker can generate it while the student answers the remaining questions. That KU is not asked again in the same
+check, and its level stays fixed through the end of that check. KUs not asked about receive levels and video requests
+when the check finishes. Question jobs take priority over video jobs when the worker claims its next job.
+
 PowerPoint files need LibreOffice (`soffice`) on the worker's machine. Students never reorganize a course; the
 researcher fixes mistakes:
 

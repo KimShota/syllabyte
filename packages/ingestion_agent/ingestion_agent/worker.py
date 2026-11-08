@@ -19,8 +19,8 @@ Reading files, placing them and writing questions run side by side.
 
 Video jobs (a student's check set their levels, so the KU's video is needed; participant-ready-plan.md S2) run the whole
 video pipeline: a minute or two and about $0.25 each, with Manim, LaTeX and the voice engine on this machine. They go
-last in the queue; `--kinds video` runs a worker for videos alone, and it sends each video's files to the server before
-its result.
+last in the queue; `--kinds video` runs three videos at once by default, and it sends each video's files to the server
+before its result. Use `--concurrency N` to override this; workers for other job kinds default to one job at a time.
 """
 
 from __future__ import annotations
@@ -203,7 +203,7 @@ def main() -> None:
     parser.add_argument("--poll", type=float, default=5.0, help="seconds between checks when there is nothing to do")
     parser.add_argument("--once", action="store_true", help="run the queued jobs, then stop")
     parser.add_argument("--kinds", default=None, help=f"only these job kinds, comma-separated ({', '.join(KINDS)})")
-    parser.add_argument("--concurrency", type=int, default=1, help="jobs at once (deck jobs still run in lecture order)")
+    parser.add_argument("--concurrency", type=int, default=None, help="jobs at once (default: 3 for --kinds video, otherwise 1)")
     parser.add_argument("--max-jobs", type=int, default=None, help="stop after starting this many jobs")
     parser.add_argument("--budget-usd", type=float, default=None, help="stop claiming jobs once this much was spent this session")
     args = parser.parse_args()
@@ -214,9 +214,12 @@ def main() -> None:
         kinds = [k.strip() for k in args.kinds.split(",")] if args.kinds else None
         if kinds and set(kinds) - set(KINDS):
             parser.error(f"unknown kinds: {', '.join(sorted(set(kinds) - set(KINDS)))}")
+        concurrency = args.concurrency if args.concurrency is not None else (3 if kinds == ["video"] else 1)
+        if concurrency < 1:
+            parser.error("--concurrency must be at least 1")
         worker = Worker(client, args.work_dir, model=args.model, critic_model=args.critic_model, kinds=kinds)
-        log(f"polling {args.server}" + (f" with {args.concurrency} jobs at once" if args.concurrency > 1 else ""))
-        worker.serve(concurrency=max(1, args.concurrency), poll=args.poll, once=args.once, max_jobs=args.max_jobs, budget_usd=args.budget_usd)
+        log(f"polling {args.server} with {concurrency} jobs at once")
+        worker.serve(concurrency=concurrency, poll=args.poll, once=args.once, max_jobs=args.max_jobs, budget_usd=args.budget_usd)
 
 
 if __name__ == "__main__":

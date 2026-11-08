@@ -20,7 +20,8 @@ import { lecturesInOrder, taughtBefore } from "./lectures";
  * pre-lecture check asks up to `cat_prelecture_new` questions but no more than the lecture has KUs, and each question
  * is chosen as a KU and a tier: the lecture's KU the student has answered least (ties: the one most later KUs build
  * on, then course order) at the tier most informative at the lecture's theta. A saved question the student has not
- * seen is asked; without one the sitting names the (KU, tier) it needs and waits for it to be written.
+ * seen is asked; without one the sitting names the (KU, tier) it needs and waits for it to be written. After a new-KU
+ * answer, that KU's level is settled for this sitting and its video may start; it is excluded from further questions.
  */
 
 export type AssessmentKind = "week0" | "lecture";
@@ -106,6 +107,8 @@ export interface Ctx {
   items: Item[];
   /** every response the student has given, in any sitting or video */
   responses: ResponseRecord[];
+  /** KUs already completed in this sitting; an on-demand check does not ask them again. */
+  settled_ku_ids?: readonly string[];
 }
 
 type Ask = { item: Item; need: null } | { item: null; need: QuestionNeed };
@@ -160,7 +163,8 @@ function notSureCap(ctx: Ctx, lectureN: number): ItemTier | null {
 
 /** The KU and tier to ask next on one lecture (V5), and a saved question for it the student has not seen, if any. */
 function pickOnDemand(ctx: Ctx, lectureN: number, seen: Set<string>): Ask | null {
-  const kus = ctx.course.kus.filter((k) => k.lecture_n === lectureN);
+  const settled = new Set(ctx.settled_ku_ids);
+  const kus = ctx.course.kus.filter((k) => k.lecture_n === lectureN && !settled.has(k.id));
   if (!kus.length) return null;
   const answered = new Map<string, number>();
   for (const it of ctx.items) {

@@ -131,6 +131,40 @@ def test_runs_jobs_side_by_side_with_concurrency(tmp_path, monkeypatch):
     assert sorted(b["result"]["deck_name"] for b in server.posted("/result")) == ["d0", "d1", "d2"]
 
 
+def test_three_videos_run_together_with_separate_outputs(tmp_path, monkeypatch):
+    import threading
+
+    from ingestion_agent import worker as worker_mod
+
+    barrier = threading.Barrier(3, timeout=5)
+    renders = []
+
+    def read(path, work_dir, name):
+        renders.append(name)
+        return None, "shared deck"
+
+    def make_video(payload, deck, work, upload, **kw):
+        assert deck == "shared deck"
+        output = work / "video.mp4"
+        output.write_text(payload["ku_id"])
+        barrier.wait()  # all three must reach generation before any can finish
+        assert output.read_text() == payload["ku_id"]
+        upload("video.mp4", output)
+        return {"ku_id": payload["ku_id"]}
+
+    monkeypatch.setattr(worker_mod, "read_deck", read)
+    monkeypatch.setattr(worker_mod, "run_video_job", make_video)
+    jobs = [{"id": f"j{i}", "kind": "video", "payload": {"deck_id": "d1", "ku_id": f"ku-{i}"}, "file_name": "x.pdf"} for i in range(3)]
+    server = FakeServer(jobs, {f"j{i}": b"%PDF" for i in range(3)})
+    w = worker(server, tmp_path)
+    sent = {}
+    monkeypatch.setattr(w, "_put_file", lambda job_id, name, path: sent.update({job_id: path.read_text()}))
+    w.serve(concurrency=3, once=True)
+    assert renders == ["d1"]
+    assert sent == {f"j{i}": f"ku-{i}" for i in range(3)}
+    assert sorted(b["result"]["ku_id"] for b in server.posted("/result")) == ["ku-0", "ku-1", "ku-2"]
+
+
 def test_two_questions_on_one_deck_render_it_once(tmp_path, monkeypatch):
     import threading
 

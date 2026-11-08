@@ -7,7 +7,8 @@ import { lecturesInOrder } from "./lectures";
  * set, at the student's level for it, unless one was already made for them (D15: made once, never remade). A lecture's
  * levels are set by the baseline when it covered the lecture, else by the lecture's own check. Provisional levels from
  * the baseline never start a video: the check would only lock a guess in. KUs added to a lecture after its check
- * (U10) are included as soon as they have a level. In course order, so the earliest lecture is made first.
+ * (U10) are included as soon as they have a level. Uploaded prechecks also release individual KUs as their answers
+ * settle their levels, before the full sitting finishes. In course order, so the earliest lecture is made first.
  */
 export interface VideoRequest {
   ku_id: string;
@@ -30,9 +31,12 @@ export function videoRequests(
   made: Record<string, Level>,
 ): VideoRequest[] {
   const set = lecturesWithSetLevels(course, sittings);
+  const settled = new Set(course.config.questions_on_demand
+    ? Object.values(sittings).filter((s) => s.kind === "lecture").flatMap((s) => s.settled_ku_ids ?? [])
+    : []);
   const rank = new Map(lecturesInOrder(course).map((l, i) => [l.n, i]));
   return [...course.kus]
-    .filter((k) => set.has(k.lecture_n) && levels[k.id] && made[k.id] === undefined)
+    .filter((k) => (set.has(k.lecture_n) || settled.has(k.id)) && levels[k.id] && made[k.id] === undefined)
     .sort((a, b) => (rank.get(a.lecture_n) ?? 0) - (rank.get(b.lecture_n) ?? 0))
     .map((k) => ({ ku_id: k.id, lecture_n: k.lecture_n, level: levels[k.id].level }));
 }

@@ -92,7 +92,7 @@ if __name__ == "__main__":
     # renderer.py's module docstring for why those don't produce a correct
     # portrait camera frame in Manim 0.21. A manim.cfg file does.
     write_manim_cfg(out_dir, args.quality)
-    cmd = ["manim", "render", str(scene_path.name), "SmokeTest"]
+    cmd = [sys.executable, "-m", "manim", "render", str(scene_path.name), "SmokeTest"]
     print("Running:", " ".join(cmd))
     result = subprocess.run(cmd, cwd=out_dir, capture_output=True, text=True)
     print(result.stdout[-3000:])

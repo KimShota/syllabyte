@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Animated, Easing, Modal, Pressable, StyleSheet, View } from "react-native";
 import { router } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
@@ -26,6 +26,7 @@ export default function Analyzing() {
   const insets = useSafeAreaInsets();
   const [index, setIndex] = useState(0);
   const [exitOpen, setExitOpen] = useState(false);
+  const finishing = useRef(false);
   const [cardHeight, setCardHeight] = useState(0);
   const enter = useState(() => new Animated.Value(1))[0];
   const sweep = useLoop(1400);
@@ -39,6 +40,8 @@ export default function Analyzing() {
       router.replace("/welcome");
       return;
     }
+    if (finishing.current) return;
+    finishing.current = true;
     void finishSetup(myCourse.course.id).then((next) => router.replace(next), () => router.replace("/"));
   }, [myCourse]);
 

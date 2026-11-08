@@ -3,6 +3,8 @@
  * until the course exists, then go up like any other slides and land on the review screen.
  */
 import * as DocumentPicker from "expo-document-picker";
+import { File } from "expo-file-system";
+import { Platform } from "react-native";
 import type { UploadFile, UploadView } from "@syllabyte/core/api/types";
 import { setPrefs } from "./app";
 import { courseCalls } from "./session";
@@ -17,7 +19,7 @@ export const SLIDE_TYPES = [MIME.pdf, MIME.pptx];
 export const SYLLABUS_TYPES = [MIME.pdf, MIME.docx];
 
 export function toUploadFile(a: DocumentPicker.DocumentPickerAsset): UploadFile {
-  return { name: a.name, uri: a.uri, mimeType: a.mimeType ?? null, file: a.file ?? null };
+  return { name: a.name, uri: a.uri, mimeType: a.mimeType ?? null, file: Platform.OS === "web" ? a.file ?? null : new File(a.uri) };
 }
 
 /** The system picker; null when the student cancels. */

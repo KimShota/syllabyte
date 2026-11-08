@@ -489,6 +489,29 @@ describe("questions written as checks need them (V4-V6)", () => {
 });
 
 describe("videos students need (U18)", () => {
+  it("lets the worker start an answered KU's video while the precheck is still unfinished", async () => {
+    const s = makeServer();
+    const { ann, courseId } = await courseWithAnn(s);
+    await uploadAndConfirm(s, ann, courseId, [DECKS[0]]);
+    await work(s);
+    const sitting = "lecture-1";
+    await ann.rpc("getSitting", sitting);
+    await work(s, { kinds: ["question"] });
+    const first = (await ann.rpc<any>("getSitting", sitting)).current.item;
+    await ann.rpc("answerSitting", sitting, first.id, first.correct_index, 1000);
+    const requests = s.courses.videoRequests(courseId);
+    expect(requests).toHaveLength(1);
+    expect(requests[0].ku_id).toBe(first.ku_id);
+    expect(store(s, "ann@nyu.edu").sittings[sitting].finished_at).toBeNull();
+    const { job } = await (await s.worker.post("/api/worker/claim", { kinds: ["video"] })).json() as { job: Job };
+    expect(job.payload.ku.id).toBe(first.ku_id);
+    expect(job.payload.level).toBe(requests[0].level);
+    await ann.rpc("getSitting", sitting);
+    expect(s.courses.videoRequests(courseId)).toHaveLength(1);
+    const next = await (await s.worker.post("/api/worker/claim", { kinds: ["video"] })).json() as { job: Job | null };
+    expect(next.job).toBeNull();
+  });
+
   it("records a lecture's videos once its check set its levels, shared by course, KU and level", async () => {
     const s = makeServer();
     const { ann, courseId } = await courseWithAnn(s);

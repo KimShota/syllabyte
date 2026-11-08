@@ -204,17 +204,18 @@ function lectureLevels(): LectureLevels[] {
 }
 
 /**
- * Publish the levels the answers so far support. Called only at a lecture boundary (the baseline, or the end of a
- * pre-lecture check): levels never move in the middle of a lecture, so queued videos are not cancelled and the
- * student is not surprised mid-video. A level the student set is not overwritten; only its suggestion moves.
+ * Publish the levels the answers so far support, for the selected KUs (all by default). Uploaded prechecks publish
+ * each KU after its answer; the final publication leaves those settled levels fixed so queued videos stay valid.
+ * A level the student set is not overwritten; only its suggestion moves.
  * Returns what changed for KUs the model owns.
  */
-function publishLevels(cause: "baseline" | "lecture_check"): ReturnType<typeof levelUpdates> {
-  const est = kuLevels(profileInput());
+function publishLevels(cause: "baseline" | "lecture_check", selected?: Set<string>): ReturnType<typeof levelUpdates> {
+  const est = Object.fromEntries(Object.entries(kuLevels(profileInput())).filter(([id]) => !selected || selected.has(id)));
   const before = Object.fromEntries(Object.values(S().levels).filter((l) => l.source === "model").map((l) => [l.ku_id, l.level]));
   mutate((s) => {
     for (const ku of fixtures().course.kus) {
       const e = est[ku.id];
+      if (!e) continue;
       const cur = s.levels[ku.id];
       if (!cur) {
         s.levels[ku.id] = {
@@ -289,7 +290,7 @@ function ensureSitting(id: string): void {
 function currentOf(id: string) {
   const st = S().sittings[id];
   if (st?.finished_at) return null;
-  return nextAssessmentStep(planOf(id), st?.answered_ids.length ?? 0, profileInput());
+  return nextAssessmentStep(planOf(id), st?.answered_ids.length ?? 0, { ...profileInput(), settled_ku_ids: st?.settled_ku_ids });
 }
 
 const failed = (need: QuestionNeed) => (fixtures().question_failures ?? []).some((f) => f.ku_id === need.ku_id && f.tier === need.tier);
@@ -306,7 +307,7 @@ export function questionNeedsNow(): QuestionNeed[] {
   const out: QuestionNeed[] = [];
   for (const id of ids) {
     const st = S().sittings[id];
-    for (const need of questionNeeds(planOf(id), st?.answered_ids.length ?? 0, profileInput())) {
+    for (const need of questionNeeds(planOf(id), st?.answered_ids.length ?? 0, { ...profileInput(), settled_ku_ids: st?.settled_ku_ids })) {
       if (!out.some((o) => o.ku_id === need.ku_id && o.tier === need.tier)) out.push(need);
     }
   }
@@ -392,6 +393,15 @@ export const mockApi: Api = {
     mutate((s) => {
       s.sittings[id].answered_ids.push(itemId);
     });
+    if (cfg().questions_on_demand && S().sittings[id].kind === "lecture" && next.role === "new" && item.ku_id) {
+      const kuId = item.ku_id;
+      const updates = publishLevels("lecture_check", new Set([kuId]));
+      mutate((s) => {
+        const st = s.sittings[id];
+        st.settled_ku_ids = [...(st.settled_ku_ids ?? []), kuId];
+        st.level_updates = [...(st.level_updates ?? []), ...updates];
+      });
+    }
     track("cat_answered", { type: "item", id: itemId }, {
       sitting: id, lecture: next.lecture_n, role: next.role, tier: item.tier, choice, correct: choice === "not_sure" ? null : choice === item.correct_index,
     });
@@ -409,7 +419,9 @@ export const mockApi: Api = {
       rebuildPlaylist();
       for (const ku of fixtures().course.kus) track("level_suggested", { type: "ku", id: ku.id }, { level: S().levels[ku.id].level });
     } else {
-      const updates = publishLevels("lecture_check");
+      const settled = new Set(st.settled_ku_ids ?? []);
+      const remaining = new Set(fixtures().course.kus.filter((k) => !settled.has(k.id)).map((k) => k.id));
+      const updates = [...(st.level_updates ?? []), ...publishLevels("lecture_check", remaining)];
       if (updates.length) {
         mutate((s) => {
           s.level_updates.push({ id: uid("lu"), lecture_n: st.lecture_n!, at: now(), updates, seen: false });

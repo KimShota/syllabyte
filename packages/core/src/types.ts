@@ -267,7 +267,7 @@ export interface LevelChange {
   cause: LevelCause;
 }
 
-/** One Knowledge Unit's level (plan D6): published at lecture boundaries, correctable by the student any time. */
+/** One KU's level: published at lecture boundaries or its uploaded precheck answer; correctable by the student. */
 export interface KuLevel {
   ku_id: string;
   level: Level;
@@ -375,6 +375,10 @@ export interface SittingState {
   week: number | null;
   /** the baseline only: the lectures it covers, fixed at its first answer (plan/slide-uploads-plan.md U9) */
   lectures?: number[] | null;
+  /** Uploaded prechecks settle each KU once, allowing its video to start before the sitting ends. */
+  settled_ku_ids?: string[];
+  /** Level changes collected while individual KUs settle, shown when the check finishes. */
+  level_updates?: LevelUpdate[];
 }
 
 /** A KU level that moved at a lecture boundary: one row of the "What changed and why" card. */

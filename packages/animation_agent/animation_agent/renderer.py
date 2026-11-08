@@ -46,6 +46,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -79,7 +80,7 @@ MAX_DURATION_MISMATCH_SECONDS = 0.5
 
 def _run_manim(render_dir: Path, scene_file: Path, class_name: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["manim", "render", str(scene_file.name), class_name],
+        [sys.executable, "-m", "manim", "render", str(scene_file.name), class_name],
         cwd=render_dir,
         capture_output=True,
         text=True,

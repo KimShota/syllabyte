@@ -172,8 +172,9 @@ describe("an uploaded course through the API", () => {
     fxMod.setFixtures(course(input));
     await answerAll("lecture-1", "right", input);
     const levels = store.getState().levels;
-    for (const k of old.kus) {
-      expect(levels[k.id].reason).toContain("3 right");
+    for (const [i, k] of old.kus.entries()) {
+      // Each KU retains the estimate from when its own question was answered.
+      expect(levels[k.id].reason).toContain(`${i + 1} right`);
       expect(levels[k.id].level).toBeGreaterThan(1);
     }
   });
@@ -209,6 +210,33 @@ describe("an uploaded course through the API", () => {
     expect(row.level.provisional).toBe(true);
     expect(row.level.history[0].cause).toBe("slides_added");
     expect(await api.getLevelUpdates()).toEqual(before);
+  });
+
+  it("releases answered KUs early, keeps their levels fixed, and waits until finish for unasked KUs", async () => {
+    const input = { decks: [{ lecture_n: 1, result: deck("a", 4) }], config: { cat_prelecture_new: 2 } };
+    const fx = course(input);
+    fxMod.setFixtures(fx);
+    const want = () => videoRequests(fx.course, store.getState().sittings, store.getState().levels, store.getState().made);
+    expect(want()).toEqual([]);
+    const saved: Item[] = [];
+    await api.getSitting("lecture-1");
+    writeNeeds(input, saved);
+    const first = (await api.getSitting("lecture-1")).current!.item;
+    await api.answerSitting("lecture-1", first.id, first.correct_index, 1000);
+    const early = want();
+    expect(early).toEqual([{ ku_id: first.ku_id, lecture_n: 1, level: store.getState().levels[first.ku_id!].level }]);
+    expect(store.getState().sittings["lecture-1"].finished_at).toBeNull();
+
+    writeNeeds(input, saved);
+    const second = (await api.getSitting("lecture-1")).current!.item;
+    expect(second.ku_id).not.toBe(first.ku_id);
+    await api.answerSitting("lecture-1", second.id, "not_sure", 1000);
+    expect(want()).toHaveLength(2);
+    expect(want()[0]).toEqual(early[0]);
+    await api.finishSitting("lecture-1");
+    expect(want()).toHaveLength(4);
+    expect(want()[0]).toEqual(early[0]);
+    expect(store.getState().levels[first.ku_id!].history).toHaveLength(1);
   });
 
   it("asks for videos only for lectures whose levels a check set (U18)", async () => {

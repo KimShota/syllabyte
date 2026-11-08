@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { UploadFile } from "@syllabyte/core/api/types";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { router } from "expo-router";
@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/Button";
 import { Icon, type IconName } from "@/components/Icon";
 import { T } from "@/components/T";
-import { REMOTE } from "@/data/backend";
+import { BACKEND_BASE, REMOTE } from "@/data/backend";
 import { refreshCourse, useMyCourse } from "@/state/course";
 import { courseCalls } from "@/state/session";
 import { setPendingSlides, SLIDE_TYPES, SYLLABUS_TYPES, toUploadFile } from "@/state/uploads";
@@ -31,11 +31,28 @@ export default function Welcome() {
   const [slides, setSlides] = useState<UploadFile[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [apiCheck, setApiCheck] = useState("checking");
   const myCourse = useMyCourse();
   // a student who is in a course is adding another: the screen can be left, and the course they are in stays theirs
   const hasCourses = REMOTE && myCourse?.status === "ready";
   // the last syllabus couldn't be read: say why
   const lastError = myCourse?.status === "failed" ? myCourse.error : myCourse?.status === "ready" && myCourse.adding?.status === "failed" ? myCourse.adding.error : null;
+
+  useEffect(() => {
+    if (!__DEV__ || !BACKEND_BASE) return;
+    let active = true;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10_000);
+    fetch(`${BACKEND_BASE}/api/health`, { signal: controller.signal })
+      .then((response) => { if (active) setApiCheck(`HTTP ${response.status}`); })
+      .catch((cause) => { if (active) setApiCheck(cause instanceof Error ? cause.message : String(cause)); })
+      .finally(() => clearTimeout(timer));
+    return () => {
+      active = false;
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, []);
 
   function leave() {
     // they have read the error: Home should not keep showing it
@@ -112,6 +129,11 @@ export default function Welcome() {
       </ScrollView>
 
       <View style={styles.footer}>
+        {__DEV__ && BACKEND_BASE ? (
+          <T variant="caption" color={colors.onSurfaceVariant} style={{ textAlign: "center" }} selectable>
+            API: {BACKEND_BASE} · {apiCheck}
+          </T>
+        ) : null}
         {error ?? lastError ? (
           <T variant="caption" color={colors.error} style={{ textAlign: "center" }} accessibilityLiveRegion="polite">
             {error ?? lastError}

@@ -9,6 +9,7 @@
 import { useSyncExternalStore } from "react";
 import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { fetch as expoFetch } from "expo/fetch";
 import * as SecureStore from "expo-secure-store";
 import { setApi, api } from "@syllabyte/core/api/client";
 import { createBackend, createEventQueue, ApiError, type SignedIn } from "@syllabyte/core/api/remote";
@@ -70,6 +71,7 @@ const tokenStore = {
 const backend = BACKEND_BASE
   ? createBackend({
       base: BACKEND_BASE,
+      uploadFetch: Platform.OS === "web" ? undefined : expoFetch as typeof fetch,
       token: () => token,
       visit: currentVisit,
       onUnauthorized: () => void endSession(),

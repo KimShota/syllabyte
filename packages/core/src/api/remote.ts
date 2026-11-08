@@ -31,6 +31,8 @@ export interface BackendOptions {
   /** whether the last request reached the server */
   onConnection(reachable: boolean): void;
   fetch?: typeof fetch;
+  /** Native apps may use a file-aware fetch for multipart uploads. */
+  uploadFetch?: typeof fetch;
   timeoutMs?: number;
 }
 
@@ -107,8 +109,9 @@ export function createBackend(o: BackendOptions) {
     const timer = setTimeout(() => controller.abort(), 180_000);
     let res: Response;
     try {
-      res = await doFetch(`${o.base}${path}`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "X-Visit": o.visit() }, body: form, signal: controller.signal });
-    } catch {
+      res = await (o.uploadFetch ?? doFetch)(`${o.base}${path}`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "X-Visit": o.visit() }, body: form, signal: controller.signal });
+    } catch (cause) {
+      console.log("[SyllaByte] upload transport failed", `${o.base}${path}`, cause);
       o.onConnection(false);
       throw new ApiError("Can't reach the server", 0);
     } finally {
