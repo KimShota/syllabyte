@@ -143,6 +143,12 @@ export function createBackend(o: BackendOptions) {
 
   return {
     api,
+    async requestEmailLink(email: string, redirectUrl: string): Promise<void> {
+      await request("/api/auth/request-link", { email, redirectUrl }, false);
+    },
+    async verifyEmailLink(ticket: string): Promise<SignedIn & { email: string }> {
+      return (await request("/api/auth/verify-link", { ticket }, false)) as unknown as SignedIn & { email: string };
+    },
     /** Emails a sign-in code. Always succeeds from the caller's side: the server never says who is enrolled. */
     async requestCode(email: string): Promise<void> {
       await request("/api/auth/request-code", { email }, false);

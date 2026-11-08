@@ -60,6 +60,8 @@ export interface Deps {
   workerToken?: string;
   /** Browsers only (the phone app doesn't need it): the origin allowed to call, e.g. the web build in development. */
   corsOrigin?: string;
+  /** Email links use an HTTPS API origin in production and only return to registered app URLs. */
+  emailLinks?: { publicBase?: string; redirectUrls?: string[]; allowExpoGo?: boolean };
 }
 
 type Env = { Variables: { user: User; token: string } };
@@ -77,7 +79,7 @@ async function json(c: Context): Promise<Record<string, unknown>> {
 }
 
 /** Everything the phone calls, under /api. Built without a socket so tests can use `app.request`. */
-export function createApp({ db, auth, runner, courses, uploads, workerToken, corsOrigin }: Deps): Hono<Env> {
+export function createApp({ db, auth, runner, courses, uploads, workerToken, corsOrigin, emailLinks }: Deps): Hono<Env> {
   const app = new Hono<Env>();
   if (corsOrigin) app.use("/api/*", cors({ origin: corsOrigin, allowHeaders: ["Authorization", "Content-Type", "X-Visit"], allowMethods: ["GET", "POST", "OPTIONS"] }));
   // slide and syllabus files are checked one by one (100 MB each by default, src/uploads.ts); everything else is small
@@ -92,6 +94,50 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
   app.get("/api/health", (c) => c.json({ ok: true }));
 
   // ---- sign-in
+  app.post("/api/auth/request-link", async (c) => {
+    const { email, redirectUrl } = await json(c);
+    const base = emailLinks?.publicBase ?? new URL(c.req.url).origin;
+    let destination: URL;
+    try {
+      destination = new URL(typeof redirectUrl === "string" ? redirectUrl : "");
+      const registered = ["syllabyte://signin", "syllabyte:///signin", ...(emailLinks?.redirectUrls ?? [])];
+      const known = registered.some((url) => new URL(url).href === destination.href);
+      const expo = emailLinks?.allowExpoGo && destination.protocol === "exp:" && destination.hostname === new URL(base).hostname
+        && destination.pathname === "/--/signin" && !!destination.port;
+      if (destination.username || destination.password || destination.search || destination.hash || (!known && !expo)) throw new Error("unregistered callback");
+    } catch {
+      return c.json({ error: "This app's sign-in link is not configured on the server." }, 400);
+    }
+    if (typeof email === "string") {
+      try {
+        await auth.requestEmailLink(email, destination.href, base);
+      } catch (error) {
+        console.error("sending the sign-in link failed:", error);
+      }
+    }
+    return c.json({ ok: true });
+  });
+
+  app.get("/api/auth/email-link", (c) => {
+    const destination = auth.emailLinkDestination(c.req.query("ticket") ?? "");
+    c.header("Cache-Control", "no-store");
+    c.header("Referrer-Policy", "no-referrer");
+    c.header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'");
+    const href = destination?.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
+    return c.html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in to SyllaByte</title></head>
+      <body style="font-family:system-ui;background:#f2f3f7;padding:48px 24px;text-align:center"><h1>SyllaByte</h1>
+      ${href ? `<p>Open the app to finish signing in.</p><a style="display:inline-block;background:#5b3fd6;color:white;padding:16px 24px;border-radius:12px;text-decoration:none" href="${href}">Open SyllaByte</a>${destination?.startsWith("exp:") ? "<p>Keep Expo Go and your development server running while signing in.</p>" : ""}`
+        : "<p>This link has expired or was already used. Open SyllaByte to request a new sign-in link.</p>"}</body></html>`, destination ? 200 : 410);
+  });
+
+  app.post("/api/auth/verify-link", async (c) => {
+    c.header("Cache-Control", "no-store");
+    const { ticket } = await json(c);
+    const ok = typeof ticket === "string" ? auth.verifyEmailLink(ticket) : null;
+    if (!ok) return c.json({ error: "That sign-in link has expired or was already used. Request a new one." }, 401);
+    return c.json({ token: ok.token, email: ok.user.email, role: ok.user.role, participant_code: ok.user.participant_code });
+  });
+
   app.post("/api/auth/request-code", async (c) => {
     const { email } = await json(c);
     // the same answer for every address, so nobody can tell who is enrolled

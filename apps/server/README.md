@@ -17,7 +17,9 @@ Environment (all optional in development):
 | `PORT` | default 8788 |
 | `SYLLABYTE_DB` | database file, default `data/syllabyte.db` |
 | `SYLLABYTE_SECRET` | signs sign-in codes; required when `NODE_ENV=production` |
-| `RESEND_API_KEY`, `MAIL_FROM` | send codes by email (Resend); without a key they are logged |
+| `RESEND_API_KEY`, `MAIL_FROM` | send sign-in links by email (Resend); without a key emails are logged locally |
+| `SYLLABYTE_PUBLIC_URL` | HTTPS API address used in sign-in emails; required in production; development uses the request's origin |
+| `SYLLABYTE_AUTH_REDIRECT_URLS` | additional exact app/web return URLs, comma-separated; `syllabyte://signin` is always registered |
 | `SYLLABYTE_SEMESTER_START` | ISO date; week 1 for new students |
 | `SYLLABYTE_CORS_ORIGIN` | let a browser at this origin call the API (the phone app doesn't need it); development only |
 | `SYLLABYTE_FILES` | where uploaded syllabi and slides are kept, default `data/files` |
@@ -27,6 +29,25 @@ Endpoints (all under `/api`): `POST auth/request-code`, `POST auth/verify`, `GET
 `POST rpc/<method>` (`{ "args": [...] }`; any method of the core's `Api`), `POST events`, `GET research/study.csv`
 (researchers), `GET health`. Send `Authorization: Bearer <token>`, and `X-Visit: <id of this app launch>` so the
 "next session" cap counts per visit.
+
+## Email-link sign-in
+
+The mobile app requests `POST auth/request-link` with `{email, redirectUrl}`, shows "Check your email", and redeems
+the emailed ticket through `POST auth/verify-link`. There is no code entry. Only enrolled emails receive a link;
+requests look the same for unenrolled addresses. Links expire after 10 minutes, work once, and are stored as hashes.
+The browser landing page does not consume the ticket, so mail scanners cannot invalidate it by following the link.
+Existing accounts, course progress, and session tokens are preserved. The older code endpoints remain for old clients.
+
+For local email delivery, copy `.env.example` to `.env` in `apps/server`, set `RESEND_API_KEY` and `MAIL_FROM`, and
+restart the backend. The `.env` file is ignored by Git and loaded automatically. Do not put the key in the mobile app.
+With Expo Go, the app creates an `exp://<Metro-host>:<port>/--/signin` return URL. Development accepts it only when
+Metro and the API use the same hostname/IP; open Metro using the same LAN address as `EXPO_PUBLIC_API_BASE`.
+Installed builds use the existing `syllabyte` URL scheme. The email opens a page with an "Open SyllaByte" button.
+Keep the API and Metro running during local phone testing.
+
+Production must set `SYLLABYTE_PUBLIC_URL=https://api.syllabyte.app`. Expo Go return URLs are disabled in production;
+register any web sign-in URL explicitly with `SYLLABYTE_AUTH_REDIRECT_URLS`. Native installed builds need no Google
+OAuth setup or extra dependencies.
 
 Uploads: `GET courses/mine`, `POST courses` (multipart `syllabus` and optional `slides`),
 `POST courses/:id/slides` (multipart `files`), `GET courses/:id/uploads`, and `POST research/jobs/:id/retry`

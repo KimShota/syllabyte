@@ -3,7 +3,7 @@ import type { Db, Role } from "./db";
 import type { Mailer } from "./mail";
 
 /**
- * Sign-in by emailed code (plan §9.3, adapted for the phone): the student enters their email, gets a 6-digit code
+ * Sign-in by single-use email link, with emailed codes retained for older clients. A legacy client gets a 6-digit code
  * that works once for 10 minutes, and types it into the app, which then keeps a session token in secure storage.
  * A code needs no universal-link setup and works the same on iOS and Android. Only emails on the allowlist can sign
  * in, and the server never says whether an email is on it.
@@ -85,6 +85,52 @@ export class Auth {
     );
   }
 
+  /** Store only a hash; email the single-use ticket through a browser landing page, then back into the app. */
+  async requestEmailLink(rawEmail: string, redirectUrl: string, publicBase: string): Promise<void> {
+    const email = normalizeEmail(rawEmail);
+    if (!looksLikeEmail(email) || !this.db.prepare("SELECT 1 FROM allowlist WHERE email = ?").get(email)) return;
+    const now = this.clock();
+    const recent = this.db.prepare("SELECT COUNT(*) AS n FROM login_links WHERE email = ? AND created_at > ?").get(email, now - 3600_000) as { n: number };
+    if (recent.n >= MAX_CODES_PER_HOUR) return;
+    const ticket = randomBytes(32).toString("base64url");
+    this.db.prepare("INSERT INTO login_links (token_hash, email, redirect_url, created_at, expires_at) VALUES (?, ?, ?, ?, ?)")
+      .run(sha256(ticket), email, redirectUrl, now, now + CODE_TTL_MS);
+    const link = new URL("/api/auth/email-link", publicBase);
+    link.searchParams.set("ticket", ticket);
+    try {
+      await this.mailer.send(email, "Sign in to SyllaByte", `Sign in to SyllaByte:\n\n${link.href}\n\nThis link works once and expires in 10 minutes. If you did not request it, ignore this email.\n`);
+    } catch (error) {
+      this.db.prepare("UPDATE login_links SET used = 1 WHERE token_hash = ?").run(sha256(ticket));
+      throw error;
+    }
+  }
+
+  /** Viewing the email's landing page must not consume a ticket: email scanners often open links automatically. */
+  emailLinkDestination(ticket: string): string | null {
+    const row = this.emailLink(ticket);
+    if (!row) return null;
+    const url = new URL(row.redirect_url);
+    url.searchParams.set("ticket", ticket);
+    return url.href;
+  }
+
+  private emailLink(ticket: string): { email: string; redirect_url: string } | undefined {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(ticket)) return undefined;
+    return this.db.prepare("SELECT email, redirect_url FROM login_links WHERE token_hash = ? AND used = 0 AND expires_at > ?")
+      .get(sha256(ticket), this.clock()) as { email: string; redirect_url: string } | undefined;
+  }
+
+  verifyEmailLink(ticket: string): { token: string; user: User } | null {
+    const row = this.emailLink(ticket);
+    if (!row) return null;
+    const entry = this.db.prepare("SELECT role FROM allowlist WHERE email = ?").get(row.email) as { role: Role } | undefined;
+    if (!entry) return null;
+    const used = this.db.prepare("UPDATE login_links SET used = 1 WHERE token_hash = ? AND used = 0 AND expires_at > ?")
+      .run(sha256(ticket), this.clock());
+    if (!used.changes) return null;
+    return this.createSession(row.email, entry.role);
+  }
+
   /** The session token for a right code, or null. A code that was used, expired or guessed wrong 5 times is dead. */
   verifyCode(rawEmail: string, rawCode: string): { token: string; user: User } | null {
     const email = normalizeEmail(rawEmail);
@@ -101,7 +147,12 @@ export class Auth {
     this.db.prepare("UPDATE login_codes SET used = 1 WHERE email = ?").run(email);
     const entry = this.db.prepare("SELECT role FROM allowlist WHERE email = ?").get(email) as { role: Role } | undefined;
     if (!entry) return null;
-    const user = this.upsertUser(email, entry.role);
+    return this.createSession(email, entry.role);
+  }
+
+  private createSession(email: string, role: Role): { token: string; user: User } {
+    const now = this.clock();
+    const user = this.upsertUser(email, role);
     const token = randomBytes(32).toString("base64url");
     this.db
       .prepare("INSERT INTO sessions (token_hash, user_id, created_at, last_seen, expires_at) VALUES (?, ?, ?, ?, ?)")

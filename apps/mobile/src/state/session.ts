@@ -1,7 +1,7 @@
 /**
  * Signing in and the connection to the backend (apps/server), when there is one (data/backend.ts).
  *
- * The student signs in with the email their course gave SyllaByte and a code emailed to it. The session token lives
+ * The student signs in with a single-use link emailed to their enrolled address. The session token lives
  * in the phone's secure storage, so they stay signed in; if the server ever turns it down they are signed out.
  * With a backend, every `api` call goes to the server, UI events are sent in batches, and the study data lives
  * there, not on the phone.
@@ -132,6 +132,21 @@ export async function loadSession(): Promise<void> {
 
 export async function requestSignInCode(email: string): Promise<void> {
   await backend?.requestCode(email.trim());
+}
+
+export async function requestSignInLink(email: string, redirectUrl: string): Promise<void> {
+  if (!backend) throw new Error("no backend");
+  await backend.requestEmailLink(email.trim(), redirectUrl);
+}
+
+export async function verifySignInLink(ticket: string): Promise<void> {
+  if (!backend) throw new Error("no backend");
+  const res = await backend.verifyEmailLink(ticket);
+  token = res.token;
+  await tokenStore.set(res.token).catch(() => {});
+  setSession({ status: "signedIn", email: res.email });
+  await ensureConsent().catch(() => {});
+  touch();
 }
 
 /** Throws an ApiError for a wrong code, or for a server that can't be reached. */

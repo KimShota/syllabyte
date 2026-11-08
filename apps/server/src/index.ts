@@ -1,5 +1,7 @@
 import { serve } from "@hono/node-server";
 import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createApp } from "./app";
 import { Auth } from "./auth";
 import { Courses } from "./courses";
@@ -8,6 +10,8 @@ import { consoleMailer, resendMailer } from "./mail";
 import { StateRunner } from "./runner";
 import { DEFAULT_CAPS, Uploads } from "./uploads";
 
+const localEnv = fileURLToPath(new URL("../.env", import.meta.url));
+if (existsSync(localEnv)) process.loadEnvFile(localEnv);
 const production = process.env.NODE_ENV === "production";
 const secret = process.env.SYLLABYTE_SECRET ?? (production ? "" : randomBytes(16).toString("hex"));
 if (!secret) {
@@ -16,12 +20,17 @@ if (!secret) {
 }
 const resendKey = process.env.RESEND_API_KEY;
 if (production && !resendKey) {
-  console.error("RESEND_API_KEY is required in production: sign-in codes are emailed.");
+  console.error("RESEND_API_KEY is required in production: sign-in links are emailed.");
+  process.exit(1);
+}
+const publicBase = process.env.SYLLABYTE_PUBLIC_URL;
+if (production && (!publicBase || new URL(publicBase).protocol !== "https:")) {
+  console.error("SYLLABYTE_PUBLIC_URL must be the HTTPS API address in production.");
   process.exit(1);
 }
 
 const db = openDb(process.env.SYLLABYTE_DB ?? "data/syllabyte.db");
-const mailer = resendKey ? resendMailer(resendKey, process.env.MAIL_FROM ?? "SyllaByte <signin@example.com>") : consoleMailer;
+const mailer = resendKey ? resendMailer(resendKey, process.env.MAIL_FROM ?? "SyllaByte <signin@syllabyte.app>") : consoleMailer;
 const semesterStart = process.env.SYLLABYTE_SEMESTER_START ? new Date(process.env.SYLLABYTE_SEMESTER_START).getTime() : undefined;
 const auth = new Auth(db, mailer, secret);
 const courses = new Courses(db);
@@ -38,7 +47,9 @@ const runner = new StateRunner(db, { semesterStart, courseFor: (id) => courses.f
     after: (id, state) => courses.recordVideoNeeds(id, state),
     needs: (id, needs) => uploads.requestQuestions(id, needs),
   });
-const app = createApp({ db, auth, runner, courses, uploads, workerToken: process.env.SYLLABYTE_WORKER_TOKEN, corsOrigin: process.env.SYLLABYTE_CORS_ORIGIN });
+const app = createApp({ db, auth, runner, courses, uploads, workerToken: process.env.SYLLABYTE_WORKER_TOKEN, corsOrigin: process.env.SYLLABYTE_CORS_ORIGIN,
+  emailLinks: { publicBase, redirectUrls: process.env.SYLLABYTE_AUTH_REDIRECT_URLS?.split(",").map((s) => s.trim()).filter(Boolean), allowExpoGo: !production },
+});
 
 const port = Number(process.env.PORT ?? 8788);
 serve({ fetch: app.fetch, port, hostname: "0.0.0.0" }, () => console.log(`SyllaByte server on http://0.0.0.0:${port}`));

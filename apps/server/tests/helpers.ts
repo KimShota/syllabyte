@@ -1,4 +1,4 @@
-import { createApp } from "../src/app";
+import { createApp, type Deps } from "../src/app";
 import { Auth } from "../src/auth";
 import { Courses } from "../src/courses";
 import { openDb, type Db, type Role } from "../src/db";
@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 
 export const WORKER_TOKEN = "worker-test-token";
 
-export function makeServer(opts: { db?: Db; clock?: () => number; semesterStart?: number; caps?: Partial<Caps> } = {}) {
+export function makeServer(opts: { db?: Db; clock?: () => number; semesterStart?: number; caps?: Partial<Caps>; emailLinks?: Deps["emailLinks"] } = {}) {
   const db = opts.db ?? openDb(":memory:");
   const mailer = memoryMailer();
   const auth = new Auth(db, mailer, "test-secret", opts.clock);
@@ -20,7 +20,7 @@ export function makeServer(opts: { db?: Db; clock?: () => number; semesterStart?
     after: (id, state) => courses.recordVideoNeeds(id, state),
     needs: (id, needs) => uploads.requestQuestions(id, needs),
   });
-  const app = createApp({ db, auth, runner, courses, uploads, workerToken: WORKER_TOKEN });
+  const app = createApp({ db, auth, runner, courses, uploads, workerToken: WORKER_TOKEN, emailLinks: opts.emailLinks });
   const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
     app.request(path, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
 

@@ -1,52 +1,54 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
+import { router, useLocalSearchParams } from "expo-router";
+import * as Linking from "expo-linking";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ApiError } from "@syllabyte/core/api/remote";
 import { Button } from "@/components/Button";
 import { T } from "@/components/T";
-import { requestSignInCode, verifySignInCode } from "@/state/session";
+import { requestSignInLink, useSession, verifySignInLink } from "@/state/session";
 import { colors, fonts, radius, shadow } from "@/theme/tokens";
 
 const looksLikeEmail = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+const signInError = (error: unknown) => error instanceof ApiError && error.status === 0
+  ? "Can't reach the server. Check your connection and try again."
+  : error instanceof ApiError ? error.message : "Something went wrong. Try again.";
 
-/**
- * Sign in with the email the course gave SyllaByte and the 6-character code emailed to it. The root layout moves a
- * signed-in student on to Home. There is no "create account": only enrolled emails get a code, and this screen says
- * the same thing either way.
- */
+/** Enter an enrolled email, then follow the emailed link back here; no code entry is required. */
 export default function SignIn() {
   const insets = useSafeAreaInsets();
-  const [step, setStep] = useState<"email" | "code">("email");
+  const { status } = useSession();
+  const params = useLocalSearchParams<{ ticket?: string | string[] }>();
+  const ticket = typeof params.ticket === "string" ? params.ticket : null;
+  const handledTicket = useRef<string | null>(null);
+  const [step, setStep] = useState<"email" | "sent">("email");
   const [email, setEmail] = useState("");
-  const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function sendCode() {
-    setBusy(true);
+  useEffect(() => {
+    // Wait for saved-session loading so it cannot overwrite the new session. Redeem a ticket only once per mount.
+    if (status !== "signedOut" || !ticket || handledTicket.current === ticket) return;
+    handledTicket.current = ticket;
+    setVerifying(true);
     setError(null);
-    try {
-      await requestSignInCode(email);
-      setStep("code");
-      setCode("");
-    } catch (e) {
-      setError(e instanceof ApiError && e.status === 0 ? "Can't reach the server. Check your connection and try again." : "Something went wrong. Try again.");
-    } finally {
-      setBusy(false);
-    }
-  }
+    void verifySignInLink(ticket).then(() => router.replace("/"), (cause) => {
+      handledTicket.current = null; // a network failure must allow the same emailed link to be opened again
+      setError(signInError(cause));
+      router.setParams({ ticket: undefined });
+    }).finally(() => setVerifying(false));
+  }, [status, ticket]);
 
-  async function submitCode() {
+  async function sendLink() {
+    if (!looksLikeEmail(email) || busy || verifying) return;
     setBusy(true);
     setError(null);
     try {
-      await verifySignInCode(email, code);
-    } catch (e) {
-      setError(
-        e instanceof ApiError && e.status === 0
-          ? "Can't reach the server. Check your connection and try again."
-          : "That code didn't work. Check it, or ask for a new one.",
-      );
+      await requestSignInLink(email, Linking.createURL("/signin"));
+      setStep("sent");
+    } catch (cause) {
+      setError(signInError(cause));
     } finally {
       setBusy(false);
     }
@@ -58,21 +60,19 @@ export default function SignIn() {
         <View style={styles.header}>
           <Image source={require("../../assets/icon.png")} style={styles.logo} accessibilityIgnoresInvertColors />
           <T variant="titleMobile" style={{ fontFamily: fonts.extraBold, textAlign: "center" }} accessibilityRole="header">
-            {step === "email" ? "Sign in to SyllaByte" : "Check your email"}
+            {verifying ? "Signing you in…" : step === "email" ? "Sign in to SyllaByte" : "Check your email"}
           </T>
           <T variant="body" color="#606474" style={{ textAlign: "center", marginTop: 8, maxWidth: 320, fontFamily: fonts.medium }}>
-            {step === "email"
-              ? "Use the email address your course has for you. We'll send you a code."
-              : `If ${email.trim()} is enrolled in a SyllaByte course, we've sent it a 6-character code. It works once and lasts 10 minutes.`}
+            {verifying ? "Verifying your sign-in link."
+              : step === "email" ? "Use the email address your course has for you. We'll email you a sign-in link."
+              : `If ${email.trim()} is enrolled, we've sent a link. Tap it, then choose Open SyllaByte to sign in. The link works once and lasts 10 minutes.`}
           </T>
         </View>
 
         <View style={styles.card}>
-          {step === "email" ? (
+          {step === "email" && !verifying ? (
             <>
-              <T variant="caption" color={colors.onSurfaceVariant} style={styles.label}>
-                Email
-              </T>
+              <T variant="caption" color={colors.onSurfaceVariant} style={styles.label}>Email</T>
               <TextInput
                 accessibilityLabel="Email"
                 value={email}
@@ -85,55 +85,22 @@ export default function SignIn() {
                 placeholder="you@nyu.edu"
                 placeholderTextColor={colors.outline}
                 returnKeyType="send"
-                onSubmitEditing={() => looksLikeEmail(email) && !busy && void sendCode()}
+                onSubmitEditing={() => void sendLink()}
                 style={styles.input}
               />
-              {error ? <T variant="caption" color={colors.error} accessibilityRole="alert">{error}</T> : null}
-              <Button label={busy ? "Sending..." : "Send me a code"} disabled={!looksLikeEmail(email) || busy} onPress={() => void sendCode()} trailingIcon="arrow-forward" />
+              <Button label={busy ? "Sending…" : "Email me a sign-in link"} disabled={!looksLikeEmail(email) || busy} onPress={() => void sendLink()} trailingIcon="arrow-forward" />
             </>
+          ) : verifying ? (
+            <T variant="body" style={{ textAlign: "center" }} accessibilityLiveRegion="polite">Signing in…</T>
           ) : (
             <>
-              <T variant="caption" color={colors.onSurfaceVariant} style={styles.label}>
-                Code
-              </T>
-              <TextInput
-                accessibilityLabel="Sign-in code"
-                value={code}
-                onChangeText={(t) => setCode(t.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
-                autoCapitalize="characters"
-                autoComplete="one-time-code"
-                autoCorrect={false}
-                maxLength={6}
-                textContentType="oneTimeCode"
-                placeholder="ABC123"
-                placeholderTextColor={colors.outline}
-                returnKeyType="done"
-                onSubmitEditing={() => code.length === 6 && !busy && void submitCode()}
-                style={[styles.input, styles.codeInput]}
-              />
-              {error ? <T variant="caption" color={colors.error} accessibilityRole="alert">{error}</T> : null}
-              <Button label={busy ? "Signing in..." : "Sign in"} disabled={code.length !== 6 || busy} onPress={() => void submitCode()} />
-              <View style={styles.links}>
-                <Pressable accessibilityRole="button" onPress={() => void sendCode()} disabled={busy} hitSlop={8}>
-                  <T variant="caption" color={colors.primary} style={{ fontFamily: fonts.semibold }}>
-                    Send a new code
-                  </T>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={() => {
-                    setStep("email");
-                    setError(null);
-                  }}
-                  hitSlop={8}
-                >
-                  <T variant="caption" color={colors.primary} style={{ fontFamily: fonts.semibold }}>
-                    Use a different email
-                  </T>
-                </Pressable>
-              </View>
+              <Button label={busy ? "Sending…" : "Send a new link"} disabled={busy} onPress={() => void sendLink()} />
+              <Pressable accessibilityRole="button" onPress={() => { setStep("email"); setError(null); }} disabled={busy} hitSlop={8} style={styles.links}>
+                <T variant="caption" color={colors.primary} style={{ fontFamily: fonts.semibold }}>Use a different email</T>
+              </Pressable>
             </>
           )}
+          {error ? <T variant="caption" color={colors.error} accessibilityRole="alert">{error}</T> : null}
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -166,6 +133,5 @@ const styles = StyleSheet.create({
     fontSize: 17,
     color: colors.onSurface,
   },
-  codeInput: { fontFamily: fonts.monoSemibold, fontSize: 24, letterSpacing: 8, textAlign: "center" },
   links: { flexDirection: "row", justifyContent: "space-between", marginTop: 4 },
 });

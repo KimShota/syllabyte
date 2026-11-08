@@ -5,6 +5,7 @@
 set -euo pipefail
 ENV_FILE=/etc/syllabyte/env
 FROM="${1:-SyllaByte <signin@syllabyte.app>}"
+PUBLIC_URL="${2:-https://api.syllabyte.app}"
 
 read -rsp "Paste the Resend API key (nothing will show), then press Enter: " KEY
 echo
@@ -13,15 +14,16 @@ if [[ "$KEY" != re_* ]]; then
   exit 1
 fi
 
-sed -i '/^RESEND_API_KEY=/d;/^MAIL_FROM=/d;/^NODE_ENV=/d' "$ENV_FILE"
+sed -i '/^RESEND_API_KEY=/d;/^MAIL_FROM=/d;/^NODE_ENV=/d;/^SYLLABYTE_PUBLIC_URL=/d' "$ENV_FILE"
 {
   echo "NODE_ENV=production"
   echo "RESEND_API_KEY=$KEY"
   echo "MAIL_FROM=\"$FROM\""
+  echo "SYLLABYTE_PUBLIC_URL=$PUBLIC_URL"
 } >> "$ENV_FILE"
 unset KEY
 
 systemctl restart syllabyte
 sleep 2
 systemctl is-active syllabyte
-echo "Real emails are on. Sign-in codes are no longer printed in the log."
+echo "Real emails are on. Sign-in links are emailed instead of printed in the log."

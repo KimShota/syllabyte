@@ -40,6 +40,18 @@ function phone(s: ReturnType<typeof makeServer>) {
 }
 
 describe("the phone's backend client", () => {
+  it("exchanges an email link for a working app session without code entry", async () => {
+    const s = makeServer();
+    const p = phone(s);
+    s.auth.addToAllowlist("ann@nyu.edu", "student");
+    await p.backend.requestEmailLink("ann@nyu.edu", "syllabyte://signin");
+    const link = new URL(s.mailer.sent[0].text.match(/https?:\/\/[^\s]+/)![0]);
+    const result = await p.backend.verifyEmailLink(link.searchParams.get("ticket")!);
+    p.setToken(result.token);
+    expect(result.email).toBe("ann@nyu.edu");
+    expect((await p.backend.api.getMe()).participant_code).toBe(result.participant_code);
+  });
+
   it("signs in with an emailed code and then calls the Api like the mock", async () => {
     const s = makeServer();
     const p = phone(s);

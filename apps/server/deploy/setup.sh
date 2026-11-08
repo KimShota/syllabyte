@@ -48,6 +48,7 @@ if [ ! -f "$ENV_FILE" ]; then
 SYLLABYTE_SECRET=$(openssl rand -hex 32)
 SYLLABYTE_DB=$DATA_DIR/syllabyte.db
 PORT=8788
+SYLLABYTE_PUBLIC_URL=https://api.syllabyte.app
 # Test mode: no NODE_ENV and no RESEND_API_KEY, so sign-in codes are printed in the log (journalctl -u syllabyte).
 # For real students set NODE_ENV=production, RESEND_API_KEY=... and MAIL_FROM="SyllaByte <signin@your-domain>".
 ENVEOF

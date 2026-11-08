@@ -33,6 +33,15 @@ CREATE TABLE IF NOT EXISTS login_codes (
   used       INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS login_codes_email ON login_codes (email, created_at);
+CREATE TABLE IF NOT EXISTS login_links (
+  token_hash TEXT PRIMARY KEY,
+  email TEXT NOT NULL,
+  redirect_url TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS login_links_email ON login_links (email, created_at);
 CREATE TABLE IF NOT EXISTS sessions (
   token_hash TEXT PRIMARY KEY,
   user_id    TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
