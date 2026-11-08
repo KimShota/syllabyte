@@ -80,7 +80,7 @@ async function json(c: Context): Promise<Record<string, unknown>> {
 export function createApp({ db, auth, runner, courses, uploads, workerToken, corsOrigin }: Deps): Hono<Env> {
   const app = new Hono<Env>();
   if (corsOrigin) app.use("/api/*", cors({ origin: corsOrigin, allowHeaders: ["Authorization", "Content-Type", "X-Visit"], allowMethods: ["GET", "POST", "OPTIONS"] }));
-  // slide and syllabus files are checked one by one (25 MB each, src/uploads.ts); everything else is small
+  // slide and syllabus files are checked one by one (100 MB each by default, src/uploads.ts); everything else is small
   const isUpload = (path: string) => /^\/api\/courses(\/[^/]+\/slides)?$/.test(path);
   const small = bodyLimit({ maxSize: 512 * 1024, onError: (c) => c.json({ error: "too large" }, 413) });
   const files = bodyLimit({ maxSize: 160 * 1024 * 1024, onError: (c) => c.json({ error: "Those files are too large together. Upload fewer at a time." }, 413) });

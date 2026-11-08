@@ -31,7 +31,7 @@ export interface Caps {
   /** courses one student can be in (a syllabus that joins one they are in already doesn't count) */
   coursesPerStudent: number;
 }
-export const DEFAULT_CAPS: Caps = { decksPerCourse: 30, maxFileBytes: 25 * 1024 * 1024, newDecksPerDay: 15, coursesPerStudent: 6 };
+export const DEFAULT_CAPS: Caps = { decksPerCourse: 30, maxFileBytes: 100 * 1024 * 1024, newDecksPerDay: 15, coursesPerStudent: 6 };
 
 const SYLLABUS_TYPES = new Set([".pdf", ".docx"]);
 const SLIDE_TYPES = new Set([".pdf", ".pptx"]);
@@ -186,7 +186,7 @@ export class Uploads {
     if (pending) throw new UploadError("Your syllabus is still being read.", 409);
     const ext = extname(fileName).toLowerCase();
     if (!SYLLABUS_TYPES.has(ext)) throw new UploadError("A syllabus must be a PDF or Word (.docx) file.");
-    if (bytes.byteLength > this.caps.maxFileBytes) throw new UploadError("That file is over 25 MB.", 413);
+    if (bytes.byteLength > this.caps.maxFileBytes) throw new UploadError(`That file is over ${this.maxFileMb()} MB.`, 413);
     const id = randomUUID();
     const path = this.store("syllabi", id, fileName, bytes);
     this.db
@@ -194,6 +194,11 @@ export class Uploads {
       .run(id, userId, fileName, path, this.now());
     this.enqueue("syllabus", id, null);
     return { upload_id: id };
+  }
+
+  /** The per-file cap in whole MB, for error messages. */
+  private maxFileMb(): number {
+    return Math.round(this.caps.maxFileBytes / 1024 / 1024);
   }
 
   /** The worker read the syllabus: is it a new course? A known one is joined right away (no model call). */
@@ -352,7 +357,7 @@ export class Uploads {
       const ext = extname(f.name).toLowerCase();
       if (ext === ".key") throw new UploadError(`${f.name}: Keynote files can't be read. In Keynote, choose File > Export To > PDF, then upload the PDF.`);
       if (!SLIDE_TYPES.has(ext)) throw new UploadError(`${f.name}: slides must be a PDF or PowerPoint (.pptx) file.`);
-      if (f.bytes.byteLength > this.caps.maxFileBytes) throw new UploadError(`${f.name} is over 25 MB.`, 413);
+      if (f.bytes.byteLength > this.caps.maxFileBytes) throw new UploadError(`${f.name} is over ${this.maxFileMb()} MB.`, 413);
     }
     const ids: string[] = [];
     for (const f of files) {

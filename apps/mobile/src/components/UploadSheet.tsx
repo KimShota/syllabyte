@@ -71,7 +71,7 @@ export function UploadSheet({ visible, onClose, onSubmit }: { visible: boolean; 
               {files.length ? files.join(", ") : "Tap to choose files"}
             </T>
             <T variant="caption" color={colors.onSurfaceVariant} style={{ fontSize: 11, marginTop: 2 }}>
-              PDF, DOCX, or PPTX up to 25MB
+              PDF, DOCX, or PPTX up to 100MB
             </T>
           </Pressable>
         </View>
