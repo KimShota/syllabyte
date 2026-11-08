@@ -3,8 +3,8 @@
  * one visit per launch, the event context, and the React hooks the screens use. Screens read and write the study
  * data only through the core's `api`, as on the web, so Phase 1 can swap in the backend.
  *
- * Every student who has the app has already agreed to take part in the study (consent is collected before they
- * get it), so the app records research consent itself; there is no consent screen.
+ * Demo users and invited study participants have given prior research consent. The backend session layer keeps
+ * public sign-ups separate and does not automatically record research consent for them.
  *
  * A few settings belong to this app alone (playback speed, "notify me", the first-run screens seen); they are kept
  * beside it under their own key.

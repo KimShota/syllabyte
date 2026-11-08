@@ -121,7 +121,7 @@ export default function Profile() {
                 removeProfilePhoto();
                 signOut();
                 if (router.canDismiss()) router.dismissAll();
-                router.replace(REMOTE ? "/signin" : "/welcome");
+                router.replace(REMOTE ? "/landing" : "/welcome");
               }}
               style={({ pressed }) => [styles.signOut, pressed && { backgroundColor: colors.surfaceContainerHighest }]}
             >

@@ -12,6 +12,7 @@ import { REMOTE } from "@/data/backend";
 import { setScreen, startApp, useAppReady, usePrefs, useQuery } from "@/state/app";
 import { CourseSync } from "@/state/course";
 import { retryConnection, useReachable, useSession } from "@/state/session";
+import { isAuthPage, sessionRedirect } from "@/state/sessionRoutes";
 import { T } from "@/components/T";
 import { colors, fonts } from "@/theme/tokens";
 
@@ -21,7 +22,7 @@ void startApp();
 
 /** The quick check is the first thing every student does, and there is no way around it (plan D8, mobile-app-plan). */
 const OPEN_BEFORE_BASELINE = (pathname: string) =>
-  pathname === "/signin" || pathname === "/welcome" || pathname === "/analyzing" || pathname.startsWith("/quiz") ||
+  isAuthPage(pathname) || pathname === "/welcome" || pathname === "/analyzing" || pathname.startsWith("/quiz") ||
   // adding slides is how an uploaded course gets its first questions
   /^\/course\/[^/]+\/review$/.test(pathname);
 
@@ -41,13 +42,13 @@ function BaselineGate({ pathname }: { pathname: string }) {
   return null;
 }
 
-/** With a backend, a student who isn't signed in sees only the sign-in screen; once signed in they leave it. */
+/** Signed-out users enter through the landing page; email links can open sign-in directly. */
 function SessionGate({ pathname }: { pathname: string }) {
   const { status } = useSession();
   useEffect(() => {
     if (!REMOTE) return;
-    if (status === "signedOut" && pathname !== "/signin") router.replace("/signin");
-    if (status === "signedIn" && pathname === "/signin") router.replace("/");
+    const destination = sessionRedirect(status, pathname);
+    if (destination) router.replace(destination);
   }, [status, pathname]);
   return null;
 }
@@ -57,7 +58,7 @@ function ConnectionBanner({ pathname }: { pathname: string }) {
   const reachable = useReachable();
   const insets = useSafeAreaInsets();
   // the sign-in screen explains the problem itself
-  if (!REMOTE || reachable || pathname === "/signin") return null;
+  if (!REMOTE || reachable || isAuthPage(pathname)) return null;
   return (
     <View style={[styles.banner, { paddingTop: insets.top + 8 }]} accessibilityRole="alert">
       <T variant="caption" color={colors.onPrimary} style={{ flex: 1 }}>
@@ -103,7 +104,8 @@ export default function RootLayout() {
       <BaselineGate pathname={pathname} />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.surface } }}>
         <Stack.Screen name="index" />
-        <Stack.Screen name="signin" options={{ animation: "fade", gestureEnabled: false }} />
+        <Stack.Screen name="landing" options={{ animation: "fade", gestureEnabled: false }} />
+        <Stack.Screen name="signin" options={{ animation: "slide_from_right" }} />
         <Stack.Screen name="welcome" options={{ animation: "fade" }} />
         <Stack.Screen name="analyzing" options={{ animation: "fade", gestureEnabled: false }} />
         <Stack.Screen name="course/[courseId]/review" options={{ animation: "slide_from_bottom" }} />

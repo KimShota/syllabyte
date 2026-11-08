@@ -1,7 +1,7 @@
 /**
  * Signing in and the connection to the backend (apps/server), when there is one (data/backend.ts).
  *
- * The student signs in with a single-use link emailed to their enrolled address. The session token lives
+ * The student signs up or signs in with a single-use email verification link. The session token lives
  * in the phone's secure storage, so they stay signed in; if the server ever turns it down they are signed out.
  * With a backend, every `api` call goes to the server, UI events are sent in batches, and the study data lives
  * there, not on the phone.
@@ -106,8 +106,9 @@ async function endSession(): Promise<void> {
   setSession({ status: "signedOut", email: null });
 }
 
-/** Every student agreed to take part before they got the app, so the app records research consent itself. */
-async function ensureConsent(): Promise<void> {
+/** Only invited study participants gave prior consent; public account creation does not imply research consent. */
+async function ensureConsent(studyParticipant = true): Promise<void> {
+  if (!studyParticipant) return;
   const me = await api.getMe();
   if (me.consent === null) await api.postConsent(true);
 }
@@ -123,7 +124,7 @@ export async function loadSession(): Promise<void> {
   try {
     const who = await backend.session();
     setSession({ status: "signedIn", email: who.email });
-    await ensureConsent();
+    await ensureConsent(who.study_participant);
   } catch (e) {
     // 401 already signed them out. If the server just can't be reached, keep the token and let them retry.
     if (e instanceof ApiError && e.status === 0) setSession({ status: "signedIn", email: null });
@@ -134,9 +135,9 @@ export async function requestSignInCode(email: string): Promise<void> {
   await backend?.requestCode(email.trim());
 }
 
-export async function requestSignInLink(email: string, redirectUrl: string): Promise<void> {
+export async function requestSignInLink(email: string, redirectUrl: string, intent: "signin" | "signup" = "signin"): Promise<void> {
   if (!backend) throw new Error("no backend");
-  await backend.requestEmailLink(email.trim(), redirectUrl);
+  await backend.requestEmailLink(email.trim(), redirectUrl, intent);
 }
 
 export async function verifySignInLink(ticket: string): Promise<void> {
@@ -145,7 +146,7 @@ export async function verifySignInLink(ticket: string): Promise<void> {
   token = res.token;
   await tokenStore.set(res.token).catch(() => {});
   setSession({ status: "signedIn", email: res.email });
-  await ensureConsent().catch(() => {});
+  await ensureConsent(res.study_participant).catch(() => {});
   touch();
 }
 
@@ -156,7 +157,7 @@ export async function verifySignInCode(email: string, code: string): Promise<Sig
   token = res.token;
   await tokenStore.set(res.token).catch(() => {});
   setSession({ status: "signedIn", email: email.trim().toLowerCase() });
-  await ensureConsent().catch(() => {});
+  await ensureConsent(res.study_participant).catch(() => {});
   touch();
   return res;
 }

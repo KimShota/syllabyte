@@ -43,6 +43,8 @@ export interface SignedIn {
   token: string;
   role: "student" | "instructor" | "researcher";
   participant_code: string;
+  /** False for public sign-ups, whose account creation is not research consent. */
+  study_participant?: boolean;
 }
 
 export function createBackend(o: BackendOptions) {
@@ -143,8 +145,8 @@ export function createBackend(o: BackendOptions) {
 
   return {
     api,
-    async requestEmailLink(email: string, redirectUrl: string): Promise<void> {
-      await request("/api/auth/request-link", { email, redirectUrl }, false);
+    async requestEmailLink(email: string, redirectUrl: string, intent: "signin" | "signup" = "signin"): Promise<void> {
+      await request("/api/auth/request-link", { email, redirectUrl, intent }, false);
     },
     async verifyEmailLink(ticket: string): Promise<SignedIn & { email: string }> {
       return (await request("/api/auth/verify-link", { ticket }, false)) as unknown as SignedIn & { email: string };
@@ -160,7 +162,7 @@ export function createBackend(o: BackendOptions) {
     async logout(): Promise<void> {
       await request("/api/session/logout", {}, true).catch(() => undefined);
     },
-    async session(): Promise<{ email: string; role: SignedIn["role"]; participant_code: string }> {
+    async session(): Promise<{ email: string; role: SignedIn["role"]; participant_code: string; study_participant?: boolean }> {
       const token = o.token();
       if (!token) throw new ApiError("Sign in to continue", 401);
       const res = await doFetch(`${o.base}/api/session`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => null);
@@ -169,7 +171,7 @@ export function createBackend(o: BackendOptions) {
         o.onUnauthorized();
         throw new ApiError("Sign in again", 401);
       }
-      return (await res.json()) as { email: string; role: SignedIn["role"]; participant_code: string };
+      return (await res.json()) as { email: string; role: SignedIn["role"]; participant_code: string; study_participant?: boolean };
     },
     async sendEvents(events: ClientEvent[]): Promise<void> {
       await request("/api/events", { events }, true);

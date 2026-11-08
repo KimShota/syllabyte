@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS users (
   id               TEXT PRIMARY KEY,
   email            TEXT NOT NULL UNIQUE,
   participant_code TEXT NOT NULL UNIQUE,
+  self_registered  INTEGER NOT NULL DEFAULT 0,
   created_at       INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS login_codes (
@@ -37,6 +38,7 @@ CREATE TABLE IF NOT EXISTS login_links (
   token_hash TEXT PRIMARY KEY,
   email TEXT NOT NULL,
   redirect_url TEXT NOT NULL,
+  intent TEXT NOT NULL DEFAULT 'signin' CHECK (intent IN ('signin', 'signup')),
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
   used INTEGER NOT NULL DEFAULT 0
@@ -252,6 +254,8 @@ export function openDb(path: string): Db {
   db.exec(SCHEMA);
   // a syllabus's failure is shown to the student until they have seen it (a student with courses can leave the screen)
   if (!columns(db, "syllabus_uploads").includes("seen")) db.exec("ALTER TABLE syllabus_uploads ADD COLUMN seen INTEGER NOT NULL DEFAULT 0");
+  if (!columns(db, "login_links").includes("intent")) db.exec("ALTER TABLE login_links ADD COLUMN intent TEXT NOT NULL DEFAULT 'signin' CHECK (intent IN ('signin', 'signup'))");
+  if (!columns(db, "users").includes("self_registered")) db.exec("ALTER TABLE users ADD COLUMN self_registered INTEGER NOT NULL DEFAULT 0");
   migrateStates(db);
   return db;
 }

@@ -95,7 +95,8 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
 
   // ---- sign-in
   app.post("/api/auth/request-link", async (c) => {
-    const { email, redirectUrl } = await json(c);
+    const { email, redirectUrl, intent = "signin" } = await json(c);
+    if (intent !== "signin" && intent !== "signup") return c.json({ error: "Choose sign up or sign in." }, 400);
     const base = emailLinks?.publicBase ?? new URL(c.req.url).origin;
     let destination: URL;
     try {
@@ -110,7 +111,7 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
     }
     if (typeof email === "string") {
       try {
-        await auth.requestEmailLink(email, destination.href, base);
+        await auth.requestEmailLink(email, destination.href, base, intent);
       } catch (error) {
         console.error("sending the sign-in link failed:", error);
       }
@@ -135,7 +136,7 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
     const { ticket } = await json(c);
     const ok = typeof ticket === "string" ? auth.verifyEmailLink(ticket) : null;
     if (!ok) return c.json({ error: "That sign-in link has expired or was already used. Request a new one." }, 401);
-    return c.json({ token: ok.token, email: ok.user.email, role: ok.user.role, participant_code: ok.user.participant_code });
+    return c.json({ token: ok.token, email: ok.user.email, role: ok.user.role, participant_code: ok.user.participant_code, study_participant: auth.isStudyParticipant(ok.user.id) });
   });
 
   app.post("/api/auth/request-code", async (c) => {
@@ -155,7 +156,7 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
     const { email, code } = await json(c);
     const ok = typeof email === "string" && typeof code === "string" ? auth.verifyCode(email, code) : null;
     if (!ok) return c.json({ error: "That code didn't work. Ask for a new one." }, 401);
-    return c.json({ token: ok.token, role: ok.user.role, participant_code: ok.user.participant_code });
+    return c.json({ token: ok.token, role: ok.user.role, participant_code: ok.user.participant_code, study_participant: auth.isStudyParticipant(ok.user.id) });
   });
 
   // ---- everything below needs a session
@@ -177,8 +178,8 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
   app.use("/api/questions/*", needUser);
 
   app.get("/api/session", (c) => {
-    const { email, role, participant_code } = c.get("user");
-    return c.json({ email, role, participant_code });
+    const { id, email, role, participant_code } = c.get("user");
+    return c.json({ email, role, participant_code, study_participant: auth.isStudyParticipant(id) });
   });
 
   app.post("/api/session/logout", needUser, (c) => {

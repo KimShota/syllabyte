@@ -40,6 +40,21 @@ function phone(s: ReturnType<typeof makeServer>) {
 }
 
 describe("the phone's backend client", () => {
+  it("creates a verified public account that can upload a syllabus and keeps research consent unset", async () => {
+    const s = makeServer();
+    const p = phone(s);
+    await p.backend.requestEmailLink("new@example.com", "syllabyte://signin", "signup");
+    const link = new URL(s.mailer.sent[0].text.match(/https?:\/\/[^\s]+/)![0]);
+    const result = await p.backend.verifyEmailLink(link.searchParams.get("ticket")!);
+    expect(result).toMatchObject({ email: "new@example.com", role: "student", study_participant: false });
+    p.setToken(result.token);
+    expect((await p.backend.api.getMe()).consent).toBeNull();
+    expect((await p.backend.session()).study_participant).toBe(false);
+    await p.backend.courses.create({ name: "syllabus.pdf", uri: "file:///syllabus.pdf", file: new Blob(["Syllabus of CS-UH 2219E"]) });
+    await work(s);
+    expect((await p.backend.courses.mine()).status).toBe("ready");
+  });
+
   it("exchanges an email link for a working app session without code entry", async () => {
     const s = makeServer();
     const p = phone(s);

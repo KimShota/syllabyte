@@ -5,8 +5,8 @@ import type { Mailer } from "./mail";
 /**
  * Sign-in by single-use email link, with emailed codes retained for older clients. A legacy client gets a 6-digit code
  * that works once for 10 minutes, and types it into the app, which then keeps a session token in secure storage.
- * A code needs no universal-link setup and works the same on iOS and Android. Only emails on the allowlist can sign
- * in, and the server never says whether an email is on it.
+ * Sign-up links create a student account only after email verification. Existing/invited users can sign in; removed
+ * accounts cannot restore their access by signing up again. Requests never reveal whether an account exists.
  */
 const CODE_TTL_MS = 10 * 60_000;
 const MAX_ATTEMPTS = 5;
@@ -86,19 +86,22 @@ export class Auth {
   }
 
   /** Store only a hash; email the single-use ticket through a browser landing page, then back into the app. */
-  async requestEmailLink(rawEmail: string, redirectUrl: string, publicBase: string): Promise<void> {
+  async requestEmailLink(rawEmail: string, redirectUrl: string, publicBase: string, intent: "signin" | "signup" = "signin"): Promise<void> {
     const email = normalizeEmail(rawEmail);
-    if (!looksLikeEmail(email) || !this.db.prepare("SELECT 1 FROM allowlist WHERE email = ?").get(email)) return;
+    if (!looksLikeEmail(email)) return;
+    const invited = this.db.prepare("SELECT 1 FROM allowlist WHERE email = ?").get(email);
+    if (!invited && (intent !== "signup" || this.db.prepare("SELECT 1 FROM users WHERE email = ?").get(email))) return;
     const now = this.clock();
     const recent = this.db.prepare("SELECT COUNT(*) AS n FROM login_links WHERE email = ? AND created_at > ?").get(email, now - 3600_000) as { n: number };
     if (recent.n >= MAX_CODES_PER_HOUR) return;
     const ticket = randomBytes(32).toString("base64url");
-    this.db.prepare("INSERT INTO login_links (token_hash, email, redirect_url, created_at, expires_at) VALUES (?, ?, ?, ?, ?)")
-      .run(sha256(ticket), email, redirectUrl, now, now + CODE_TTL_MS);
+    this.db.prepare("INSERT INTO login_links (token_hash, email, redirect_url, intent, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(sha256(ticket), email, redirectUrl, invited ? "signin" : "signup", now, now + CODE_TTL_MS);
     const link = new URL("/api/auth/email-link", publicBase);
     link.searchParams.set("ticket", ticket);
     try {
-      await this.mailer.send(email, "Sign in to SyllaByte", `Sign in to SyllaByte:\n\n${link.href}\n\nThis link works once and expires in 10 minutes. If you did not request it, ignore this email.\n`);
+      const subject = intent === "signup" ? "Verify your SyllaByte email" : "Sign in to SyllaByte";
+      await this.mailer.send(email, subject, `${subject}:\n\n${link.href}\n\nThis link works once and expires in 10 minutes. If you did not request it, ignore this email.\n`);
     } catch (error) {
       this.db.prepare("UPDATE login_links SET used = 1 WHERE token_hash = ?").run(sha256(ticket));
       throw error;
@@ -111,24 +114,51 @@ export class Auth {
     if (!row) return null;
     const url = new URL(row.redirect_url);
     url.searchParams.set("ticket", ticket);
+    if (row.intent === "signup") url.searchParams.set("mode", "signup");
     return url.href;
   }
 
-  private emailLink(ticket: string): { email: string; redirect_url: string } | undefined {
+  private emailLink(ticket: string): { email: string; redirect_url: string; intent: "signin" | "signup" } | undefined {
     if (!/^[A-Za-z0-9_-]{43}$/.test(ticket)) return undefined;
-    return this.db.prepare("SELECT email, redirect_url FROM login_links WHERE token_hash = ? AND used = 0 AND expires_at > ?")
-      .get(sha256(ticket), this.clock()) as { email: string; redirect_url: string } | undefined;
+    return this.db.prepare("SELECT email, redirect_url, intent FROM login_links WHERE token_hash = ? AND used = 0 AND expires_at > ?")
+      .get(sha256(ticket), this.clock()) as { email: string; redirect_url: string; intent: "signin" | "signup" } | undefined;
   }
 
   verifyEmailLink(ticket: string): { token: string; user: User } | null {
     const row = this.emailLink(ticket);
     if (!row) return null;
-    const entry = this.db.prepare("SELECT role FROM allowlist WHERE email = ?").get(row.email) as { role: Role } | undefined;
-    if (!entry) return null;
-    const used = this.db.prepare("UPDATE login_links SET used = 1 WHERE token_hash = ? AND used = 0 AND expires_at > ?")
-      .run(sha256(ticket), this.clock());
-    if (!used.changes) return null;
-    return this.createSession(row.email, entry.role);
+    this.db.exec("SAVEPOINT verify_email_link");
+    try {
+      let entry = this.db.prepare("SELECT role FROM allowlist WHERE email = ?").get(row.email) as { role: Role } | undefined;
+      const existing = this.db.prepare("SELECT 1 FROM users WHERE email = ?").get(row.email);
+      const registering = !entry && !existing && row.intent === "signup";
+      if (!entry && !registering) {
+        this.db.exec("RELEASE verify_email_link");
+        return null;
+      }
+      const used = this.db.prepare("UPDATE login_links SET used = 1 WHERE token_hash = ? AND used = 0 AND expires_at > ?")
+        .run(sha256(ticket), this.clock());
+      if (!used.changes) {
+        this.db.exec("RELEASE verify_email_link");
+        return null;
+      }
+      if (registering) {
+        this.db.prepare("INSERT INTO allowlist (email, role, added_at) VALUES (?, 'student', ?)").run(row.email, this.clock());
+        entry = { role: "student" };
+      }
+      const session = this.createSession(row.email, entry!.role);
+      if (registering) this.db.prepare("UPDATE users SET self_registered = 1 WHERE id = ?").run(session.user.id);
+      this.db.exec("RELEASE verify_email_link");
+      return session;
+    } catch (error) {
+      this.db.exec("ROLLBACK TO verify_email_link; RELEASE verify_email_link");
+      throw error;
+    }
+  }
+
+  /** Public account creation is distinct from the researcher's prior study enrollment. */
+  isStudyParticipant(userId: string): boolean {
+    return (this.db.prepare("SELECT self_registered FROM users WHERE id = ?").get(userId) as { self_registered: number } | undefined)?.self_registered === 0;
   }
 
   /** The session token for a right code, or null. A code that was used, expired or guessed wrong 5 times is dead. */

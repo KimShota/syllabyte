@@ -32,11 +32,17 @@ Endpoints (all under `/api`): `POST auth/request-code`, `POST auth/verify`, `GET
 
 ## Email-link sign-in
 
-The mobile app requests `POST auth/request-link` with `{email, redirectUrl}`, shows "Check your email", and redeems
-the emailed ticket through `POST auth/verify-link`. There is no code entry. Only enrolled emails receive a link;
-requests look the same for unenrolled addresses. Links expire after 10 minutes, work once, and are stored as hashes.
+The mobile app requests `POST auth/request-link` with `{email, redirectUrl, intent}`, where `intent` is `signup` or
+`signin` (the default for older clients). Sign up sends a verification link to a new email and creates a student
+account only when `POST auth/verify-link` redeems the ticket. Sign in sends links only to existing/invited accounts.
+Responses do not reveal whether an account exists. Repeating sign up for an existing account preserves its identity
+and role; removed accounts cannot restore their access through signup. There is no code entry.
+Links expire after 10 minutes, work once, and are stored as hashes.
 The browser landing page does not consume the ticket, so mail scanners cannot invalidate it by following the link.
 Existing accounts, course progress, and session tokens are preserved. The older code endpoints remain for old clients.
+Public sign-ups have `study_participant: false` in their session and are not automatically recorded as consenting
+research participants. Existing invited users keep their prior study enrollment. Database upgrades preserve existing
+users and pending sign-in links.
 
 For local email delivery, copy `.env.example` to `.env` in `apps/server`, set `RESEND_API_KEY` and `MAIL_FROM`, and
 restart the backend. The `.env` file is ignored by Git and loaded automatically. Do not put the key in the mobile app.

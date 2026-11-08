@@ -92,7 +92,7 @@ export default function LectureRoadmap() {
                 <View style={styles.sectionHead}>
                   <View style={styles.sectionTitle}>
                     <View style={[styles.sectionDot, { backgroundColor: complete ? colors.secondary : started ? colors.primary : colors.outline }]} />
-                    <T variant="bodySemibold">{section.title}</T>
+                    <T variant="bodySemibold" style={styles.sectionTitleText}>{section.title}</T>
                   </View>
                   <SegmentBar segments={segs} tone={complete ? "secondary" : "primary"} />
                 </View>
@@ -207,7 +207,8 @@ const styles = StyleSheet.create({
   section: { marginBottom: 24 },
   sectionHead: { backgroundColor: colors.surfaceContainerLowest, borderRadius: radius.lg, padding: 16, ...shadow.card, zIndex: 2 },
   sectionTitle: { flexDirection: "row", alignItems: "center", gap: 8 },
-  sectionDot: { width: 10, height: 10, borderRadius: 5 },
+  sectionTitleText: { flex: 1, minWidth: 0 },
+  sectionDot: { width: 10, height: 10, borderRadius: 5, flexShrink: 0 },
   kuCol: { position: "absolute", width: LABEL_W, alignItems: "center" },
   node: { alignItems: "center", justifyContent: "center" },
   nodeWatched: { backgroundColor: colors.secondary, ...shadow.card },

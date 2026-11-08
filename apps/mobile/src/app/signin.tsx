@@ -5,6 +5,7 @@ import * as Linking from "expo-linking";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ApiError } from "@syllabyte/core/api/remote";
 import { Button } from "@/components/Button";
+import { IconButton } from "@/components/Header";
 import { T } from "@/components/T";
 import { requestSignInLink, useSession, verifySignInLink } from "@/state/session";
 import { colors, fonts, radius, shadow } from "@/theme/tokens";
@@ -14,11 +15,12 @@ const signInError = (error: unknown) => error instanceof ApiError && error.statu
   ? "Can't reach the server. Check your connection and try again."
   : error instanceof ApiError ? error.message : "Something went wrong. Try again.";
 
-/** Enter an enrolled email, then follow the emailed link back here; no code entry is required. */
+/** Sign up with a new email or sign in to an existing account, then follow the email verification link. */
 export default function SignIn() {
   const insets = useSafeAreaInsets();
   const { status } = useSession();
-  const params = useLocalSearchParams<{ ticket?: string | string[] }>();
+  const params = useLocalSearchParams<{ ticket?: string | string[]; mode?: string }>();
+  const signingUp = params.mode === "signup";
   const ticket = typeof params.ticket === "string" ? params.ticket : null;
   const handledTicket = useRef<string | null>(null);
   const [step, setStep] = useState<"email" | "sent">("email");
@@ -45,7 +47,7 @@ export default function SignIn() {
     setBusy(true);
     setError(null);
     try {
-      await requestSignInLink(email, Linking.createURL("/signin"));
+      await requestSignInLink(email, Linking.createURL("/signin"), signingUp ? "signup" : "signin");
       setStep("sent");
     } catch (cause) {
       setError(signInError(cause));
@@ -56,16 +58,20 @@ export default function SignIn() {
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom + 8 }]}>
+      <View style={styles.topBar}>
+        <IconButton icon="arrow-back" label="Back to welcome" onPress={() => router.dismissTo("/landing")} />
+      </View>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
           <Image source={require("../../assets/icon.png")} style={styles.logo} accessibilityIgnoresInvertColors />
           <T variant="titleMobile" style={{ fontFamily: fonts.extraBold, textAlign: "center" }} accessibilityRole="header">
-            {verifying ? "Signing you in…" : step === "email" ? "Sign in to SyllaByte" : "Check your email"}
+            {verifying ? "Signing you in…" : step === "email" ? signingUp ? "Create your account" : "Sign in to SyllaByte" : signingUp ? "Verify your email" : "Check your email"}
           </T>
           <T variant="body" color="#606474" style={{ textAlign: "center", marginTop: 8, maxWidth: 320, fontFamily: fonts.medium }}>
             {verifying ? "Verifying your sign-in link."
-              : step === "email" ? "Use the email address your course has for you. We'll email you a sign-in link."
-              : `If ${email.trim()} is enrolled, we've sent a link. Tap it, then choose Open SyllaByte to sign in. The link works once and lasts 10 minutes.`}
+              : step === "email" ? signingUp ? "Enter your email. We'll send a link to create your account." : "Enter your account email. We'll send a sign-in link."
+              : signingUp ? `Check ${email.trim()} for a verification link. Open it to finish creating your account. The link lasts 10 minutes.`
+              : `If ${email.trim()} has an account, we've sent a sign-in link. The link works once and lasts 10 minutes.`}
           </T>
         </View>
 
@@ -82,13 +88,13 @@ export default function SignIn() {
                 autoCorrect={false}
                 keyboardType="email-address"
                 textContentType="emailAddress"
-                placeholder="you@nyu.edu"
+                placeholder="you@example.com"
                 placeholderTextColor={colors.outline}
                 returnKeyType="send"
                 onSubmitEditing={() => void sendLink()}
                 style={styles.input}
               />
-              <Button label={busy ? "Sending…" : "Email me a sign-in link"} disabled={!looksLikeEmail(email) || busy} onPress={() => void sendLink()} trailingIcon="arrow-forward" />
+              <Button label={busy ? "Sending…" : signingUp ? "Verify my email" : "Email me a sign-in link"} disabled={!looksLikeEmail(email) || busy} onPress={() => void sendLink()} trailingIcon="arrow-forward" />
             </>
           ) : verifying ? (
             <T variant="body" style={{ textAlign: "center" }} accessibilityLiveRegion="polite">Signing in…</T>
@@ -109,6 +115,7 @@ export default function SignIn() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: "#f2f3f7" },
+  topBar: { paddingHorizontal: 12, alignItems: "flex-start" },
   content: { paddingHorizontal: 16, paddingTop: 48, paddingBottom: 24 },
   header: { alignItems: "center", marginBottom: 28 },
   logo: { width: 64, height: 64, borderRadius: radius.xl, marginBottom: 20 },
