@@ -141,6 +141,19 @@ function rebuildPlaylist(keepManual = false): void {
   });
 }
 
+/**
+ * With the server, videos are made on demand, so one can arrive after the student's playlist was last built (it is
+ * saved state, rebuilt at a sitting, a missed question and the like). Rebuilds it when it can now list a video it does
+ * not, and only then, so the order a student has seen doesn't move. Not an Api call: the server runs it before each of
+ * a student's requests (apps/server/src/runner.ts). The demo course has all its videos from the start.
+ */
+export function syncPlaylistWithVideos(): void {
+  if (!baselineDone()) return;
+  const listed = new Set(S().playlist.entries.map((e) => e.video_id));
+  const next = buildPlaylistState(buildInput(S().playlist.entries));
+  if (next.entries.some((e) => !listed.has(e.video_id))) rebuildPlaylist(true);
+}
+
 function card(video: Video, entry: PlaylistEntry | null): VideoCardView {
   const level = levelOf(video.ku_id);
   const made = S().made[video.ku_id] ?? null;

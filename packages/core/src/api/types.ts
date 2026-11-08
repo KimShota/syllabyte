@@ -155,6 +155,8 @@ export type MyCourseView =
         name: string;
         /** in teaching order */
         lectures: LectureStateView[];
+        /** videos for this course that are still being made (a student's check set their level, the worker has not finished), so the phone keeps looking */
+        videos_pending: number;
       };
     };
 

@@ -6,14 +6,22 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { api } from "@syllabyte/core/api/client";
 import type { MyCourseView } from "@syllabyte/core/api/types";
+import type { Course, Video } from "@syllabyte/core/types";
 import { getVersion, subscribe as subscribeStore, touch } from "@syllabyte/core/store";
 import { showUploadedCourse } from "@/data/course";
+import { busy, onlyVideosPending } from "./courseWait";
 import { courseCalls, useSession } from "./session";
 
-/** how often to look again while a syllabus is read or slides are analyzed */
+/** how often to look again while a syllabus is read or slides are analyzed (the student is waiting on the screen) */
 const POLL_MS = 4000;
+/** and while only videos are being made: a video that lands needs no sooner a look, and every rebuild is a risk to a screen playing one */
+const VIDEO_POLL_MS = 10_000;
+/** a made video's details are fetched again after this long: the links in them are signed for 12 hours (server app.ts) */
+const VIDEO_TTL_MS = 6 * 60 * 60 * 1000;
 
 let view: MyCourseView | null = null;
+/** what the screens last drew. The course is rebuilt only when this changes, so a screen that is playing a video keeps the same objects. */
+let shownKey: string | null = null;
 const listeners = new Set<() => void>();
 const subscribe = (l: () => void) => {
   listeners.add(l);
@@ -26,11 +34,26 @@ const subscribe = (l: () => void) => {
 export const useMyCourse = (): MyCourseView | null => useSyncExternalStore(subscribe, () => view, () => view);
 export const getMyCourse = (): MyCourseView | null => view;
 
-/** Something is still being read or analyzed, so the course will change by itself. */
-export function busy(v: MyCourseView | null): boolean {
-  if (!v) return false;
-  if (v.status === "reading") return true;
-  return v.status === "ready" && v.course.lectures.some((l) => l.state === "analyzing");
+const videoCache = new Map<string, { video: Video; at: number }>();
+
+/**
+ * The made videos of the student's course, as the server hands them over at their level (getVariant reads and records
+ * nothing). Fetched once and again after VIDEO_TTL_MS; one that fails is left out and tried at the next refresh.
+ */
+export async function loadVideos(course: Course): Promise<Map<string, Video>> {
+  const now = Date.now();
+  const wanted = course.kus.flatMap((k) => (k.video_id ? [k.video_id] : []));
+  await Promise.all(
+    wanted
+      .filter((id) => !videoCache.has(id) || now - videoCache.get(id)!.at > VIDEO_TTL_MS)
+      .map((id) =>
+        api
+          .getVariant(id)
+          .then((v) => void videoCache.set(id, { video: v.video, at: now }))
+          .catch(() => undefined),
+      ),
+  );
+  return new Map(wanted.flatMap((id) => (videoCache.has(id) ? [[id, videoCache.get(id)!.video] as const] : [])));
 }
 
 let inFlight: Promise<MyCourseView | null> | null = null;
@@ -41,7 +64,18 @@ export function refreshCourse(): Promise<MyCourseView | null> {
   if (!inFlight) {
     inFlight = (async () => {
       const next = await courseCalls.mine();
-      if (next.status === "ready") showUploadedCourse((await api.getMe()).course, next.course.lectures);
+      if (next.status === "ready") {
+        const course = (await api.getMe()).course;
+        const videos = await loadVideos(course);
+        const key = JSON.stringify([
+          course.id, course.kus.map((k) => [k.id, k.title, k.short_title, k.lecture_n, k.video_id]), next.course.lectures,
+          [...videos].map(([id, v]) => [id, v.video_url, v.duration_s]),
+        ]);
+        if (key !== shownKey) {
+          shownKey = key;
+          showUploadedCourse(course, next.course.lectures, videos);
+        }
+      }
       const changed = JSON.stringify(next) !== JSON.stringify(view);
       const first = view === null;
       view = next;
@@ -67,7 +101,7 @@ export function CourseSync(): null {
   }, [signedIn, storeVersion]);
   useEffect(() => {
     if (!signedIn || !busy(current)) return;
-    const id = setInterval(() => void refreshCourse().catch(() => {}), POLL_MS);
+    const id = setInterval(() => void refreshCourse().catch(() => {}), onlyVideosPending(current) ? VIDEO_POLL_MS : POLL_MS);
     return () => clearInterval(id);
   }, [signedIn, current]);
   return null;

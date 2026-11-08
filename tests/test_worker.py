@@ -150,3 +150,19 @@ def test_two_questions_on_one_deck_render_it_once(tmp_path, monkeypatch):
     for t in threads:
         t.join()
     assert renders == ["d1"]
+
+
+def test_a_worker_stops_claiming_at_its_job_limit_or_budget(tmp_path):
+    jobs = [{"id": f"j{i}", "kind": "placement", "payload": {"course_name": "c", "topics": [], "lectures": [], "new": []}, "file_name": None} for i in range(6)]
+
+    server = FakeServer(list(jobs), {})
+    w = worker(server, tmp_path)
+    w._run = lambda *a, **kw: {}  # the job's work doesn't matter here
+    w.serve(once=True, max_jobs=2)
+    assert len(server.posted("/result")) == 2 and len(server.jobs) == 4
+
+    server = FakeServer(list(jobs), {})
+    w = worker(server, tmp_path)
+    w._run = lambda *a, **kw: w.__dict__.update(spent_usd=w.spent_usd + 1.0) or {}  # every job costs a dollar of "model time"
+    w.serve(once=True, budget_usd=3.0)
+    assert len(server.posted("/result")) == 3

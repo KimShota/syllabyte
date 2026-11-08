@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import type { DeckKu, DeckResult } from "@syllabyte/core/logic/assemble";
 import { tierDifficulty } from "@syllabyte/core/logic/kuProfile";
 import type { CourseFilesView, LectureStateView as LectureState, UploadOrderEntry, UploadView } from "@syllabyte/core/api/types";
-import type { Item, ItemTier, QuestionNeed } from "@syllabyte/core/types";
+import type { Item, ItemTier, QuestionNeed, Video } from "@syllabyte/core/types";
 import type { Courses, DeckRow } from "./courses";
 import type { Db } from "./db";
 
@@ -41,7 +41,10 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const UPDATED_VERSION_SHARE = 0.5;
 const TIERS: ItemTier[] = ["basic", "applied", "advanced"];
 /** a student's check is waiting for these */
-const PRIORITY = { question: -10, deck_read: 1, placement: 2, syllabus: 0, deck: 10, link_pass: 50 } as const;
+const PRIORITY = { question: -10, deck_read: 1, placement: 2, syllabus: 0, deck: 10, video: 20, link_pass: 50 } as const;
+/** the files a video job uploads before its result (the worker's PUT /api/worker/jobs/:id/files/:name) */
+export const VIDEO_FILES = ["video.mp4", "poster.jpg", "captions.vtt"] as const;
+export type VideoFileName = (typeof VIDEO_FILES)[number];
 
 export class UploadError extends Error {
   constructor(
@@ -52,7 +55,7 @@ export class UploadError extends Error {
   }
 }
 
-export type JobKind = "syllabus" | "deck_read" | "placement" | "deck" | "question" | "link_pass";
+export type JobKind = "syllabus" | "deck_read" | "placement" | "deck" | "question" | "link_pass" | "video";
 interface JobRow {
   id: string;
   kind: JobKind;
@@ -130,6 +133,8 @@ export interface ClaimedJob {
 const parseOf = (deck: DeckRow): DeckParse => JSON.parse(deck.parse_json) as DeckParse;
 const stem = (fileName: string) => fileName.replace(/\.[a-z0-9]+$/i, "");
 const questionKey = (n: QuestionNeed) => `${n.ku_id}|${n.tier}`;
+const videoKey = (kuId: string, level: number) => `${kuId}|${level}`;
+type VideoStatus = "waiting" | "making" | "ready" | "failed";
 
 /**
  * Positions for new decks placed between two lectures (V1): evenly between `before` and `after`, or one apart after
@@ -149,6 +154,7 @@ export class Uploads {
   ) {
     mkdirSync(join(filesDir, "syllabi"), { recursive: true });
     mkdirSync(join(filesDir, "slides"), { recursive: true });
+    mkdirSync(join(filesDir, "videos"), { recursive: true });
   }
 
   // ------------------------------------------------------------------ files
@@ -230,7 +236,8 @@ export class Uploads {
       return { status: "none" as const };
     }
     const c = this.courses.get(courseId)!;
-    return { status: "ready" as const, course: { id: c.id, code: c.code, name: c.name, lectures: this.lectureStates(courseId) } };
+    const pending = this.db.prepare("SELECT COUNT(*) AS n FROM video_requests WHERE course_id = ? AND status IN ('waiting', 'making')").get(courseId) as { n: number };
+    return { status: "ready" as const, course: { id: c.id, code: c.code, name: c.name, lectures: this.lectureStates(courseId), videos_pending: pending.n } };
   }
 
   /** The files this student uploaded to the course: their syllabus and every slide file, with what became of each. */
@@ -617,10 +624,10 @@ export class Uploads {
 
   // ------------------------------------------------------------------ the job queue
 
-  private enqueue(kind: JobKind, targetId: string, courseId: string | null): void {
+  private enqueue(kind: JobKind, targetId: string, courseId: string | null, priorityOffset = 0): void {
     this.db
       .prepare("INSERT INTO jobs (id, kind, target_id, course_id, status, priority, created_at) VALUES (?, ?, ?, ?, 'queued', ?, ?)")
-      .run(randomUUID(), kind, targetId, courseId, PRIORITY[kind], this.now());
+      .run(randomUUID(), kind, targetId, courseId, PRIORITY[kind] + priorityOffset, this.now());
   }
 
   private job(id: string): JobRow {
@@ -645,9 +652,12 @@ export class Uploads {
 
   /** The next job for the worker (only of `kinds` when given), with what it needs; null when there is nothing to do. */
   claim(kinds?: string[]): ClaimedJob | null {
-    this.db
-      .prepare("UPDATE jobs SET status = 'queued', claimed_at = NULL WHERE status = 'claimed' AND claimed_at < ?")
-      .run(this.now() - STALE_CLAIM_MS);
+    const stale = this.now() - STALE_CLAIM_MS;
+    for (const j of this.db.prepare("SELECT * FROM jobs WHERE kind = 'video' AND status = 'claimed' AND claimed_at < ?").all(stale) as unknown as JobRow[]) {
+      this.setVideoStatus(j, "waiting");
+    }
+    this.db.prepare("UPDATE jobs SET status = 'queued', claimed_at = NULL WHERE status = 'claimed' AND claimed_at < ?").run(stale);
+    if (!kinds?.length || kinds.includes("video")) this.syncVideoJobs();
     const queued = this.db.prepare("SELECT * FROM jobs WHERE status = 'queued' ORDER BY priority, created_at").all() as unknown as JobRow[];
     for (const j of queued) {
       if (kinds?.length && !kinds.includes(j.kind)) continue;
@@ -662,6 +672,7 @@ export class Uploads {
       }
       this.db.prepare("UPDATE jobs SET status = 'claimed', attempts = attempts + 1, claimed_at = ? WHERE id = ?").run(this.now(), j.id);
       if (j.kind === "deck") this.db.prepare("UPDATE decks SET status = 'processing' WHERE id = ?").run(j.target_id);
+      if (j.kind === "video") this.setVideoStatus(j, "making");
       return { id: j.id, kind: j.kind, payload, file_name: this.fileOf(j)?.name ?? null };
     }
     return null;
@@ -682,7 +693,7 @@ export class Uploads {
       const d = this.courses.deck(j.target_id)!;
       return { path: d.file_path, name: d.file_name };
     }
-    if (j.kind === "question") {
+    if (j.kind === "question" || j.kind === "video") {
       const found = this.kuOf(j.course_id!, j.target_id.split("|")[0]);
       return found ? { path: found.deck.file_path, name: found.deck.file_name } : null;
     }
@@ -698,6 +709,7 @@ export class Uploads {
     if (j.kind === "syllabus") return { upload_id: j.target_id };
     if (j.kind === "placement") return this.placementPayload(j.target_id);
     if (j.kind === "question") return this.questionPayload(j);
+    if (j.kind === "video") return this.videoPayload(j);
     const course = this.courses.get(j.course_id!)!;
     if (j.kind === "deck_read") {
       const up = this.db.prepare("SELECT file_name FROM deck_uploads WHERE id = ?").get(j.target_id) as { file_name: string };
@@ -742,6 +754,7 @@ export class Uploads {
     else if (j.kind === "placement") this.placementResult(j, result as { order: string[]; unsure: string[] });
     else if (j.kind === "deck") this.deckResult(j, result as unknown as DeckResult);
     else if (j.kind === "question") this.questionResult(j, result as { item?: Item; flags?: unknown[] });
+    else if (j.kind === "video") this.videoResult(j, result as unknown as VideoResult);
     else this.courses.addLinks(j.course_id!, ((result.links ?? []) as { ku_id: string; prereq_id: string }[]).filter((l) => l.ku_id && l.prereq_id));
     this.finish(jobId);
     if (j.kind === "deck_read") {
@@ -777,6 +790,7 @@ export class Uploads {
     if (!final) {
       this.db.prepare("UPDATE jobs SET status = 'queued', claimed_at = NULL, error = ? WHERE id = ?").run(error, jobId);
       if (j.kind === "deck") this.db.prepare("UPDATE decks SET status = 'queued' WHERE id = ?").run(j.target_id);
+      if (j.kind === "video") this.setVideoStatus(j, "waiting");
       return;
     }
     this.db.prepare("UPDATE jobs SET status = 'failed', finished_at = ?, error = ? WHERE id = ?").run(this.now(), error, jobId);
@@ -797,6 +811,7 @@ export class Uploads {
       this.db.prepare("UPDATE decks SET status = 'failed', error = ? WHERE id = ?").run(shown, j.target_id);
       this.courses.touched(j.course_id!);
     } else if (j.kind === "question") this.courses.touched(j.course_id!);
+    else if (j.kind === "video") this.setVideoStatus(j, "failed");
   }
 
   /** Researcher: put a failed job back in the queue. */
@@ -808,5 +823,119 @@ export class Uploads {
     if (j.kind === "syllabus") this.db.prepare("UPDATE syllabus_uploads SET status = 'reading', error = NULL WHERE id = ?").run(j.target_id);
     if (j.kind === "deck_read") this.db.prepare("UPDATE deck_uploads SET status = 'reading', outcome = NULL, error = NULL WHERE id = ?").run(j.target_id);
     if (j.kind === "question") this.courses.touched(j.course_id!);
+    if (j.kind === "video") this.setVideoStatus(j, "waiting");
   }
+
+  // ------------------------------------------------------------------ videos made by the pipeline (participant-ready-plan.md S1)
+
+  private setVideoStatus(j: JobRow, status: VideoStatus): void {
+    const [kuId, level] = j.target_id.split("|");
+    this.db.prepare("UPDATE video_requests SET status = ? WHERE course_id = ? AND ku_id = ? AND level = ?").run(status, j.course_id, kuId, Number(level));
+  }
+
+  /**
+   * One job for each video a student needs that nobody is making (U18): the requests the server recorded as 'waiting'.
+   * Classmates at the same level share the request, so the video is made once (U8). Earlier lectures first.
+   */
+  syncVideoJobs(): number {
+    const waiting = this.db
+      .prepare("SELECT course_id, ku_id, level, lecture_n FROM video_requests WHERE status = 'waiting' ORDER BY lecture_n, requested_at")
+      .all() as { course_id: string; ku_id: string; level: number; lecture_n: number }[];
+    const busy = this.db.prepare("SELECT 1 FROM jobs WHERE course_id = ? AND kind = 'video' AND target_id = ? AND status IN ('queued', 'claimed', 'failed')");
+    let queued = 0;
+    for (const r of waiting) {
+      const key = videoKey(r.ku_id, r.level);
+      if (busy.get(r.course_id, key)) continue;
+      if (!this.kuOf(r.course_id, r.ku_id)) continue; // its deck is gone: nothing to make it from
+      this.enqueue("video", key, r.course_id, r.lecture_n);
+      queued += 1;
+    }
+    return queued;
+  }
+
+  private videoPayload(j: JobRow): Record<string, unknown> {
+    const [kuId, levelText] = j.target_id.split("|");
+    const found = this.kuOf(j.course_id!, kuId);
+    if (!found) throw new UploadError(`no KU ${kuId} in this course`, 404);
+    const req = this.db.prepare("SELECT prereq_ids, lecture_n FROM video_requests WHERE course_id = ? AND ku_id = ? AND level = ?").get(j.course_id, kuId, Number(levelText)) as
+      | { prereq_ids: string; lecture_n: number }
+      | undefined;
+    if (!req) throw new UploadError(`no video request for ${j.target_id}`, 404);
+    const course = this.courses.get(j.course_id!)!;
+    const fx = this.courses.fixtures(j.course_id!);
+    const entry = fx.course.kus.find((k) => k.id === kuId)!;
+    const byId = new Map(fx.course.kus.map((k) => [k.id, k]));
+    // the prerequisites the KU had at its first request, which every level's video keeps (U8)
+    const prereqs = (JSON.parse(req.prereq_ids) as string[]).flatMap((id) => {
+      const k = byId.get(id);
+      return k ? [{ id: k.id, title: k.title, short_title: k.short_title }] : [];
+    });
+    return {
+      deck_id: found.deck.id,
+      ku: found.ku,
+      level: Number(levelText),
+      lecture_n: req.lecture_n,
+      topic_id: entry.topic_id,
+      short_title: entry.short_title,
+      course_name: course.name,
+      syllabus_text: course.syllabus_text,
+      prereqs,
+    };
+  }
+
+  /** Where a video's files are kept. Only called with ids the server made. */
+  videoDir(courseId: string, kuId: string, level: number): string {
+    return join(this.filesDir, "videos", courseId, kuId, `L${level}`);
+  }
+
+  /** The worker sends a video's files before its result. */
+  saveVideoFile(jobId: string, name: string, bytes: Uint8Array): void {
+    const j = this.job(jobId);
+    if (j.kind !== "video") throw new UploadError("That job makes no video.", 409);
+    if (j.status !== "claimed") throw new UploadError("That job is not claimed.", 409);
+    if (!(VIDEO_FILES as readonly string[]).includes(name)) throw new UploadError(`unknown video file ${name}`, 400);
+    if (!bytes.length) throw new UploadError("an empty file", 400);
+    const [kuId, level] = j.target_id.split("|");
+    const dir = this.videoDir(j.course_id!, kuId, Number(level));
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, name), bytes);
+  }
+
+  /** A made video's file, or null. */
+  videoFile(courseId: string, kuId: string, level: number, name: string): string | null {
+    if (!(VIDEO_FILES as readonly string[]).includes(name) || !Number.isInteger(level)) return null;
+    const path = join(this.videoDir(courseId, kuId, level), name);
+    return existsSync(path) ? path : null;
+  }
+
+  private videoResult(j: JobRow, r: VideoResult): void {
+    const [kuId, levelText] = j.target_id.split("|");
+    const level = Number(levelText);
+    const v = r.video;
+    const items = Array.isArray(r.items) ? r.items : [];
+    if (!v || v.ku_id !== kuId || v.file_level !== level) throw new UploadError("a video result needs a video for the job's KU and level");
+    const ids = new Set(items.map((i) => i.id));
+    for (const id of [v.checkpoint?.item_id, v.next_session_item_id, v.prove_it_item_id]) {
+      if (!id || !ids.has(id)) throw new UploadError(`the video asks for item ${String(id)}, which the result does not carry`);
+    }
+    if (!Array.isArray(v.claims) || !Array.isArray(v.segments) || !(v.duration_s > 0)) throw new UploadError("a video result needs segments, claims and a duration");
+    if (!this.videoFile(j.course_id!, kuId, level, "video.mp4")) throw new UploadError("the video file was not sent");
+    // the urls are the server's (they depend on who asks), not the worker's
+    const { video_url: _v, poster_url: _p, vtt_url: _t, ...rest } = v;
+    this.db
+      .prepare(
+        "INSERT INTO videos (course_id, ku_id, level, video_json, items_json, flags_json, made_at) VALUES (?, ?, ?, ?, ?, ?, ?) " +
+          "ON CONFLICT (course_id, ku_id, level) DO UPDATE SET video_json = excluded.video_json, items_json = excluded.items_json, flags_json = excluded.flags_json, made_at = excluded.made_at",
+      )
+      .run(j.course_id, kuId, level, JSON.stringify(rest), JSON.stringify(items), JSON.stringify(Array.isArray(r.flags) ? r.flags : []), this.now());
+    this.setVideoStatus(j, "ready");
+    this.courses.touched(j.course_id!);
+  }
+}
+
+/** What a video job's result carries: the Video (urls are added by the server) and the Items it asks. */
+interface VideoResult {
+  video: Omit<Video, "video_url" | "poster_url" | "vtt_url"> & Partial<Pick<Video, "video_url" | "poster_url" | "vtt_url">>;
+  items: Item[];
+  flags?: unknown[];
 }

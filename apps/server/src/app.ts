@@ -6,7 +6,7 @@ import { studyCsv } from "@syllabyte/core/logic/instruments";
 import type { ItemTier } from "@syllabyte/core/types";
 import { Auth, type User } from "./auth";
 import { advanceClock, advanceToModuleEnd, getClock, resetClock } from "./clock";
-import { existsSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { extname } from "node:path";
 import type { Courses } from "./courses";
 import type { Db } from "./db";
@@ -20,6 +20,34 @@ const FILE_TYPES: Record<string, string> = {
   ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 };
+
+/** How long a video's links work: a long session, so the player can seek and resume; a shared link soon dies. */
+const MEDIA_LINK_MS = 12 * 60 * 60 * 1000;
+const MEDIA_TYPES: Record<string, string> = { ".mp4": "video/mp4", ".jpg": "image/jpeg", ".vtt": "text/vtt" };
+/** a video's files, sent by the worker (src/uploads.ts VIDEO_FILES) */
+const MAX_VIDEO_FILE_BYTES = 200 * 1024 * 1024;
+const isWorkerFile = (path: string) => /^\/api\/worker\/jobs\/[^/]+\/files\/[^/]+$/.test(path);
+
+/** A file with HTTP range support (the phone's player asks for ranges, and iOS needs the 206). */
+function serveFile(c: Context, path: string, type: string): Response {
+  const size = statSync(path).size;
+  const base = { "Content-Type": type, "Accept-Ranges": "bytes", "Cache-Control": "private, max-age=3600" };
+  const range = /^bytes=(\d*)-(\d*)$/.exec(c.req.header("Range") ?? "");
+  if (!range || (range[1] === "" && range[2] === "")) return c.body(readFileSync(path), 200, { ...base, "Content-Length": String(size) });
+  let start = range[1] === "" ? Math.max(0, size - Number(range[2])) : Number(range[1]);
+  let end = range[1] === "" || range[2] === "" ? size - 1 : Math.min(Number(range[2]), size - 1);
+  if (start >= size || start > end) return c.body(null, 416, { ...base, "Content-Range": `bytes */${size}` });
+  start = Math.max(0, start);
+  end = Math.min(end, size - 1);
+  const buf = Buffer.alloc(end - start + 1);
+  const fd = openSync(path, "r");
+  try {
+    readSync(fd, buf, 0, buf.length, start);
+  } finally {
+    closeSync(fd);
+  }
+  return c.body(buf, 206, { ...base, "Content-Length": String(buf.length), "Content-Range": `bytes ${start}-${end}/${size}` });
+}
 
 export interface Deps {
   db: Db;
@@ -56,7 +84,10 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
   const isUpload = (path: string) => /^\/api\/courses(\/[^/]+\/slides)?$/.test(path);
   const small = bodyLimit({ maxSize: 512 * 1024, onError: (c) => c.json({ error: "too large" }, 413) });
   const files = bodyLimit({ maxSize: 160 * 1024 * 1024, onError: (c) => c.json({ error: "Those files are too large together. Upload fewer at a time." }, 413) });
-  app.use("*", (c, next) => (isUpload(c.req.path) ? files(c, next) : small(c, next)));
+  const videoFile = bodyLimit({ maxSize: MAX_VIDEO_FILE_BYTES, onError: (c) => c.json({ error: "too large" }, 413) });
+  app.use("*", (c, next) => (isUpload(c.req.path) ? files(c, next) : isWorkerFile(c.req.path) ? videoFile(c, next) : small(c, next)));
+  // the videos handed to a student carry links signed here (src/courses.ts fixturesFor)
+  courses.mediaSigner = (subject) => auth.signLink(subject, MEDIA_LINK_MS);
 
   app.get("/api/health", (c) => c.json({ ok: true }));
 
@@ -217,6 +248,19 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
     }),
   );
 
+  /**
+   * A made video's file (video.mp4, poster.jpg, captions.vtt). Like the file links, the signature in the query is the
+   * permission: the video player and the image view cannot send the app's token. The server signs these urls into the
+   * course it hands each student, for the one video (course, KU, level) and no other.
+   */
+  app.get("/api/media/:course/:ku/:level/:name", (c) => {
+    const { course, ku, level, name } = c.req.param();
+    if (!auth.checkLink(`media:${course}/${ku}/L${level}`, c.req.query("e"), c.req.query("s"))) return c.json({ error: "This link has expired. Open the video again from the app." }, 403);
+    const path = uploads.videoFile(course, ku, Number(level), name);
+    if (!path) return c.json({ error: "No such file." }, 404);
+    return serveFile(c, path, MEDIA_TYPES[extname(name).toLowerCase()] ?? "application/octet-stream");
+  });
+
   /** The file behind a link from the route above: no sign-in, the signature is the permission. */
   app.get("/api/file-links/:fileId", (c) => {
     const fileId = c.req.param("fileId");
@@ -278,6 +322,15 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
       const f = uploads.fileOf(idOf(c));
       if (!f) return c.json({ error: "this job has no file" }, 404);
       return c.body(readFileSync(f.path), 200, { "Content-Type": "application/octet-stream" });
+    }),
+  );
+
+  /** A made video's file, before the job's result: the body is the file's bytes. */
+  app.put(
+    "/api/worker/jobs/:id/files/:name",
+    uploadErrors(async (c) => {
+      uploads.saveVideoFile(idOf(c), c.req.param("name") ?? "", new Uint8Array(await c.req.arrayBuffer()));
+      return c.json({ ok: true });
     }),
   );
 

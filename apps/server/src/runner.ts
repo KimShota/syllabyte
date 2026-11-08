@@ -1,4 +1,4 @@
-import { mockApi, questionNeedsNow } from "@syllabyte/core/api/mock";
+import { mockApi, questionNeedsNow, syncPlaylistWithVideos } from "@syllabyte/core/api/mock";
 import { FIX, setFixtures } from "@syllabyte/core/fixtures";
 import { setEventEnv, track } from "@syllabyte/core/events";
 import { freshState, getEventVersion, getState, getVersion, mutate, replaceState } from "@syllabyte/core/store";
@@ -46,6 +46,9 @@ export class StateRunner {
     replaceState(this.load(user));
     const v = getVersion();
     const e = getEventVersion();
+    // a video made since their last request joins their playlist (core's syncPlaylistWithVideos); after the versions
+    // are noted, so the change is saved
+    if (course) syncPlaylistWithVideos();
     // the next-session cap counts per visit; the phone sends one id per app launch
     if (visit && getState().visit.id !== visit) {
       mutate((s) => {

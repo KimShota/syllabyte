@@ -50,6 +50,7 @@ export function makeServer(opts: { db?: Db; clock?: () => number; semesterStart?
   const worker = {
     post: (path: string, body: unknown) => post(path, body, { Authorization: `Bearer ${WORKER_TOKEN}` }),
     get: (path: string) => app.request(path, { headers: { Authorization: `Bearer ${WORKER_TOKEN}` } }),
+    put: (path: string, body: Uint8Array) => app.request(path, { method: "PUT", headers: { Authorization: `Bearer ${WORKER_TOKEN}` }, body }),
   };
   return { app, db, auth, courses, uploads, worker, mailer, post, signIn };
 }

@@ -9,7 +9,7 @@ type Server = ReturnType<typeof makeServer>;
 
 export interface Job {
   id: string;
-  kind: "syllabus" | "deck_read" | "placement" | "deck" | "question" | "link_pass";
+  kind: "syllabus" | "deck_read" | "placement" | "deck" | "question" | "link_pass" | "video";
   payload: Record<string, any>;
   file_name: string | null;
 }
@@ -80,6 +80,29 @@ function questionOf(p: Record<string, any>): { item: Item; flags: [] } {
   };
 }
 
+/** The video job: a Video and the three items it asks, as ingestion_agent's video job returns them (no urls: the server adds them). */
+export function videoOf(p: Record<string, any>) {
+  const ku: string = p.ku.id;
+  const item = (id: string, context: Item["context"]): Item => ({
+    id, ku_id: ku, topic_id: p.topic_id, context, stem: `${id}?`, options: ["x", "y", "z"], correct_index: 0, allows_not_sure: context === "prove_it",
+    explanation: "", hint: null, difficulty_prior: 0, discrimination: 1, tier: null, source_refs: [],
+  });
+  return {
+    video: {
+      id: ku, ku_id: ku, title: p.ku.title, short_title: p.short_title, topic_id: p.topic_id, lecture_n: p.lecture_n, file_level: p.level, duration_s: 60,
+      segments: [
+        { phase: "prepare", start: 0, end: 10 }, { phase: "initiate", start: 10, end: 20 },
+        { phase: "deliver", start: 20, end: 50 }, { phase: "end", start: 50, end: 60 },
+      ],
+      checkpoint: { t: 50, rewatch_from: 20, item_id: `cp-${ku}` }, next_session_item_id: `ns-${ku}`, prove_it_item_id: `pi-${ku}`,
+      sentence_frame: { template: "A ___ is a ___.", answers: ["a", "b"] }, claims: [], tailoring: { "1": [], "2": [], "3": [] }, transcript: [],
+      captions_burned_in: true, source_slides: [1], prerequisite_titles: p.prereqs.map((x: any) => x.short_title), review_status: "unreviewed",
+    },
+    items: [item(`cp-${ku}`, "checkpoint"), item(`ns-${ku}`, "next_session"), item(`pi-${ku}`, "prove_it")],
+    flags: [],
+  };
+}
+
 /** The fake worker: claims jobs and answers them the way ingestion_agent/worker.py would. */
 export async function work(
   s: Server,
@@ -104,6 +127,11 @@ export async function work(
       result = deckResultOf(text.split("\n")[0], job.payload) as unknown as Record<string, unknown>;
     } else if (job.kind === "question") {
       result = questionOf(job.payload);
+    } else if (job.kind === "video") {
+      for (const name of ["video.mp4", "poster.jpg", "captions.vtt"]) {
+        expect((await s.worker.put(`/api/worker/jobs/${job.id}/files/${name}`, new TextEncoder().encode(`${job.id}:${name}`))).status).toBe(200);
+      }
+      result = videoOf(job.payload);
     } else {
       result = { links: opts.links?.(job.payload) ?? [] };
     }

@@ -146,11 +146,11 @@ CREATE TABLE IF NOT EXISTS ku_links (
   PRIMARY KEY (course_id, ku_id, prereq_id)
 );
 -- Work for the Python worker: kind 'syllabus' (read it, then its topics), 'deck_read' (convert, parse, say what it
--- teaches), 'placement' (order a student's new decks), 'deck' (KUs), 'question' (one question, V4), 'link_pass' (U7).
--- The worker claims them over HTTP (src/uploads.ts).
+-- teaches), 'placement' (order a student's new decks), 'deck' (KUs), 'question' (one question, V4), 'link_pass' (U7),
+-- 'video' (one video for a KU at a level; target "ku_id|level"). The worker claims them over HTTP (src/uploads.ts).
 CREATE TABLE IF NOT EXISTS jobs (
   id          TEXT PRIMARY KEY,
-  kind        TEXT NOT NULL CHECK (kind IN ('syllabus', 'deck_read', 'placement', 'deck', 'question', 'link_pass')),
+  kind        TEXT NOT NULL CHECK (kind IN ('syllabus', 'deck_read', 'placement', 'deck', 'question', 'link_pass', 'video')),
   -- the syllabus upload, deck upload or deck it works on; a placement's student; a question's "ku_id|tier"
   target_id   TEXT NOT NULL,
   course_id   TEXT,
@@ -176,8 +176,8 @@ CREATE TABLE IF NOT EXISTS questions (
 );
 CREATE INDEX IF NOT EXISTS questions_by_ku ON questions (course_id, ku_id, tier);
 -- Videos students need (U18), one per course, KU and level so classmates at the same level share it. prereq_ids: the
--- KU's prerequisites when its first video was requested, which the video keeps (U8). Made by the video pipeline
--- (plan/per-student-video-plan.md step 5), not yet wired.
+-- KU's prerequisites when its first video was requested, which the video keeps (U8). Made by a 'video' job: the
+-- worker runs the video pipeline and the result lands in the videos table.
 CREATE TABLE IF NOT EXISTS video_requests (
   course_id     TEXT NOT NULL REFERENCES courses (id) ON DELETE CASCADE,
   ku_id         TEXT NOT NULL,
@@ -187,6 +187,19 @@ CREATE TABLE IF NOT EXISTS video_requests (
   first_user_id TEXT NOT NULL REFERENCES users (id),
   requested_at  INTEGER NOT NULL,
   status        TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting', 'making', 'ready', 'failed')),
+  PRIMARY KEY (course_id, ku_id, level)
+);
+-- A made video, one per course, KU and level. video_json: a core Video without its urls (the server adds them when it
+-- hands the course to a student); items_json: the Items it asks (checkpoint, next-session, prove-it). The files
+-- (video.mp4, poster.jpg, captions.vtt) are on disk under <files>/videos/<course>/<ku>/L<level>/ (src/uploads.ts).
+CREATE TABLE IF NOT EXISTS videos (
+  course_id  TEXT NOT NULL REFERENCES courses (id) ON DELETE CASCADE,
+  ku_id      TEXT NOT NULL,
+  level      INTEGER NOT NULL CHECK (level IN (1, 2, 3)),
+  video_json TEXT NOT NULL,
+  items_json TEXT NOT NULL,
+  flags_json TEXT NOT NULL DEFAULT '[]',
+  made_at    INTEGER NOT NULL,
   PRIMARY KEY (course_id, ku_id, level)
 );
 `;
@@ -202,7 +215,7 @@ export function openDb(path: string): Db {
 
 const columns = (db: Db, table: string) => (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
 
-/** Databases made before the 2026-10-21 revision (plan/slide-uploads-plan.md V1-V4) get its columns and job kinds. */
+/** Databases made before the 2026-10-21 revision (plan/slide-uploads-plan.md V1-V4) or the video job (participant-ready-plan.md S1) get its columns and job kinds. */
 function migrate(db: Db): void {
   const tables = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((t) => t.name));
   if (tables.has("lectures") && !columns(db, "lectures").includes("position")) {
@@ -211,7 +224,7 @@ function migrate(db: Db): void {
   if (tables.has("courses") && !columns(db, "courses").includes("topics_json")) db.exec("ALTER TABLE courses ADD COLUMN topics_json TEXT NOT NULL DEFAULT '[]'");
   if (tables.has("decks") && !columns(db, "decks").includes("suggestion_json")) db.exec("ALTER TABLE decks ADD COLUMN suggestion_json TEXT");
   const jobs = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'jobs'").get() as { sql: string } | undefined;
-  if (jobs && !jobs.sql.includes("'question'")) {
+  if (jobs && !jobs.sql.includes("'video'")) {
     // a CHECK constraint can't be altered: rebuild the table with the new kinds
     db.exec(`ALTER TABLE jobs RENAME TO jobs_before_v4; DROP INDEX IF EXISTS jobs_queue;`);
     db.exec(SCHEMA.slice(SCHEMA.indexOf("CREATE TABLE IF NOT EXISTS jobs"), SCHEMA.indexOf("CREATE INDEX IF NOT EXISTS jobs_queue")));

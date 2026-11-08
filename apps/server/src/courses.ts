@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { assembleCourse, type DeckResult } from "@syllabyte/core/logic/assemble";
 import { videoRequests, type VideoRequest } from "@syllabyte/core/logic/videoRequests";
-import type { DemoState, Fixtures, Item, ItemTier, QuestionNeed } from "@syllabyte/core/types";
+import type { DemoState, Fixtures, Item, ItemTier, Level, QuestionNeed, Video } from "@syllabyte/core/types";
 import type { Db } from "./db";
 
 /**
@@ -54,6 +54,10 @@ export interface DeckRow {
 }
 
 export class Courses {
+  /** Signs the subject of a video's links ("media:<course>/<ku>/L<level>") into a query string; set by createApp. Without
+   * it a video's urls carry no signature. */
+  mediaSigner: (subject: string) => string = () => "";
+
   private cache = new Map<string, Fixtures>();
 
   constructor(
@@ -239,9 +243,51 @@ export class Courses {
     return fx;
   }
 
-  /** The course a student's requests run against: theirs, or null for a student without one (they get the demo course). */
+  /**
+   * The course a student's requests run against: theirs, or null for a student without one (they get the demo course).
+   * It carries the videos made for them: per KU the one at the level their video was made at (D15) or, until one was,
+   * the level their answers set, with the questions that video asks. A KU whose video at that level is not made yet has
+   * none, and the app says it is being made.
+   */
   fixturesFor(userId: string): Fixtures | null {
     const id = this.courseOf(userId);
-    return id ? this.fixtures(id) : null;
+    if (!id) return null;
+    const fx = this.fixtures(id);
+    const rows = this.db.prepare("SELECT ku_id, level, video_json, items_json FROM videos WHERE course_id = ?").all(id) as {
+      ku_id: string;
+      level: number;
+      video_json: string;
+      items_json: string;
+    }[];
+    if (!rows.length) return fx;
+    const { levels, made } = this.studentLevels(userId);
+    const videos: Video[] = [];
+    const items: Item[] = [];
+    for (const r of rows) {
+      const want = made[r.ku_id] ?? levels[r.ku_id]?.level;
+      if (want !== r.level) continue;
+      const base = `/api/media/${id}/${r.ku_id}/${r.level}`;
+      const sig = this.mediaSigner(`media:${id}/${r.ku_id}/L${r.level}`);
+      const at = (name: string) => `${base}/${name}${sig ? `?${sig}` : ""}`;
+      // one video per KU in a student's course, so its id is the KU's (as the demo course's are)
+      videos.push({ ...(JSON.parse(r.video_json) as Video), id: r.ku_id, video_url: at("video.mp4"), poster_url: at("poster.jpg"), vtt_url: at("captions.vtt") });
+      items.push(...(JSON.parse(r.items_json) as Item[]));
+    }
+    if (!videos.length) return fx;
+    const have = new Set(videos.map((v) => v.ku_id));
+    return {
+      ...fx,
+      course: { ...fx.course, kus: fx.course.kus.map((k) => (have.has(k.id) ? { ...k, video_id: k.id } : k)) },
+      items: [...fx.items, ...items],
+      videos,
+    };
+  }
+
+  /** The levels a student's answers set and the levels their videos were made at, from their saved state. */
+  private studentLevels(userId: string): { levels: Record<string, { level: Level }>; made: Record<string, Level> } {
+    const row = this.db.prepare("SELECT json FROM user_state WHERE user_id = ?").get(userId) as { json: string } | undefined;
+    if (!row) return { levels: {}, made: {} };
+    const s = JSON.parse(row.json) as Partial<DemoState>;
+    return { levels: (s.levels ?? {}) as Record<string, { level: Level }>, made: s.made ?? {} };
   }
 }

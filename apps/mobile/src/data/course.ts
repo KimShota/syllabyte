@@ -12,7 +12,7 @@ import { useSyncExternalStore } from "react";
 import type { LectureStateView } from "@syllabyte/core/api/types";
 import { FIX } from "@syllabyte/core/fixtures";
 import type { Course, KuEntry, Video } from "@syllabyte/core/types";
-import { mediaUrl } from "./media";
+import { backendMediaUrl, mediaUrl } from "./media";
 import type { CourseDef, CourseStub, Ku, LectureDef, LectureSectionDef, Scene, TranscriptLine } from "./types";
 
 /** the length the stand-in frame plays for when a KU has no video yet */
@@ -184,21 +184,30 @@ export function useCourseVersion(): number {
 
 const DEMO_VIDEO_KUS = new Set((process.env.EXPO_PUBLIC_VIDEO_KUS ?? "").split(",").filter(Boolean));
 
-/** The uploaded course as the screens draw it: its lectures in order, one section each, KUs without videos yet. */
-export function uploadedCourseDef(course: Course, lectures: LectureStateView[]): { course: CourseDef; kus: Record<string, Ku> } {
+/**
+ * The uploaded course as the screens draw it: its lectures in order, one section each. A KU with a made video (the
+ * server hands it to the student at their level, `videos`) plays it from the server; the others show the stand-in frame.
+ */
+export function uploadedCourseDef(course: Course, lectures: LectureStateView[], videos: ReadonlyMap<string, Video> = new Map()): { course: CourseDef; kus: Record<string, Ku> } {
   const title = (n: number) => lectures.find((l) => l.n === n)?.title ?? `Lecture ${n}`;
   const kus: Record<string, Ku> = Object.fromEntries(
-    course.kus.map((k): [string, Ku] => [
-      k.id,
-      {
-        id: k.id, title: k.title, shortTitle: k.short_title, lectureN: k.lecture_n,
-        // DEMO ONLY: EXPO_PUBLIC_VIDEO_KUS=ku-a,ku-b plays those KUs' generated videos from the media server
-        videoId: k.video_id ?? (DEMO_VIDEO_KUS.has(k.id) ? k.id : null),
-        videoUri: DEMO_VIDEO_KUS.has(k.id) ? mediaUrl(`/fixtures/${k.id}/video.mp4`) : undefined,
-        slides: [1, 1], durationS: STAND_IN_S,
-        scene: statement(title(k.lecture_n), k.short_title, []), transcript: [],
-      },
-    ]),
+    course.kus.map((k): [string, Ku] => {
+      const video = k.video_id ? videos.get(k.video_id) : undefined;
+      return [
+        k.id,
+        {
+          id: k.id, title: k.title, shortTitle: k.short_title, lectureN: k.lecture_n,
+          // DEMO ONLY: EXPO_PUBLIC_VIDEO_KUS=ku-a,ku-b plays those KUs' generated videos from the media server
+          videoId: k.video_id ?? (DEMO_VIDEO_KUS.has(k.id) ? k.id : null),
+          videoUri: video ? backendMediaUrl(video.video_url) : DEMO_VIDEO_KUS.has(k.id) ? mediaUrl(`/fixtures/${k.id}/video.mp4`) : undefined,
+          slides: video?.source_slides.length ? [Math.min(...video.source_slides), Math.max(...video.source_slides)] : [1, 1],
+          durationS: video?.duration_s ?? STAND_IN_S,
+          scene: statement(title(k.lecture_n), k.short_title, []),
+          transcript: video ? transcript(video) : [],
+          captionsBurnedIn: video?.captions_burned_in ?? false,
+        },
+      ];
+    }),
   );
   const defs: LectureDef[] = lectures.map((l) => {
     const ids = course.kus.filter((k) => k.lecture_n === l.n).map((k) => k.id);
@@ -228,8 +237,8 @@ export function uploadedCourseDef(course: Course, lectures: LectureStateView[]):
 }
 
 /** Shows the student's uploaded course in place of the demo course; one course per student for now (U4). */
-export function showUploadedCourse(course: Course, lectures: LectureStateView[]): void {
-  const next = uploadedCourseDef(course, lectures);
+export function showUploadedCourse(course: Course, lectures: LectureStateView[], videos: ReadonlyMap<string, Video> = new Map()): void {
+  const next = uploadedCourseDef(course, lectures, videos);
   COURSE = next.course;
   for (const id of Object.keys(KUS)) delete KUS[id];
   Object.assign(KUS, next.kus);

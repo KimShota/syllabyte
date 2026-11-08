@@ -70,7 +70,7 @@ describe("a syllabus makes or joins a shared course", () => {
   it("creates the course with no lectures, keeping the syllabus's schedule as topics for placing slides (V3)", async () => {
     const s = makeServer();
     const { ann, courseId } = await courseWithAnn(s);
-    expect((await ann.json("/api/courses/mine")).course).toEqual({ id: courseId, code: "CS-UH 2219E", name: "Computational Social Science", lectures: [] });
+    expect((await ann.json("/api/courses/mine")).course).toEqual({ id: courseId, code: "CS-UH 2219E", name: "Computational Social Science", lectures: [], videos_pending: 0 });
     expect(JSON.parse(s.courses.get(courseId)!.topics_json)).toEqual(SCHEDULE.lectures.map((l) => l.title));
   });
 

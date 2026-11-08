@@ -1,0 +1,319 @@
+{
+  "video": {
+    "id": "ku-bst-insert",
+    "ku_id": "ku-bst-insert",
+    "title": "Inserting into a binary search tree",
+    "short_title": "BST insert",
+    "topic_id": "lecture-3",
+    "lecture_n": 3,
+    "file_level": 2,
+    "duration_s": 60.0,
+    "segments": [
+      {
+        "phase": "prepare",
+        "start": 0.0,
+        "end": 10.0
+      },
+      {
+        "phase": "initiate",
+        "start": 10.0,
+        "end": 20.0
+      },
+      {
+        "phase": "deliver",
+        "start": 20.0,
+        "end": 30.0
+      },
+      {
+        "phase": "deliver",
+        "start": 30.0,
+        "end": 40.0
+      },
+      {
+        "phase": "end",
+        "start": 40.0,
+        "end": 50.0
+      }
+    ],
+    "checkpoint": {
+      "t": 40.0,
+      "rewatch_from": 30.0,
+      "item_id": "cp-ku-bst-insert"
+    },
+    "next_session_item_id": "ns-ku-bst-insert",
+    "prove_it_item_id": "pi-ku-bst-insert",
+    "sentence_frame": {
+      "template": "Compare ___ then go ___.",
+      "answers": [
+        "down",
+        "left or right"
+      ]
+    },
+    "claims": [
+      {
+        "idx": 0,
+        "text": "Claim for segment 2.",
+        "segment_idx": 2,
+        "slide_refs": [
+          {
+            "deck_name": "deck-1",
+            "slide_number": 1
+          }
+        ],
+        "lecture_clip": null
+      },
+      {
+        "idx": 1,
+        "text": "Claim for segment 3.",
+        "segment_idx": 3,
+        "slide_refs": [
+          {
+            "deck_name": "deck-1",
+            "slide_number": 2
+          }
+        ],
+        "lecture_clip": null
+      },
+      {
+        "idx": 2,
+        "text": "Claim for segment 4.",
+        "segment_idx": 4,
+        "slide_refs": [
+          {
+            "deck_name": "deck-1",
+            "slide_number": 1
+          }
+        ],
+        "lecture_clip": null
+      }
+    ],
+    "tailoring": {
+      "1": [
+        {
+          "kind": "added",
+          "what": "A short recap of “BSTs”",
+          "dimension": "recap",
+          "evidence_ku_id": "ku-bst"
+        },
+        {
+          "kind": "added",
+          "what": "A full, step-by-step worked example",
+          "dimension": "example",
+          "evidence_ku_id": "ku-bst-insert"
+        },
+        {
+          "kind": "set_to",
+          "what": "Hint shown with the question, about 140 words a minute",
+          "dimension": "support",
+          "evidence_ku_id": null
+        }
+      ],
+      "2": [
+        {
+          "kind": "left_out",
+          "what": "The full recap of “BSTs”",
+          "dimension": "recap",
+          "evidence_ku_id": "ku-bst"
+        },
+        {
+          "kind": "added",
+          "what": "One worked example",
+          "dimension": "example",
+          "evidence_ku_id": "ku-bst-insert"
+        },
+        {
+          "kind": "set_to",
+          "what": "Hints on request, about 155 words a minute",
+          "dimension": "support",
+          "evidence_ku_id": null
+        }
+      ],
+      "3": [
+        {
+          "kind": "left_out",
+          "what": "The full recap of “BSTs”",
+          "dimension": "recap",
+          "evidence_ku_id": "ku-bst"
+        },
+        {
+          "kind": "left_out",
+          "what": "The worked example, replaced by a “what if” question",
+          "dimension": "example",
+          "evidence_ku_id": "ku-bst-insert"
+        },
+        {
+          "kind": "set_to",
+          "what": "No hints, about 165 words a minute",
+          "dimension": "support",
+          "evidence_ku_id": null
+        }
+      ]
+    },
+    "transcript": [
+      {
+        "t": 0.0,
+        "narration": "Line 0a.",
+        "visual": "v",
+        "speaker": "Peter"
+      },
+      {
+        "t": 5.0,
+        "narration": "Line 0b.",
+        "visual": "v",
+        "speaker": "Stewie"
+      },
+      {
+        "t": 10.0,
+        "narration": "Line 1a.",
+        "visual": "v",
+        "speaker": "Peter"
+      },
+      {
+        "t": 15.0,
+        "narration": "Line 1b.",
+        "visual": "v",
+        "speaker": "Stewie"
+      },
+      {
+        "t": 20.0,
+        "narration": "Line 2a.",
+        "visual": "v",
+        "speaker": "Peter"
+      },
+      {
+        "t": 25.0,
+        "narration": "Line 2b.",
+        "visual": "v",
+        "speaker": "Stewie"
+      },
+      {
+        "t": 30.0,
+        "narration": "Line 3a.",
+        "visual": "v",
+        "speaker": "Peter"
+      },
+      {
+        "t": 35.0,
+        "narration": "Line 3b.",
+        "visual": "v",
+        "speaker": "Stewie"
+      },
+      {
+        "t": 40.0,
+        "narration": "Line 4a.",
+        "visual": "v",
+        "speaker": "Peter"
+      },
+      {
+        "t": 45.0,
+        "narration": "Line 4b.",
+        "visual": "v",
+        "speaker": "Stewie"
+      }
+    ],
+    "captions_burned_in": true,
+    "source_slides": [
+      1,
+      2
+    ],
+    "prerequisite_titles": [
+      "BSTs"
+    ],
+    "review_status": "unreviewed"
+  },
+  "items": [
+    {
+      "id": "cp-ku-bst-insert",
+      "ku_id": "ku-bst-insert",
+      "topic_id": "lecture-3",
+      "context": "checkpoint",
+      "stem": "Where does it go?",
+      "options": [
+        "c",
+        "b",
+        "a"
+      ],
+      "correct_index": 2,
+      "allows_not_sure": false,
+      "explanation": "because",
+      "hint": "think",
+      "difficulty_prior": 0.2,
+      "discrimination": 1.0,
+      "tier": null,
+      "source_refs": [
+        {
+          "deck_name": "deck-1",
+          "slide_number": 1
+        },
+        {
+          "deck_name": "deck-1",
+          "slide_number": 2
+        }
+      ]
+    },
+    {
+      "id": "ns-ku-bst-insert",
+      "ku_id": "ku-bst-insert",
+      "topic_id": "lecture-3",
+      "context": "next_session",
+      "stem": "A day later?",
+      "options": [
+        "a",
+        "b",
+        "c"
+      ],
+      "correct_index": 0,
+      "allows_not_sure": false,
+      "explanation": "because",
+      "hint": "think",
+      "difficulty_prior": 0.2,
+      "discrimination": 1.0,
+      "tier": null,
+      "source_refs": [
+        {
+          "deck_name": "deck-1",
+          "slide_number": 1
+        },
+        {
+          "deck_name": "deck-1",
+          "slide_number": 2
+        }
+      ]
+    },
+    {
+      "id": "pi-ku-bst-insert",
+      "ku_id": "ku-bst-insert",
+      "topic_id": "lecture-3",
+      "context": "prove_it",
+      "stem": "Prove it?",
+      "options": [
+        "b",
+        "a",
+        "c"
+      ],
+      "correct_index": 1,
+      "allows_not_sure": true,
+      "explanation": "because",
+      "hint": "think",
+      "difficulty_prior": 0.2,
+      "discrimination": 1.0,
+      "tier": null,
+      "source_refs": [
+        {
+          "deck_name": "deck-1",
+          "slide_number": 1
+        },
+        {
+          "deck_name": "deck-1",
+          "slide_number": 2
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "id": "cp-ku-bst-insert",
+      "issue": "hint is close to the answer"
+    }
+  ]
+}

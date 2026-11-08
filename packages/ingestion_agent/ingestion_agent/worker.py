@@ -16,6 +16,11 @@ checks moving:
 `--concurrency N` runs N jobs at once in one worker (threads; the work is waiting on the model). Deck jobs still go one
 after another: the server hands out a deck only once every earlier lecture's deck is done, so each sees their KUs.
 Reading files, placing them and writing questions run side by side.
+
+Video jobs (a student's check set their levels, so the KU's video is needed; participant-ready-plan.md S2) run the whole
+video pipeline: a minute or two and about $0.25 each, with Manim, LaTeX and the voice engine on this machine. They go
+last in the queue; `--kinds video` runs a worker for videos alone, and it sends each video's files to the server before
+its result.
 """
 
 from __future__ import annotations
@@ -36,9 +41,10 @@ from ingestion_agent.upload_jobs import (
     run_deck_job, run_deck_read_job, run_link_pass_job, run_placement_job, run_question_job, run_syllabus_job,
 )
 from ingestion_agent.uploads import UploadError, read_deck
+from ingestion_agent.video_job import run_video_job
 from syllabyte_common.models import SlideDeck
 
-KINDS = ("syllabus", "deck_read", "placement", "deck", "question", "link_pass")
+KINDS = ("syllabus", "deck_read", "placement", "deck", "question", "link_pass", "video")
 
 
 def log(msg: str) -> None:
@@ -66,6 +72,11 @@ class Worker:
         r.raise_for_status()
         return r.json()
 
+    def _put_file(self, job_id: str, name: str, file: Path) -> None:
+        """Sends one of a video job's files; the server keeps it until the job's result arrives."""
+        r = self.client.put(f"/api/worker/jobs/{job_id}/files/{name}", content=file.read_bytes())
+        r.raise_for_status()
+
     def run_once(self) -> bool:
         """Claims and runs one job; False when there was nothing to do."""
         job = self._post("/api/worker/claim", {"kinds": self.kinds} if self.kinds else {})["job"]
@@ -77,7 +88,7 @@ class Worker:
         work.mkdir(parents=True, exist_ok=True)
         try:
             path = None
-            if job.get("file_name") and not (kind == "question" and payload["deck_id"] in self.decks):
+            if job.get("file_name") and not (kind in ("question", "video") and payload["deck_id"] in self.decks):
                 r = self.client.get(f"/api/worker/jobs/{job_id}/file")
                 r.raise_for_status()
                 path = work / Path(job["file_name"]).name
@@ -123,6 +134,11 @@ class Worker:
             return run_deck_job(payload, path, work, model=self.model, critic_model=self.critic_model, manifest=manifest, log=log)
         if kind == "link_pass":
             return run_link_pass_job(payload, model=self.model, manifest=manifest)
+        if kind == "video":
+            return run_video_job(
+                payload, self._deck(payload["deck_id"], path), work, lambda name, file: self._put_file(job_id, name, file), model=self.model,
+                critic_model=self.critic_model, manifest=manifest, log=log,
+            )
         raise ValueError(f"unknown job kind {kind}")
 
 
@@ -138,18 +154,34 @@ class Worker:
                 self.decks[deck_id] = deck
             return self.decks[deck_id]
 
-    def serve(self, *, concurrency: int = 1, poll: float = 5.0, once: bool = False) -> None:
+    def serve(self, *, concurrency: int = 1, poll: float = 5.0, once: bool = False, max_jobs: int | None = None, budget_usd: float | None = None) -> None:
         """Runs jobs on `concurrency` threads until stopped; with `once`, until a thread finds the queue empty and every
-        other thread has finished its job (a job can queue the next, e.g. placement after the last read)."""
+        other thread has finished its job (a job can queue the next, e.g. placement after the last read). `max_jobs` and
+        `budget_usd` stop it from claiming more once that many jobs were started or that much was spent this session;
+        jobs already running finish (so the spend can pass the budget by what they cost)."""
+        started = [0]
+
+        def may_claim() -> bool:
+            with self._lock:
+                if max_jobs is not None and started[0] >= max_jobs:
+                    return False
+                if budget_usd is not None and self.spent_usd >= budget_usd:
+                    return False
+                started[0] += 1
+                return True
 
         def loop() -> None:
             while True:
+                if not may_claim():
+                    return
                 try:
                     did = self.run_once()
                 except httpx.HTTPError as e:
                     log(f"server unreachable: {e!r}")
                     did = False
                 if not did:
+                    with self._lock:
+                        started[0] -= 1  # nothing was claimed: it doesn't count against max_jobs
                     if once:
                         return
                     time.sleep(poll)
@@ -172,6 +204,8 @@ def main() -> None:
     parser.add_argument("--once", action="store_true", help="run the queued jobs, then stop")
     parser.add_argument("--kinds", default=None, help=f"only these job kinds, comma-separated ({', '.join(KINDS)})")
     parser.add_argument("--concurrency", type=int, default=1, help="jobs at once (deck jobs still run in lecture order)")
+    parser.add_argument("--max-jobs", type=int, default=None, help="stop after starting this many jobs")
+    parser.add_argument("--budget-usd", type=float, default=None, help="stop claiming jobs once this much was spent this session")
     args = parser.parse_args()
     if not args.token:
         parser.error("set --token or SYLLABYTE_WORKER_TOKEN")
@@ -182,7 +216,7 @@ def main() -> None:
             parser.error(f"unknown kinds: {', '.join(sorted(set(kinds) - set(KINDS)))}")
         worker = Worker(client, args.work_dir, model=args.model, critic_model=args.critic_model, kinds=kinds)
         log(f"polling {args.server}" + (f" with {args.concurrency} jobs at once" if args.concurrency > 1 else ""))
-        worker.serve(concurrency=max(1, args.concurrency), poll=args.poll, once=args.once)
+        worker.serve(concurrency=max(1, args.concurrency), poll=args.poll, once=args.once, max_jobs=args.max_jobs, budget_usd=args.budget_usd)
 
 
 if __name__ == "__main__":

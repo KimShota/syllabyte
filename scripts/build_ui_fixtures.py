@@ -30,16 +30,18 @@ import json
 import sys
 from pathlib import Path
 
-from pydantic import BaseModel
-
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from animation_agent.ui_manifest import build_ui_manifest, checkpoint_for
-from assessment_agent.item_writing import ITEM_SYSTEM, mcq_text
-from assessment_agent.item_writing import generate_with_critic as _generate_with_critic
+from assessment_agent.video_app_data import (
+    VideoGen,
+    balance_positions,
+    generate_video_gen,
+    tailoring_for as _tailoring_for,
+    video_claims,
+    video_items,
+)
 from syllabyte_common.learner import (
-    MCQ,
-    Claim,
     Course,
     CourseConfig,
     Item,
@@ -55,8 +57,6 @@ from syllabyte_common.llm import (
     DEFAULT_MODEL,
     PRICE_PER_MTOK,
     image_block,
-    structured,
-    text_block,
 )
 from syllabyte_common.models import CourseCorpus, KnowledgeUnit, KUList, RunManifest, SlideRef
 
@@ -105,48 +105,11 @@ LECTURES = [
 ]
 UPCOMING_LECTURE_OVERRIDE = 3  # Phase 0 pretends Lecture 3 is next, so all 4 videos qualify
 
-PACE_WPM = {1: 140, 2: 155, 3: 165}  # plan §7.4
-
 # --------------------------------------------------------------------------
 # LLM schemas + prompts
 # --------------------------------------------------------------------------
 
 
-
-
-class ClaimGen(BaseModel):
-    segment_idx: int
-    text: str
-
-
-class VideoGen(BaseModel):
-    checkpoint: MCQ
-    next_session: MCQ
-    prove_it: MCQ
-    sentence_frame_template: str  # one sentence with exactly two blanks written ___
-    sentence_frame_answers: list[str]
-    claims: list[ClaimGen]
-
-
-def video_prompt(ku: KnowledgeUnit, script: dict, slide_text: str, claim_segments: list[int], last_deliver: int, extra: str = "") -> str:
-    seg_lines = "\n".join(f"[segment {i} · {s['phase']}] {s['narration'] if 'narration' in s else ' '.join(b['narration'] for b in s['beats'])}" for i, s in enumerate(script["segments"]))
-    return f"""A 70-second explainer video was made for this knowledge unit.
-
-Knowledge unit: {ku.title}
-Summary: {ku.summary}
-
-Narration by segment:
-{seg_lines}
-
-Write:
-1. checkpoint: a question about the main idea taught in segment {last_deliver} (the last deliver segment). The video pauses on it right after that segment.
-2. next_session: a DIFFERENT question on the same idea, asked a day later to test memory. It must not reuse the checkpoint's wording or options.
-3. prove_it: one question a student who already knows this topic would answer correctly, but a student who does not would likely miss. It tests the core concept, not trivia.
-4. sentence_frame_template: ONE sentence that captures the core idea, with exactly two blanks written as ___ (three underscores). sentence_frame_answers: the two words/phrases that fill them, in order.
-5. claims: EXACTLY ONE entry per segment index in {claim_segments} — {len(claim_segments)} entries in total, never two for the same segment. Each is ONE self-contained factual statement (under 22 words) that the narration makes in that segment. Paraphrase, add nothing, no hedging; keep concrete numbers if the narration gives them.
-{extra}
-Slides (text and images follow):
-{slide_text}"""
 
 
 # --------------------------------------------------------------------------
@@ -184,52 +147,15 @@ def cached(path: Path, regen: bool, make):
     return data
 
 
-def generate_with_critic(**kw):
-    return _generate_with_critic(log=log, **kw)
-
-
-def balance_positions(items: list[Item]) -> None:
-    """The model favours some answer slots (in one run every prove-it key was option C).
-    Rotate the correct answer through A/B/C deterministically by swapping options; nothing
-    in the explanations or hints refers to option positions."""
-    for idx, it in enumerate(sorted(items, key=lambda i: i.id)):
-        target = idx % 3
-        c = it.correct_index
-        if c != target:
-            it.options[c], it.options[target] = it.options[target], it.options[c]
-            it.correct_index = target
-
-
 # --------------------------------------------------------------------------
 # tailoring skeletons (deterministic; plan §7.4)
 # --------------------------------------------------------------------------
 
 
 def tailoring_for(ku: KnowledgeUnit, kus: dict[str, KnowledgeUnit]) -> dict[str, list[TailoringSkeleton]]:
-    """What differs at each level. The evidence is per KU (plan D2): the first prerequisite for the recap rows, the
-    KU itself for the example rows, so the receipt can cite the student's own answers about exactly those concepts."""
+    """What differs at each level (assessment_agent.video_app_data), naming the first prerequisite by its short title."""
     prereq = kus.get(ku.prerequisites[0]) if ku.prerequisites else None
-    prereq_ku = prereq.id if prereq else ku.id
-    recap = f"The full recap of “{SHORT_TITLES[prereq.id]}”" if prereq else "A recap of the basics"
-    short_recap = f"A short recap of “{SHORT_TITLES[prereq.id]}”" if prereq else "A short recap of the basics"
-    S = TailoringSkeleton
-    return {
-        "1": [
-            S(kind="added", what=short_recap, dimension="recap", evidence_ku_id=prereq_ku),
-            S(kind="added", what="A full, step-by-step worked example", dimension="example", evidence_ku_id=ku.id),
-            S(kind="set_to", what=f"Hint shown with the question, about {PACE_WPM[1]} words a minute", dimension="support"),
-        ],
-        "2": [
-            S(kind="left_out", what=recap, dimension="recap", evidence_ku_id=prereq_ku),
-            S(kind="added", what="One worked example", dimension="example", evidence_ku_id=ku.id),
-            S(kind="set_to", what=f"Hints on request, about {PACE_WPM[2]} words a minute", dimension="support"),
-        ],
-        "3": [
-            S(kind="left_out", what=recap, dimension="recap", evidence_ku_id=prereq_ku),
-            S(kind="left_out", what="The worked example, replaced by a “what if” question", dimension="example", evidence_ku_id=ku.id),
-            S(kind="set_to", what=f"No hints, about {PACE_WPM[3]} words a minute", dimension="support"),
-        ],
-    }
+    return _tailoring_for(ku.id, (prereq.id, SHORT_TITLES[prereq.id]) if prereq else None)
 
 
 # --------------------------------------------------------------------------
@@ -290,48 +216,11 @@ def main() -> None:
         need_llm(path)
         script = json.loads((run / dirname / "script.json").read_text())
         m = manifests[dirname]
-        last_deliver = m["checkpoint_times"]["segment_idx"]
-        claim_segments = [i for i, s in enumerate(script["segments"]) if s["phase"] in ("deliver", "end")]
 
-        def make_video(ku=ku, script=script, last_deliver=last_deliver, claim_segments=claim_segments, m=m):
-            material = slide_material(corpus, m["source_slides"])
+        def make_video(ku=ku, script=script, m=m):
             log(f"video {ku.id}: generating")
-
-            def make(extra: str) -> VideoGen:
-                for _ in range(2):
-                    g = structured(
-                        schema=VideoGen,
-                        content=[text_block(video_prompt(ku, script, material[0], claim_segments, last_deliver, extra)), *material[1]],
-                        system=ITEM_SYSTEM, stage="ui_video_items", ku_id=ku.id, model=args.model, max_tokens=16000, manifest=manifest,
-                    )
-                    # keep the first claim per wanted segment; drop claims for other segments
-                    first: dict[int, ClaimGen] = {}
-                    for c in g.claims:
-                        if c.segment_idx in claim_segments and c.segment_idx not in first:
-                            first[c.segment_idx] = c
-                    if sorted(first) == claim_segments:
-                        g.claims = [first[i] for i in claim_segments]
-                        return g
-                    log(f"  video {ku.id}: claims cover segments {sorted(first)}, need {claim_segments} — retrying")
-                    extra += f"\n\nYour previous answer did not give exactly one claim for each of the segments {claim_segments}. Do that."
-                sys.exit(f"{ku.id}: could not get one claim per segment")
-
-            def describe(g: VideoGen) -> str:
-                narr = {i: (s["narration"] if "narration" in s else " ".join(b["narration"] for b in s["beats"])) for i, s in enumerate(script["segments"])}
-                items = [mcq_text(f"cp-{ku.id}", g.checkpoint), mcq_text(f"ns-{ku.id}", g.next_session), mcq_text(f"pi-{ku.id}", g.prove_it)]
-                claims = [f"[claim-{ku.id}-{c.segment_idx}] {c.text}\n   narration in segment {c.segment_idx}: {narr[c.segment_idx]}" for c in g.claims]
-                return "\n\n".join(items + claims) + f"\n\nsentence frame: {g.sentence_frame_template} -> {g.sentence_frame_answers}"
-
-            def ids_of(g: VideoGen) -> list[str]:
-                return [f"cp-{ku.id}", f"ns-{ku.id}", f"pi-{ku.id}"] + [f"claim-{ku.id}-{c.segment_idx}" for c in g.claims]
-
-            gen, flags = generate_with_critic(make=make, describe=describe, ids_of=ids_of, material=material,
-                                              stage=f"video_{ku.id}", model=critic_model, manifest=manifest)
-            got = sorted(c.segment_idx for c in gen.claims)
-            if got != claim_segments:
-                sys.exit(f"{ku.id}: claims for segments {got}, expected {claim_segments}")
-            if gen.sentence_frame_template.count("___") != 2 or len(gen.sentence_frame_answers) != 2:
-                sys.exit(f"{ku.id}: sentence frame must have exactly two blanks")
+            gen, flags = generate_video_gen(ku, script, m, slide_material(corpus, m["source_slides"]), model=args.model,
+                                            critic_model=critic_model, manifest=manifest, log=log)
             return {"gen": gen.model_dump(), "flags": flags}
 
         data = cached(path, args.regen, make_video)
@@ -352,18 +241,10 @@ def main() -> None:
         m = manifests[dirname]
         script = json.loads((run / dirname / "script.json").read_text())
         src_refs = refs(m["source_slides"])
-        for ctx, prefix, mcq, allow in (("checkpoint", "cp", g.checkpoint, False), ("next_session", "ns", g.next_session, False), ("prove_it", "pi", g.prove_it, True)):
-            items.append(Item(id=f"{prefix}-{ku.id}", ku_id=ku.id, topic_id=tid, context=ctx, stem=mcq.stem,
-                              options=mcq.options, correct_index=mcq.correct_index, allows_not_sure=allow,
-                              explanation=mcq.explanation, hint=mcq.hint, difficulty_prior=mcq.difficulty_prior,
-                              source_refs=src_refs))
+        items.extend(video_items(ku.id, tid, g, src_refs))
         for f in flags:
             flags_by_id[f["id"]] = f["issue"]
-        claims = [
-            Claim(idx=i, text=c.text.strip(), segment_idx=c.segment_idx,
-                  slide_refs=[SlideRef(**r) for r in script["segments"][c.segment_idx]["source_refs"]])
-            for i, c in enumerate(sorted(g.claims, key=lambda c: c.segment_idx))
-        ]
+        claims = video_claims(g, script)
         videos.append(VideoFixture(
             id=ku.id, ku_id=ku.id, title=ku.title, short_title=SHORT_TITLES[ku.id], topic_id=tid, lecture_n=lecture_of(ku),
             duration_s=m["duration_s"], segments=m["segments"],
