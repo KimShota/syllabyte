@@ -1,3 +1,5 @@
+import { STUDENT_EVENT_VERBS } from "@syllabyte/core/events";
+import { FIX } from "@syllabyte/core/fixtures";
 import type { DemoState } from "@syllabyte/core/types";
 import type { Db } from "./db";
 
@@ -104,7 +106,12 @@ export function migrateStates(db: Db): void {
   try {
     for (const r of rows) {
       const course = (courseOf.get(r.user_id) as { course_id: string } | undefined)?.course_id ?? NO_COURSE;
-      store.save(r.user_id, course, JSON.parse(r.json) as DemoState, r.updated_at);
+      const state = JSON.parse(r.json) as DemoState;
+      // every event so far was in the one course the student had (the demo course if none): say so, except events about the student
+      for (const ev of state.events ?? []) {
+        if (ev.context.course_id === undefined) ev.context.course_id = STUDENT_EVENT_VERBS.has(ev.verb) ? null : course || FIX.course.id;
+      }
+      store.save(r.user_id, course, state, r.updated_at);
     }
     db.exec("COMMIT");
   } catch (e) {

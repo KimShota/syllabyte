@@ -3,6 +3,7 @@ import course from "../fixtures/course.json";
 import items from "../fixtures/items.json";
 import slides from "../fixtures/slides.json";
 import videos from "../fixtures/videos.json";
+import { setEventEnv } from "./events";
 import type { Course, Fixtures, Item, Lecture, Topic, Video } from "./types";
 
 /**
@@ -29,6 +30,11 @@ let videoMap = new Map(FIX.videos.map((v) => [v.id, v]));
 export function fixtures(): Fixtures {
   return current;
 }
+
+/** The id of the course loaded now: the demo course, or the student's own on the server. */
+export const currentCourseId = (): string => current.course.id;
+// events say which course they happened in (events.ts); unless an app says otherwise, it is this one
+setEventEnv({ course: currentCourseId });
 
 export function setFixtures(fx: Fixtures): void {
   if (fx === current) return;

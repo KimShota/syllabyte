@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { freshState } from "@syllabyte/core/store";
+import { FIX, setFixtures } from "@syllabyte/core/fixtures";
+import { track } from "@syllabyte/core/events";
+import { freshState, getState, replaceState } from "@syllabyte/core/store";
 import { openDb } from "../src/db";
 import { moveStudent, mergeCourses } from "../src/courseAdmin";
+import { trackClientEvents } from "../src/runner";
 import { PROFILE_KEYS, NO_COURSE, StateStore, migrateStates, splitState } from "../src/state";
 import { work } from "./fakeWorker";
 import { makeServer } from "./helpers";
@@ -237,5 +240,100 @@ describe("the researcher's export and the facilitator", () => {
     mergeCourses(s.db, s.courses, two, one);
     expect(s.courses.coursesOf(annId).sort()).toEqual([one, three].sort());
     expect(s.courses.courseOf(annId)).toBe(three);
+  });
+});
+
+describe("research events say which course they happened in", () => {
+  const play = (course_id?: string | null, verb = "video_play") => ({ verb, object: { type: "video", id: "v" }, ...(course_id === undefined ? {} : { course_id }) });
+  const saved = (s: Server, userId: string) => (new StateStore(s.db).profile(userId)!.events ?? []) as { verb: string; context: { course_id?: string | null } }[];
+
+  it("take the course the phone says, when the student is in it, else the one they are in; student-level ones carry none", async () => {
+    const { s, ann, annId, courseId: a } = await annNeedingVideos();
+    await addSyllabus(ann, OTHER);
+    await work(s);
+    const b = (await ann.json("/api/courses/mine")).course.id as string; // the one they are in now
+    // sent in one batch, after they switched to B: the first two happened while they were in A
+    const res = await ann.post("/api/events", { events: [play(a), play(b), play("not-their-course"), play(undefined), play(a, "consent_given")] });
+    expect(res.status).toBe(200);
+    const events = saved(s, annId);
+    expect(events.slice(-5).map((e) => [e.verb, e.context.course_id])).toEqual([["video_play", a], ["video_play", b], ["video_play", b], ["video_play", b], ["consent_given", null]]);
+    // the API's own events, made while they sat the check in A, say A
+    const answers = events.filter((e) => e.verb === "cat_answered");
+    expect(answers.length).toBeGreaterThan(0);
+    expect(answers.every((e) => e.context.course_id === a)).toBe(true);
+  });
+
+  it("never let one event's course carry over to the next event, or to the API calls after", () => {
+    replaceState(freshState());
+    setFixtures({ ...FIX, course: { ...FIX.course, id: "course-now" } });
+    try {
+      trackClientEvents([play("course-other")] as never, (id) => id === "course-other");
+      track("video_play", { type: "video" }); // an API call's own event, on the course the request runs on
+      expect(getState().events.map((e) => e.context.course_id)).toEqual(["course-other", "course-now"]);
+    } finally {
+      setFixtures(FIX);
+    }
+  });
+
+  it("are given a course when old state is migrated: the one the student had (the demo course if none), none for the student's own", () => {
+    const db = openDb(":memory:");
+    const ev = (verb: string) => ({ id: verb, verb, object: { type: "x" }, context: { screen: "", device: "mobile", orientation: "portrait", condition: "A", participant_code: "P", week: 1 }, timestamp: "" });
+    const state = (events: unknown[]) => JSON.stringify({ ...freshState(), events });
+    db.prepare("INSERT INTO users (id, email, participant_code, created_at) VALUES ('u1', 'a@nyu.edu', 'P-1', 0), ('u2', 'b@nyu.edu', 'P-2', 0)").run();
+    db.prepare("INSERT INTO courses (id, syllabus_key, code, name, syllabus_text, syllabus_path, status, created_by, created_at) VALUES ('c1', 'k', 'C', 'C', '', '', 'ready', 'u1', 0)").run();
+    db.prepare("INSERT INTO course_members (course_id, user_id, joined_at) VALUES ('c1', 'u1', 1)").run();
+    db.prepare("INSERT INTO user_state (user_id, json, updated_at) VALUES ('u1', ?, 5), ('u2', ?, 6)").run(state([ev("video_play"), ev("study_shown")]), state([ev("skipped")]));
+    migrateStates(db);
+    const store = new StateStore(db);
+    expect(store.profile("u1")!.events!.map((e) => [e.verb, e.context.course_id])).toEqual([["video_play", "c1"], ["study_shown", null]]);
+    expect(store.profile("u2")!.events!.map((e) => [e.verb, e.context.course_id])).toEqual([["skipped", FIX.course.id]]);
+  });
+});
+
+describe("the student's data download", () => {
+  type Download = { courses: { course_id: string; code: string; name: string; active: boolean; profile: { levels: object; made: object; sittings: object }; responses: unknown[]; notes: unknown[]; self_explanations: unknown[] }[]; responses: unknown[]; events: { verb: string }[]; profile: { levels: object } };
+
+  it("has every course's answers and levels, whichever one they are in when they download", async () => {
+    const { s, ann, courseId: a } = await annNeedingVideos(); // course A: they sat the check
+    await addSyllabus(ann, OTHER);
+    await work(s);
+    const b = (await ann.json("/api/courses/mine")).course.id as string;
+
+    const inB = await ann.rpc<Download>("exportMyData"); // in B: the core's own download would stop at B
+    const entry = (d: Download, id: string) => d.courses.find((c) => c.course_id === id)!;
+    expect(inB.courses.map((c) => [c.course_id, c.active])).toEqual([[a, false], [b, true]]);
+    expect(entry(inB, a).responses.length).toBeGreaterThan(0);
+    expect(Object.keys(entry(inB, a).profile.levels).length).toBeGreaterThan(0);
+    expect(entry(inB, b).responses).toEqual([]);
+    expect(inB.responses).toEqual([]); // the top level is still the course they are in, as it always was
+
+    await ann.post(`/api/courses/${a}/activate`, {});
+    const inA = await ann.rpc<Download>("exportMyData");
+    expect(entry(inA, a).active).toBe(true);
+    expect(entry(inA, a).responses).toEqual(inA.responses); // the live course agrees with the top level
+    expect(entry(inA, a).responses.length).toBe(entry(inB, a).responses.length);
+    expect(inA.events.map((e) => e.verb)).toContain("data_downloaded"); // the student's own parts are still there
+  });
+
+  it("says nothing but what is the student's: no syllabus text, file paths or other users", async () => {
+    const { s, ann } = await annNeedingVideos();
+    await addSyllabus(ann, OTHER);
+    await work(s);
+    const data = await ann.rpc<Download>("exportMyData");
+    for (const c of data.courses) expect(Object.keys(c).sort()).toEqual(["active", "code", "course_id", "name", "notes", "profile", "responses", "self_explanations"]);
+    const text = JSON.stringify(data);
+    expect(text).not.toContain("syllabus_text");
+    expect(text).not.toContain("syllabus_path");
+    expect(text).not.toContain("created_by");
+  });
+
+  it("leaves out a classmate's data, and covers a student who has no course of their own", async () => {
+    const { s, ann, courseId: a } = await annNeedingVideos();
+    const bob = await student(s, "bob@nyu.edu");
+    const bobs = await bob.rpc<Download>("exportMyData");
+    expect(bobs.courses.map((c) => c.course_id)).not.toContain(a); // Ann's course, with her answers, is not in Bob's download
+    expect(bobs.courses.flatMap((c) => c.responses)).toEqual([]);
+    const annData = await ann.rpc<Download>("exportMyData");
+    expect(annData.courses.map((c) => c.course_id)).toEqual([a]);
   });
 });

@@ -1,5 +1,5 @@
 import { mockApi, questionNeedsNow, syncPlaylistWithVideos } from "@syllabyte/core/api/mock";
-import { FIX, setFixtures } from "@syllabyte/core/fixtures";
+import { FIX, currentCourseId, setFixtures } from "@syllabyte/core/fixtures";
 import { setEventEnv, track } from "@syllabyte/core/events";
 import { freshState, getEventVersion, getState, getVersion, mutate, replaceState } from "@syllabyte/core/store";
 import { startOfWeek } from "@syllabyte/core/logic/time";
@@ -100,10 +100,47 @@ export class StateRunner {
     this.store.save(userId, courseId, getState());
   }
 
+  /**
+   * Each of a student's courses in their data download: its levels, answers, notes and sittings. A student's state is kept
+   * per course (src/state.ts) and a request runs on one, so the core's own export covers only that one; this adds the
+   * rest, so "download my data" has everything. Call it inside `run` for that student: the course they are in is read from
+   * the state in memory, the others from what was saved. `describe` names a course (null for one that no longer exists).
+   */
+  courseExports(userId: string, courseIds: string[], describe: (courseId: string) => { code: string; name: string } | null): CourseExport[] {
+    const active = this.opts.courseIdOf?.(userId) ?? NO_COURSE;
+    const live = getState();
+    const part = (d: Partial<DemoState>): Omit<CourseExport, "course_id" | "code" | "name" | "active"> => ({
+      profile: { levels: d.levels ?? {}, made: d.made ?? {}, sittings: d.sittings ?? {} },
+      responses: d.responses ?? [], notes: d.notes ?? [], self_explanations: d.self_explanations ?? [],
+    });
+    const out: CourseExport[] = courseIds.flatMap((id) => {
+      const named = describe(id);
+      // only its code and name: the record `describe` finds has the syllabus, a file path and who made the course
+      return named ? [{ course_id: id, code: named.code, name: named.name, active: id === active, ...part(id === active ? live : (this.store.course(userId, id) ?? {})) }] : [];
+    });
+    // what they did on the demo course before they had one of their own
+    const demo = this.store.course(userId, NO_COURSE);
+    if (demo && !courseIds.includes(NO_COURSE)) out.push({ course_id: NO_COURSE, code: "", name: "Demo course", active: active === NO_COURSE, ...part(active === NO_COURSE ? live : demo) });
+    return out;
+  }
+
   /** One saved state per student, for the researcher export: the course they are in now. */
   allStates(): DemoState[] {
     return this.store.allStates((id) => this.opts.courseIdOf?.(id) ?? null);
   }
+}
+
+/** One course's part of a student's data download (`StateRunner.courseExports`). */
+export interface CourseExport {
+  course_id: string;
+  code: string;
+  name: string;
+  /** the course they were in when they downloaded */
+  active: boolean;
+  profile: Pick<DemoState, "levels" | "made" | "sittings">;
+  responses: DemoState["responses"];
+  notes: DemoState["notes"];
+  self_explanations: DemoState["self_explanations"];
 }
 
 /** Methods a student may call: the whole `Api` except the ones that read across students. */
@@ -123,12 +160,26 @@ export interface ClientEvent {
   screen?: string;
   device?: "mobile" | "desktop";
   orientation?: "portrait" | "landscape";
+  /** the course on screen when it happened (the phone stamps it: events arrive in batches, after a student may have switched) */
+  course_id?: string | null;
 }
 
-/** Logs the phone's own events (play, seek, sheets) through the core's `track`, so each carries the server's condition, week and code. */
-export function trackClientEvents(events: ClientEvent[]): void {
-  for (const ev of events) {
-    setEventEnv({ screen: () => ev.screen ?? "", device: () => ev.device ?? "mobile", orientation: () => ev.orientation ?? "portrait" });
-    track(ev.verb as never, ev.object, ev.result);
+/**
+ * Logs the phone's own events (play, seek, sheets) through the core's `track`, so each carries the server's condition, week
+ * and code. An event's course is the one the phone says it happened in, if the student is in it (`isMember`); otherwise the
+ * course this request runs on. The course never carries over to the next event, or to the API calls after these.
+ */
+export function trackClientEvents(events: ClientEvent[], isMember: (courseId: string) => boolean = () => false): void {
+  try {
+    for (const ev of events) {
+      const claimed = typeof ev.course_id === "string" && isMember(ev.course_id) ? ev.course_id : null;
+      setEventEnv({
+        screen: () => ev.screen ?? "", device: () => ev.device ?? "mobile", orientation: () => ev.orientation ?? "portrait",
+        course: () => claimed ?? currentCourseId(),
+      });
+      track(ev.verb as never, ev.object, ev.result);
+    }
+  } finally {
+    setEventEnv({ course: currentCourseId });
   }
 }

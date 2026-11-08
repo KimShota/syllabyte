@@ -147,7 +147,13 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
     const { args } = await json(c);
     if (args !== undefined && (!Array.isArray(args) || args.length > 8)) return c.json({ error: "args must be an array" }, 400);
     try {
-      const result = await runner.run(c.get("user"), c.req.header("X-Visit") ?? null, () => callMethod(method, (args as unknown[]) ?? []));
+      const user = c.get("user");
+      const result = await runner.run(user, c.req.header("X-Visit") ?? null, async () => {
+        const out = await callMethod(method, (args as unknown[]) ?? []);
+        // the core's download covers the course the request runs on; the student's data is all their courses'
+        if (method !== "exportMyData" || !isObject(out)) return out;
+        return { ...out, courses: runner.courseExports(user.id, courses.coursesOf(user.id), (id) => courses.get(id)) };
+      });
       return c.json({ result: result ?? null });
     } catch (e) {
       // the rules throw plain Errors for things like an unknown id or a locked question
@@ -162,7 +168,8 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
     const good = events.filter(
       (e): e is ClientEvent => isObject(e) && typeof e.verb === "string" && isObject(e.object) && typeof (e.object as { type?: unknown }).type === "string",
     );
-    await runner.run(c.get("user"), c.req.header("X-Visit") ?? null, () => trackClientEvents(good));
+    const mine = new Set(courses.coursesOf(c.get("user").id));
+    await runner.run(c.get("user"), c.req.header("X-Visit") ?? null, () => trackClientEvents(good, (id) => mine.has(id)));
     return c.json({ accepted: good.length });
   });
 

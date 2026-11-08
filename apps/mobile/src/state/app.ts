@@ -16,6 +16,7 @@ import { api } from "@syllabyte/core/api/client";
 import { setEventEnv } from "@syllabyte/core/events";
 import { flush, getState, getVersion, hydrate, isHydrated, resetState, startVisit, subscribe, touch, type StorageAdapter } from "@syllabyte/core/store";
 import { REMOTE } from "@/data/backend";
+import { COURSE } from "@/data/course";
 import { currentVisit, endBackendSession, flushEvents, loadSession, startNewVisit, useSession } from "./session";
 
 const STATE_KEY = "syllabyte.demo.v2";
@@ -29,6 +30,8 @@ export function setScreen(pathname: string): void {
 
 setEventEnv({
   screen: () => screen,
+  // the course on screen when the event happens: events are sent in batches, so the server cannot tell later
+  course: () => COURSE.id,
   device: () => "mobile",
   orientation: () => {
     const { width, height } = Dimensions.get("window");

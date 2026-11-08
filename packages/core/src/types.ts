@@ -428,6 +428,12 @@ export interface AppEvent {
     condition: Condition;
     participant_code: string | null;
     week: number;
+    /**
+     * The course the student was in when it happened (a student can be in several). Null on events about the student
+     * rather than a course (consent, their data download, the questionnaires). Absent on events from before a
+     * student could be in several courses and not yet filled in (apps/server/src/state.ts does it when it migrates).
+     */
+    course_id?: string | null;
   };
   timestamp: string;
 }

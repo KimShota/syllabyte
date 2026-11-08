@@ -125,6 +125,11 @@ export interface Api {
   exportStudyCsv(): Promise<string>;
 
   // data rights
+  /**
+   * Everything recorded about the student. The top level is the course they are in now (levels, answers, notes) with what is
+   * theirs across courses (events, settings, questionnaires, consent). With a backend it also has `courses`: each of their
+   * courses' levels, answers, notes and sittings, the one they are in included.
+   */
   exportMyData(): Promise<Record<string, unknown>>;
   resetModel(): Promise<void>;
 }

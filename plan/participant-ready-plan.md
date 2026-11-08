@@ -122,8 +122,26 @@ reading card and the failure card appear and update by polling. Not exercised in
    check: that lecture's videos wait for it, and the student can go anywhere else, including back to their other course.
    An earlier version of this section said the baseline would trap a student in a new course; that was wrong, from
    reading the gate without its condition.
-2. *Events are not tagged with a course.* The event log is the student's, shared by their courses, so an analysis by
-   course cannot tell which an event belongs to. Adding the course id to each event is small; it changes the data.
+2. *(Done.)* Research events now carry `context.course_id`. It is the course the student was in when the event happened;
+   null on events about the student rather than a course (consent, their data download, the questionnaires:
+   `STUDENT_EVENT_VERBS` in core/events.ts). The phone stamps its own events when they happen (they go to the server in
+   batches, after the student may have switched) and the server keeps the stamp only if the student is in that course;
+   the API's own events take the course the request runs on. Events from before several courses are filled in when the
+   state is migrated (the course the student had, the demo course if none). Checked end to end: a `checkpoint_shown`
+   from the simulator arrived stamped with the course on screen. The phone sends only a few events today (the
+   questionnaires, the quick check, rewatch); the web app's player events (play, pause, seek) are not sent by the
+   phone yet, so there is nothing to tag there.
 3. *Questionnaires are the student's, not a course's:* asked once, as the study design has it, whichever course is open.
 4. *Progress on Home* is KUs watched over KUs in the course; for a course that is not open it is read from its saved
    document, so it only moves when that course is used.
+
+**Data download across courses (fixed).** "Download my data" (`exportMyData`) used to return the saved state of the course the
+student was in, so with several courses it left out the others' answers, levels, notes and sittings. The server now adds a
+`courses` list to the download (apps/server/src/runner.ts `courseExports`, added in the RPC route): each course's code, name,
+levels, made levels, sittings, answers, notes and self-explanations, the one they are in included. The top level is as it
+was, so nothing that read it changes; events, settings and questionnaires are the student's and are all there. Only the
+course's code and name come from the course record (a test pins the exact fields: no syllabus text, file paths or other
+users). The phone app has no download button; the web app does. Checked on the trial student: with Statistics open,
+the download still has Machine Learning's 10 answers and 281 levels. Not in the download for any course, as before:
+what they watched, their progress, claim verdicts, reports and playlist; adding those is a small change if the study
+needs them.
