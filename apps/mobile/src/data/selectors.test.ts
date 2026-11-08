@@ -31,12 +31,18 @@ describe.skipIf(!haveFixtures)("roadmap selectors on the real course", () => {
     for (const id of ids(1)) expect(s[id]).toBe(S.isDrafting(id) ? "drafting" : id === withVideo(1)[0] ? "next" : "available");
   });
 
-  it("prefers the playlist's up-next when it is in the lecture", () => {
+  it("keeps the marker on the first unfinished video even when the playlist recommends a later one", () => {
     const [first, second] = withVideo(1);
     expect(second).toBeDefined();
     const s = S.kuStatuses(lecture(1), { watched: [], upNext: second });
-    expect(s[second]).toBe("next");
-    expect(s[first]).toBe("available");
+    expect(s[first]).toBe("next");
+    expect(s[second]).toBe("available");
+    expect(S.firstUpNext({ watched: [], upNext: second })?.id).toBe(first);
+    expect(S.feedStart(S.lectureFeed(lecture(1)), { watched: [], upNext: second })).toBe(0);
+    // Only the saved watch record supplies a check mark; then the marker advances.
+    const after = S.kuStatuses(lecture(1), { watched: [first], upNext: second });
+    expect(after[first]).toBe("watched");
+    expect(after[second]).toBe("next");
   });
 
   it("has no next once every video in the lecture is watched", () => {
@@ -83,7 +89,8 @@ describe.skipIf(!haveFixtures)("roadmap selectors on the real course", () => {
   it("opens the course feed on the video up next, else the first not watched", () => {
     const { kus } = S.courseFeed(C.COURSE, null);
     const up = kus[kus.length - 1].id;
-    expect(kus[S.feedStart(kus, { watched: [], upNext: up })].id).toBe(up);
+    const firstInLecture = kus.find((k) => k.lectureN === kus[kus.length - 1].lectureN)!;
+    expect(kus[S.feedStart(kus, { watched: [], upNext: up })].id).toBe(firstInLecture.id);
     expect(kus[S.feedStart(kus, { watched: withVideo(1), upNext: null })].id).toBe(withVideo(2)[0]);
     // the up-next is past where the feed stops: the first one not watched
     const short = S.courseFeed(C.COURSE, 3).kus;

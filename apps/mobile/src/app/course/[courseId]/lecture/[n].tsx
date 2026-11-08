@@ -80,7 +80,7 @@ export default function LectureRoadmap() {
             const segs = sectionSegments(section.kuIds, statuses);
             const complete = segs.every((s) => s === "done");
             const started = section.kuIds.some((id) => statuses[id] === "watched" || statuses[id] === "next");
-            const rows = buildRows(section.kuIds, statuses, setPreview);
+            const rows = buildRows(section.kuIds, statuses, setPreview, progress.done > 0);
             const segments: SpineSegment[] = rows.slice(0, -1).map((_, i) => {
               const upper = statuses[rows[i].key];
               const lower = statuses[rows[i + 1].key];
@@ -110,7 +110,7 @@ export default function LectureRoadmap() {
   );
 }
 
-function buildRows(kuIds: string[], statuses: Record<string, KuStatus>, onPress: (ku: Ku) => void): SerpentineRow[] {
+function buildRows(kuIds: string[], statuses: Record<string, KuStatus>, onPress: (ku: Ku) => void, started: boolean): SerpentineRow[] {
   // bottom-up: the section's first KU sits at the bottom
   return kuIds
     .map((id, i) => ({ id, x: X_PATTERN[i % X_PATTERN.length] }))
@@ -126,14 +126,14 @@ function buildRows(kuIds: string[], statuses: Record<string, KuStatus>, onPress:
         height,
         nodeX: x,
         nodeY,
-        render: (width: number) => <KuNode ku={KUS[id]} status={status} centerX={x * width} onPress={() => onPress(KUS[id])} />,
+        render: (width: number) => <KuNode ku={KUS[id]} status={status} started={started} centerX={x * width} onPress={() => onPress(KUS[id])} />,
       };
     });
 }
 
 const LABEL_W = 150;
 
-function KuNode({ ku, status, centerX, onPress }: { ku: Ku; status: KuStatus; centerX: number; onPress: () => void }) {
+function KuNode({ ku, status, started, centerX, onPress }: { ku: Ku; status: KuStatus; started: boolean; centerX: number; onPress: () => void }) {
   const next = status === "next";
   const size = next ? NEXT_NODE : NODE;
   const stateLabel = { watched: "watched", next: "up next", available: "available", drafting: "being made from slides" }[status];
@@ -144,7 +144,7 @@ function KuNode({ ku, status, centerX, onPress }: { ku: Ku; status: KuStatus; ce
           <View style={styles.bubble}>
             <View style={styles.bubbleDot} />
             <T variant="codeSm" color="#fff" style={{ fontFamily: fonts.monoSemibold, letterSpacing: 1 }}>
-              START
+              {started ? "CONTINUE" : "START"}
             </T>
             <View style={styles.bubbleTail} />
           </View>

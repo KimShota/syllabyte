@@ -174,6 +174,7 @@ function Path({
   focusRef: Ref<HostInstance>;
   onFocusLayout: () => void;
 }) {
+  const [cardHeights, setCardHeights] = useState<Record<string, number>>({});
   const top = [...lectures].reverse();
   const exam = COURSE.finalExam;
   const rows: SerpentineRow[] = [
@@ -200,9 +201,19 @@ function Path({
       const nodeRight = lectureNumber(view.lecture.n) % 2 === 1;
       return {
         key: rowKey(view.lecture.n),
-        height: view.status === "active" ? 150 : 124,
+        height: Math.max(view.status === "active" ? 150 : 124, (cardHeights[rowKey(view.lecture.n)] ?? 0) + 24),
         nodeX: nodeRight ? RIGHT : LEFT,
-        render: (width: number) => <LectureRow view={view} nodeRight={nodeRight} width={width} />,
+        render: (width: number) => (
+          <LectureRow
+            view={view}
+            nodeRight={nodeRight}
+            width={width}
+            onCardHeight={(height) => {
+              const key = rowKey(view.lecture.n);
+              setCardHeights((previous) => previous[key] === height ? previous : { ...previous, [key]: height });
+            }}
+          />
+        ),
       };
     }),
   ];
@@ -215,9 +226,9 @@ function Path({
   return <Serpentine rows={rows} segments={segments} focusKey={focusKey} focusRef={focusRef} onFocusLayout={onFocusLayout} />;
 }
 
-function LectureRow({ view, nodeRight, width }: { view: LectureNodeView; nodeRight: boolean; width: number }) {
+function LectureRow({ view, nodeRight, width, onCardHeight }: { view: LectureNodeView; nodeRight: boolean; width: number; onCardHeight: (height: number) => void }) {
   const { lecture, status, progress } = view;
-  const cardWidth = Math.min(196, width * 0.56);
+  const cardWidth = Math.min(260, width * 0.64);
   const openLecture = () => router.push({ pathname: "/course/[courseId]/lecture/[n]", params: { courseId: COURSE.id, n: String(lecture.n) } });
   const label = `Lecture ${lectureNumber(lecture.n)}: ${lecture.title}`;
 
@@ -268,6 +279,7 @@ function LectureRow({ view, nodeRight, width }: { view: LectureNodeView; nodeRig
       accessibilityLabel={label}
       disabled={status === "awaiting"}
       onPress={openLecture}
+      onLayout={(event) => onCardHeight(event.nativeEvent.layout.height)}
       style={({ pressed }) => [
         styles.card,
         { width: cardWidth },
@@ -300,12 +312,16 @@ function CardBody({ view, alignRight }: { view: LectureNodeView; alignRight: boo
   return (
     <View style={{ alignItems: alignRight ? "flex-end" : "flex-start" }}>
       <View style={styles.eyebrowRow}>
-        <T variant="codeSm" numberOfLines={1} color={eyebrowColor} style={[styles.eyebrow, status === "active" && { fontFamily: fonts.monoSemibold }]}>
-          Lecture {lecture.n}
-          {eyebrowRight ? ` · ${eyebrowRight}` : ""}
+        <T variant="codeSm" color={eyebrowColor} style={styles.eyebrow}>
+          Lecture {lectureNumber(lecture.n)}
         </T>
+        {eyebrowRight ? (
+          <T variant="codeSm" color={eyebrowColor} style={[styles.statusLabel, status === "active" && { fontFamily: fonts.monoSemibold }]}>
+            {eyebrowRight}
+          </T>
+        ) : null}
       </View>
-      <T variant="bodySemibold" numberOfLines={2} style={[styles.title, align]}>
+      <T variant="bodySemibold" style={[styles.title, align]}>
         {lecture.title}
       </T>
 
@@ -327,7 +343,7 @@ function CardBody({ view, alignRight }: { view: LectureNodeView; alignRight: boo
           </View>
           {progress.nextKu ? (
             <View style={styles.next}>
-              <T variant="codeSm" color={colors.onSurfaceVariant} numberOfLines={1} style={{ flex: 1 }}>
+              <T variant="codeSm" color={colors.onSurfaceVariant} style={{ flex: 1 }}>
                 Next: {progress.nextKu.shortTitle}
               </T>
               <Icon name="arrow-forward" size={16} color={colors.primary} />
@@ -396,8 +412,9 @@ const styles = StyleSheet.create({
   card: { backgroundColor: colors.surfaceContainerLowest, borderRadius: radius.lg, padding: 12, ...shadow.card },
   cardActive: { padding: 14, ...shadow.raised },
   cardAwaiting: { opacity: 0.75 },
-  eyebrowRow: { flexDirection: "row", alignItems: "center", alignSelf: "stretch" },
-  title: { marginTop: 3, fontSize: 14, lineHeight: 19 },
+  eyebrowRow: { alignItems: "flex-start", alignSelf: "stretch", gap: 4 },
+  statusLabel: { fontSize: 11, lineHeight: 16 },
+  title: { marginTop: 6, fontSize: 14, lineHeight: 19, alignSelf: "stretch" },
   eyebrow: { textTransform: "uppercase", letterSpacing: 0.8 },
   chip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 8, paddingVertical: 2, borderRadius: radius.full, marginTop: 8 },
   chipDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.outline },

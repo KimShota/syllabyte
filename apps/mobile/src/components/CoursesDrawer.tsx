@@ -48,7 +48,7 @@ export function CoursesDrawer({ visible, onClose, currentId }: { visible: boolea
   }
 
   return (
-    <Sheet visible={visible} onClose={onClose} edge="top" dismissOnBackdrop={false} accessibilityLabel="My courses">
+    <Sheet visible={visible} onClose={onClose} edge="top" accessibilityLabel="My courses">
       <View style={styles.head}>
         <IconButton
           icon="home"
@@ -61,7 +61,7 @@ export function CoursesDrawer({ visible, onClose, currentId }: { visible: boolea
             router.dismissTo("/");
           }}
         />
-        {/* the title is the way out: tap "My Courses" again to close the drawer */}
+        {/* Tapping the title also closes the drawer, as does tapping outside it. */}
         <Pressable accessibilityRole="button" accessibilityLabel="Close My Courses" onPress={onClose} hitSlop={8} style={styles.headTitle}>
           <Icon name="menu-book" size={20} color={colors.primary} />
           <T variant="cardTitle" style={{ fontFamily: fonts.bold, fontSize: 18 }}>

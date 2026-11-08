@@ -24,13 +24,13 @@ export function isDrafting(id: string): boolean {
 }
 
 /**
- * Status of every KU in a lecture. "next" is the playlist's up-next when it is in this lecture, else the first
- * unwatched KU with a video.
+ * Status of every KU in a lecture. The roadmap continues at its first unwatched KU with a video, even when the
+ * adaptive playlist recommends a later one. A recommendation never marks an earlier KU as watched.
  */
 export function kuStatuses(lecture: LectureDef, p: Progress): Record<string, KuStatus> {
   const ids = lectureKuIds(lecture);
   const playable = (id: string) => !p.watched.includes(id) && !isDrafting(id);
-  const next = p.upNext && ids.includes(p.upNext) && playable(p.upNext) ? p.upNext : ids.find(playable);
+  const next = ids.find(playable);
   const out: Record<string, KuStatus> = {};
   for (const id of ids) {
     if (p.watched.includes(id)) out[id] = "watched";
@@ -148,9 +148,8 @@ export function findLecture(n: number): LectureDef | undefined {
   return COURSE.lectures.find((l) => l.n === n);
 }
 
-/** The KU to start with: the playlist's up-next, else the next one in the active lecture. */
+/** Continue with the first unfinished playable KU of the active lecture, matching its roadmap marker. */
 export function firstUpNext(p: Progress): Ku | null {
-  if (p.upNext && KUS[p.upNext]) return KUS[p.upNext];
   for (const view of courseLectures(COURSE, p)) {
     if (view.status === "active") return view.progress.nextKu;
   }

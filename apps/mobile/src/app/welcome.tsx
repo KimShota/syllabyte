@@ -1,13 +1,14 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { UploadFile } from "@syllabyte/core/api/types";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { router } from "expo-router";
 import * as DocumentPicker from "expo-document-picker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/Button";
+import { IconButton } from "@/components/Header";
 import { Icon, type IconName } from "@/components/Icon";
 import { T } from "@/components/T";
-import { BACKEND_BASE, REMOTE } from "@/data/backend";
+import { REMOTE } from "@/data/backend";
 import { refreshCourse, useMyCourse } from "@/state/course";
 import { courseCalls } from "@/state/session";
 import { SLIDE_TYPES, SYLLABUS_TYPES, toUploadFile } from "@/state/uploads";
@@ -31,28 +32,11 @@ export default function Welcome() {
   const [slides, setSlides] = useState<UploadFile[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [apiCheck, setApiCheck] = useState("checking");
   const myCourse = useMyCourse();
   // a student who is in a course is adding another: the screen can be left, and the course they are in stays theirs
   const hasCourses = REMOTE && myCourse?.status === "ready";
   // the last syllabus couldn't be read: say why
   const lastError = myCourse?.status === "failed" ? myCourse.error : myCourse?.status === "ready" && myCourse.adding?.status === "failed" ? myCourse.adding.error : null;
-
-  useEffect(() => {
-    if (!__DEV__ || !BACKEND_BASE) return;
-    let active = true;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10_000);
-    fetch(`${BACKEND_BASE}/api/health`, { signal: controller.signal })
-      .then((response) => { if (active) setApiCheck(`HTTP ${response.status}`); })
-      .catch((cause) => { if (active) setApiCheck(cause instanceof Error ? cause.message : String(cause)); })
-      .finally(() => clearTimeout(timer));
-    return () => {
-      active = false;
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, []);
 
   function leave() {
     // they have read the error: Home should not keep showing it
@@ -82,6 +66,11 @@ export default function Welcome() {
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom + 8 }]}>
+      {hasCourses ? (
+        <View style={styles.topBar}>
+          <IconButton icon="arrow-back" label="Back to my courses" onPress={leave} />
+        </View>
+      ) : null}
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.header}>
           <View style={styles.logo}>
@@ -128,11 +117,6 @@ export default function Welcome() {
       </ScrollView>
 
       <View style={styles.footer}>
-        {__DEV__ && BACKEND_BASE ? (
-          <T variant="caption" color={colors.onSurfaceVariant} style={{ textAlign: "center" }} selectable>
-            API: {BACKEND_BASE} · {apiCheck}
-          </T>
-        ) : null}
         {error ?? lastError ? (
           <T variant="caption" color={colors.error} style={{ textAlign: "center" }} accessibilityLiveRegion="polite">
             {error ?? lastError}
@@ -144,23 +128,10 @@ export default function Welcome() {
           disabled={REMOTE ? !syllabus || sending : false}
           onPress={start}
         />
-        {REMOTE ? (
-          !syllabus ? (
-            <T variant="caption" color={colors.onSurfaceVariant} style={{ textAlign: "center" }}>
-              Choose your syllabus to continue.
-            </T>
-          ) : null
-        ) : !syllabus && !slides.length ? (
+        {!REMOTE && !syllabus && !slides.length ? (
           <T variant="caption" color={colors.onSurfaceVariant} style={{ textAlign: "center" }}>
             No files yet? Continue with the demo course, CS-UH 2219E.
           </T>
-        ) : null}
-        {hasCourses ? (
-          <Pressable accessibilityRole="button" accessibilityLabel="Back to my courses" onPress={leave} hitSlop={8} style={{ alignItems: "center", paddingVertical: 8 }}>
-            <T variant="bodySemibold" color={colors.primary} style={{ fontSize: 14 }}>
-              Back to my courses
-            </T>
-          </Pressable>
         ) : null}
       </View>
     </View>
@@ -215,6 +186,7 @@ function Dropzone({
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: "#f2f3f7" },
+  topBar: { paddingHorizontal: 12, alignItems: "flex-start" },
   content: { paddingHorizontal: 16, paddingTop: 24, paddingBottom: 24 },
   header: { alignItems: "center", marginBottom: 28 },
   logo: {
