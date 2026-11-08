@@ -218,6 +218,27 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
 
   app.get("/api/courses/mine", (c) => c.json(uploads.myCourse(c.get("user").id)));
 
+  /** Every course the student is in, with the one they are in now marked: the Home screen's list. */
+  app.get("/api/courses", (c) => c.json({ courses: courses.courseList(c.get("user").id) }));
+
+  /** Switches the student to one of their courses; every call after this one runs on that course's state. */
+  app.post(
+    "/api/courses/:id/activate",
+    uploadErrors((c) => {
+      const userId = c.get("user").id;
+      const id = idOf(c);
+      if (!courses.coursesOf(userId).includes(id)) return c.json({ error: "Not your course." }, 404);
+      courses.setActive(userId, id);
+      return c.json({ ok: true });
+    }),
+  );
+
+  /** The student has read why their last syllabus could not be read. */
+  app.post("/api/courses/syllabus-error/seen", (c) => {
+    uploads.seenSyllabusError(c.get("user").id);
+    return c.json({ ok: true });
+  });
+
   /** The syllabus (multipart field "syllabus"): the course is created or joined once the worker has read it. */
   app.post(
     "/api/courses",

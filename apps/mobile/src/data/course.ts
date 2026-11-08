@@ -9,7 +9,7 @@
  * (state/course.ts): `COURSE`, `KUS` and `OTHER_COURSES` are live, and screens re-render through `useCourseVersion`.
  */
 import { useSyncExternalStore } from "react";
-import type { LectureStateView } from "@syllabyte/core/api/types";
+import type { CourseListItem, LectureStateView } from "@syllabyte/core/api/types";
 import { FIX } from "@syllabyte/core/fixtures";
 import type { Course, KuEntry, Video } from "@syllabyte/core/types";
 import { backendMediaUrl, mediaUrl } from "./media";
@@ -236,13 +236,21 @@ export function uploadedCourseDef(course: Course, lectures: LectureStateView[], 
   };
 }
 
-/** Shows the student's uploaded course in place of the demo course; one course per student for now (U4). */
-export function showUploadedCourse(course: Course, lectures: LectureStateView[], videos: ReadonlyMap<string, Video> = new Map()): void {
+/** The student's other courses, as the Home screen and the drawer list them (the one they are in is `COURSE`). */
+export function courseStubs(list: readonly CourseListItem[]): CourseStub[] {
+  return list.filter((c) => !c.active).map((c) => ({ id: c.id, code: c.code, name: c.name, term: "", progress: c.progress, lecturesDone: c.lectures_ready, lecturesPlanned: c.lectures }));
+}
+
+/**
+ * Shows the student's uploaded course in place of the demo course, with their other courses beside it as stubs. They are
+ * in one course at a time: choosing another switches the server to it (state/course.ts switchCourse) and this runs again.
+ */
+export function showUploadedCourse(course: Course, lectures: LectureStateView[], videos: ReadonlyMap<string, Video> = new Map(), others: CourseStub[] = []): void {
   const next = uploadedCourseDef(course, lectures, videos);
   COURSE = next.course;
   for (const id of Object.keys(KUS)) delete KUS[id];
   Object.assign(KUS, next.kus);
-  OTHER_COURSES = [];
+  OTHER_COURSES = others;
   version += 1;
   listeners.forEach((l) => l());
 }

@@ -33,7 +33,9 @@ export default function Analyzing() {
 
   useEffect(() => {
     if (!REMOTE || !myCourse || myCourse.status === "reading") return;
-    if (myCourse.status !== "ready") {
+    // a student who is in a course is adding another: wait while its syllabus is read; if it could not be, say why
+    if (myCourse.status === "ready" && myCourse.adding?.status === "reading") return;
+    if (myCourse.status !== "ready" || myCourse.adding?.status === "failed") {
       router.replace("/welcome");
       return;
     }

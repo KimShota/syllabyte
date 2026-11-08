@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SCHEDULE, work, type Job } from "./fakeWorker";
+import { NO_COURSE, StateStore } from "../src/state";
 import { makeServer } from "./helpers";
 
 type Server = ReturnType<typeof makeServer>;
@@ -60,9 +61,12 @@ const DECKS = [
   { name: "week-notes.pdf", text: "Randomized trials\norder 3\nmore" },
 ];
 
-/** A student's saved app state. */
-const store = (s: Server, email: string) =>
-  JSON.parse((s.db.prepare("SELECT json FROM user_state WHERE user_id = (SELECT id FROM users WHERE email = ?)").get(email) as { json: string }).json);
+/** A student's saved app state in the course they are in: their profile and that course's document, as the app sees it. */
+const store = (s: Server, email: string) => {
+  const id = (s.db.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string }).id;
+  const states = new StateStore(s.db);
+  return { ...states.course(id, s.courses.courseOf(id) ?? NO_COURSE), ...states.profile(id) } as any;
+};
 
 const titles = async (who: Student) => (await who.json("/api/courses/mine")).course.lectures.map((l: any) => l.title);
 
@@ -93,10 +97,11 @@ describe("a syllabus makes or joins a shared course", () => {
     expect((await cat.json("/api/courses/mine")).course.id).not.toBe(courseId);
   });
 
-  it("refuses a second course for now, and files that are not a syllabus", async () => {
+  it("refuses files that are not a syllabus, and a syllabus while another is still being read", async () => {
     const s = makeServer();
     const { ann } = await courseWithAnn(s);
-    expect((await multipart(ann, "/api/courses", "syllabus", [{ name: "other.pdf", text: "x" }])).status).toBe(409);
+    expect((await multipart(ann, "/api/courses", "syllabus", [{ name: "other.pdf", text: "x" }])).status).toBe(200); // a second course is allowed now
+    expect((await multipart(ann, "/api/courses", "syllabus", [{ name: "third.pdf", text: "y" }])).body.error).toMatch(/still being read/);
     const bob = await student(s, "bob@nyu.edu");
     const bad = await multipart(bob, "/api/courses", "syllabus", [{ name: "s.txt", text: "x" }]);
     expect(bad).toMatchObject({ status: 400, body: { error: expect.stringMatching(/PDF or Word/) } });

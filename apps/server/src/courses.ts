@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { CourseListItem } from "@syllabyte/core/api/types";
 import { assembleCourse, type DeckResult } from "@syllabyte/core/logic/assemble";
 import { videoRequests, type VideoRequest } from "@syllabyte/core/logic/videoRequests";
 import type { DemoState, Fixtures, Item, ItemTier, Level, QuestionNeed, Video } from "@syllabyte/core/types";
@@ -82,12 +83,57 @@ export class Courses {
     return alias ? this.get(alias.course_id) : null;
   }
 
-  /** The student's course; one per student for now (U4). */
+  /**
+   * The course the student is in now: the one they chose (`setActive`) while they are still a member of it, else the
+   * first they joined. Everything that is "the student's course" (their state, questions, videos) means this one.
+   */
   courseOf(userId: string): string | null {
-    const row = this.db.prepare("SELECT course_id FROM course_members WHERE user_id = ? ORDER BY joined_at LIMIT 1").get(userId) as
+    const active = this.db
+      .prepare("SELECT a.course_id FROM active_course a JOIN course_members m ON m.user_id = a.user_id AND m.course_id = a.course_id WHERE a.user_id = ?")
+      .get(userId) as { course_id: string } | undefined;
+    if (active) return active.course_id;
+    const row = this.db.prepare("SELECT course_id FROM course_members WHERE user_id = ? ORDER BY joined_at, rowid LIMIT 1").get(userId) as
       | { course_id: string }
       | undefined;
     return row?.course_id ?? null;
+  }
+
+  /** Every course the student is in, the first they joined first. */
+  coursesOf(userId: string): string[] {
+    const rows = this.db.prepare("SELECT course_id FROM course_members WHERE user_id = ? ORDER BY joined_at, rowid").all(userId) as { course_id: string }[];
+    return rows.map((r) => r.course_id);
+  }
+
+  /** Switches the student to one of their courses. */
+  setActive(userId: string, courseId: string): void {
+    if (!this.coursesOf(userId).includes(courseId)) throw new Error("not a member of that course");
+    this.db
+      .prepare("INSERT INTO active_course (user_id, course_id) VALUES (?, ?) ON CONFLICT (user_id) DO UPDATE SET course_id = excluded.course_id")
+      .run(userId, courseId);
+  }
+
+  /**
+   * The student's courses for the Home screen: each with its lectures and how far they have got. Progress is the share of
+   * the course's KUs they have watched, as the phone counts it for the course it shows.
+   */
+  courseList(userId: string): CourseListItem[] {
+    const now = this.courseOf(userId);
+    return this.coursesOf(userId).flatMap((id) => {
+      const c = this.get(id);
+      if (!c) return [];
+      const lectures = this.lectures(id);
+      const decks = this.decks(id);
+      const ready = new Set(decks.filter((d) => d.status === "ready").map((d) => d.lecture_id));
+      const kuIds = new Set(this.fixtures(id).course.kus.map((k) => k.id));
+      const doc = this.db.prepare("SELECT json FROM course_state WHERE user_id = ? AND course_id = ?").get(userId, id) as { json: string } | undefined;
+      const watched = doc ? Object.keys((JSON.parse(doc.json) as { watched?: Record<string, unknown> }).watched ?? {}).filter((k) => kuIds.has(k)).length : 0;
+      return [
+        {
+          id, code: c.code, name: c.name, active: id === now, lectures: lectures.length, lectures_ready: lectures.filter((l) => ready.has(l.id)).length,
+          progress: kuIds.size ? watched / kuIds.size : 0,
+        },
+      ];
+    });
   }
 
   create(c: { syllabusKey: string; code: string; name: string; syllabusText: string; syllabusPath: string; createdBy: string; status?: CourseRow["status"] }): string {
@@ -100,8 +146,10 @@ export class Courses {
     return id;
   }
 
+  /** Adds the student to the course, and it becomes the one they are in: they just chose it (a syllabus, or the facilitator). */
   addMember(courseId: string, userId: string): void {
     this.db.prepare("INSERT OR IGNORE INTO course_members (course_id, user_id, joined_at) VALUES (?, ?, ?)").run(courseId, userId, this.now());
+    this.setActive(userId, courseId);
   }
 
   /** The course's lectures in teaching order (V1). */
@@ -285,7 +333,8 @@ export class Courses {
 
   /** The levels a student's answers set and the levels their videos were made at, from their saved state. */
   private studentLevels(userId: string): { levels: Record<string, { level: Level }>; made: Record<string, Level> } {
-    const row = this.db.prepare("SELECT json FROM user_state WHERE user_id = ?").get(userId) as { json: string } | undefined;
+    const courseId = this.courseOf(userId);
+    const row = courseId === null ? undefined : (this.db.prepare("SELECT json FROM course_state WHERE user_id = ? AND course_id = ?").get(userId, courseId) as { json: string } | undefined);
     if (!row) return { levels: {}, made: {} };
     const s = JSON.parse(row.json) as Partial<DemoState>;
     return { levels: (s.levels ?? {}) as Record<string, { level: Level }>, made: s.made ?? {} };

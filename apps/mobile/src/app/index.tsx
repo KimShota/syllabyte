@@ -14,7 +14,8 @@ import { REMOTE } from "@/data/backend";
 import { COURSE, OTHER_COURSES, useCourseVersion } from "@/data/course";
 import { courseProgress } from "@/data/selectors";
 import { usePrefs, useQuery } from "@/state/app";
-import { setupRoute, useMyCourse } from "@/state/course";
+import { refreshCourse, setupRoute, switchCourse, useMyCourse } from "@/state/course";
+import { courseCalls } from "@/state/session";
 import { useProgress } from "@/state/progress";
 import { colors, fonts, radius, shadow, space } from "@/theme/tokens";
 
@@ -42,6 +43,12 @@ export default function Home() {
   if (setup) return <Redirect href={setup} />;
   if (!REMOTE && !prefs.setupDone && !me.onboarding_done) return <Redirect href="/welcome" />;
 
+  const adding = REMOTE && myCourse?.status === "ready" ? myCourse.adding : null;
+  // with a backend the student is in one course at a time: opening another switches the server to it first
+  async function openCourse(id: string) {
+    if (REMOTE && id !== COURSE.id) await switchCourse(id).catch(() => undefined);
+    router.push({ pathname: "/course/[courseId]", params: { courseId: id } });
+  }
   const main = courseProgress(COURSE, progress);
   const courses = [
     { id: COURSE.id, name: COURSE.name, progress: main.fraction, analyzing: undefined as number | undefined },
@@ -88,22 +95,58 @@ export default function Home() {
               name={c.name}
               progress={c.progress}
               analyzing={c.analyzing}
-              onPress={() => router.push({ pathname: "/course/[courseId]", params: { courseId: c.id } })}
+              onPress={() => void openCourse(c.id)}
             />
           ))}
-          {/* one course per student while uploads are real (plan/slide-uploads-plan.md U4) */}
-          {REMOTE ? null : (
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setUploadOpen(true)}
-              style={({ pressed }) => [styles.another, pressed && { backgroundColor: colors.surfaceContainer }]}
-            >
-              <Icon name="upload-file" size={20} color={colors.primary} />
-              <T variant="bodySemibold" color={colors.primary} style={{ fontSize: 14 }}>
-                + Upload Another Course
+          {/* another course's syllabus: being read (the app keeps working), or why it could not be */}
+          {adding?.status === "reading" ? (
+            <View style={[styles.card, styles.cardAnalyzing]} accessibilityLabel="Reading the syllabus of the course you added">
+              <View style={styles.cardTop}>
+                <View style={styles.cardName}>
+                  <Spin>
+                    <Icon name="sync" size={20} color={colors.primary} />
+                  </Spin>
+                  <T variant="cardTitle" style={{ fontSize: 17, lineHeight: 23, flexShrink: 1 }}>
+                    Reading your syllabus…
+                  </T>
+                </View>
+                <View style={styles.analyzingChip}>
+                  <T variant="codeSm" color={colors.onSecondaryFixedVariant} style={{ fontSize: 11, fontFamily: fonts.monoSemibold, letterSpacing: 1 }}>
+                    ANALYZING
+                  </T>
+                </View>
+              </View>
+            </View>
+          ) : null}
+          {adding?.status === "failed" ? (
+            <View style={styles.card} accessibilityRole="alert">
+              <T variant="cardTitle" style={{ fontSize: 17, lineHeight: 23 }}>
+                We could not add that course
               </T>
-            </Pressable>
-          )}
+              <T variant="caption" color={colors.error}>
+                {adding.error}
+              </T>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => void courseCalls?.syllabusErrorSeen().then(() => refreshCourse())}
+                style={({ pressed }) => [styles.okButton, pressed && { backgroundColor: colors.surfaceContainerHigh }]}
+              >
+                <T variant="bodySemibold" color={colors.primary} style={{ fontSize: 14 }}>
+                  OK
+                </T>
+              </Pressable>
+            </View>
+          ) : null}
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => (REMOTE ? router.push("/welcome") : setUploadOpen(true))}
+            style={({ pressed }) => [styles.another, pressed && { backgroundColor: colors.surfaceContainer }]}
+          >
+            <Icon name="upload-file" size={20} color={colors.primary} />
+            <T variant="bodySemibold" color={colors.primary} style={{ fontSize: 14 }}>
+              + Upload Another Course
+            </T>
+          </Pressable>
         </View>
       </ScrollView>
 
@@ -187,6 +230,7 @@ const styles = StyleSheet.create({
   cardTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
   cardName: { flexDirection: "row", alignItems: "center", gap: 8, flex: 1 },
   analyzingChip: { backgroundColor: colors.secondaryContainer, borderRadius: radius.full, paddingHorizontal: 8, paddingVertical: 2 },
+  okButton: { alignSelf: "flex-end", paddingVertical: 8, paddingHorizontal: 20, borderRadius: radius.full, backgroundColor: colors.surfaceContainer },
   analyzingRow: { flexDirection: "row", justifyContent: "space-between", marginTop: -4 },
   another: {
     marginTop: 12,

@@ -1,5 +1,6 @@
 import type { Courses } from "./courses";
 import type { Db } from "./db";
+import { StateStore } from "./state";
 import { UploadError, type Uploads } from "./uploads";
 
 /**
@@ -78,10 +79,9 @@ function studentByCodeOrEmail(db: Db, who: string): { id: string; participant_co
   return u;
 }
 
-/** A student who has answered nothing yet can move: their KUs and questions would otherwise come from two courses. */
+/** A student who has answered nothing yet, in any of their courses, can move: their KUs and questions would otherwise come from two courses. */
 function hasAnswers(db: Db, userId: string): boolean {
-  const row = db.prepare("SELECT json FROM user_state WHERE user_id = ?").get(userId) as { json: string } | undefined;
-  return row ? ((JSON.parse(row.json) as { responses?: unknown[] }).responses?.length ?? 0) > 0 : false;
+  return new StateStore(db).courseDocs(userId).some((d) => (d.doc.responses?.length ?? 0) > 0);
 }
 
 /** Points a student at another course (U17), before they have answered anything. */
@@ -89,7 +89,10 @@ export function moveStudent(db: Db, courses: Courses, who: string, courseId: str
   const u = studentByCodeOrEmail(db, who);
   if (!courses.get(courseId)) throw new UploadError(`no course ${courseId}`, 404);
   if (hasAnswers(db, u.id)) throw new UploadError(`${u.participant_code} has already answered questions in their course`, 409);
+  // they have answered nothing, so what they had in other courses is dropped: they are in this one alone
   db.prepare("DELETE FROM course_members WHERE user_id = ?").run(u.id);
+  db.prepare("DELETE FROM active_course WHERE user_id = ?").run(u.id);
+  new StateStore(db).dropCourse(u.id);
   courses.addMember(courseId, u.id);
 }
 
@@ -103,12 +106,18 @@ export function mergeCourses(db: Db, courses: Courses, fromId: string, intoId: s
   if (fromId === intoId) throw new UploadError("a course can't be merged into itself");
   if (courses.decks(fromId).some((d) => d.lecture_id)) throw new UploadError("that course already has slides placed; move its students one by one", 409);
   const members = db.prepare("SELECT user_id FROM course_members WHERE course_id = ?").all(fromId) as { user_id: string }[];
-  for (const m of members) if (hasAnswers(db, m.user_id)) throw new UploadError("a student of that course has already answered questions", 409);
+  // answers in their other courses don't matter: only this course is merged away
+  for (const m of members) if ((new StateStore(db).course(m.user_id, fromId)?.responses?.length ?? 0) > 0) throw new UploadError("a student of that course has already answered questions", 409);
   db.exec("BEGIN");
   try {
     for (const m of members) {
-      db.prepare("DELETE FROM course_members WHERE user_id = ?").run(m.user_id);
+      // only this course goes: they may be in others, and the one they are in stays theirs unless it was this
+      const was = courses.courseOf(m.user_id);
+      db.prepare("DELETE FROM course_members WHERE user_id = ? AND course_id = ?").run(m.user_id, fromId);
+      db.prepare("DELETE FROM active_course WHERE user_id = ? AND course_id = ?").run(m.user_id, fromId);
+      new StateStore(db).dropCourse(m.user_id, fromId);
       courses.addMember(intoId, m.user_id);
+      if (was && was !== fromId) courses.setActive(m.user_id, was);
     }
     db.prepare("INSERT OR REPLACE INTO syllabus_aliases (syllabus_key, course_id, added_at) VALUES (?, ?, ?)").run(from.syllabus_key, intoId, Date.now());
     db.prepare("UPDATE syllabus_aliases SET course_id = ? WHERE course_id = ?").run(intoId, fromId);

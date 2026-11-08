@@ -158,7 +158,23 @@ export type MyCourseView =
         /** videos for this course that are still being made (a student's check set their level, the worker has not finished), so the phone keeps looking */
         videos_pending: number;
       };
+      /** a syllabus for another course, from a student who is in one: being read, or failed until they have seen why */
+      adding: { status: "reading" } | { status: "failed"; error: string } | null;
     };
+
+/** One of the student's courses (GET /api/courses): Home and the courses drawer. */
+export interface CourseListItem {
+  id: string;
+  code: string;
+  name: string;
+  /** the course they are in now: the one every other call is about */
+  active: boolean;
+  /** placed in the course so far, and those with their slides read */
+  lectures: number;
+  lectures_ready: number;
+  /** 0..1: KUs watched over KUs in the course */
+  progress: number;
+}
 
 /** GET /api/courses/:id/files: the files this student uploaded to the course, for "Syllabus & Course Slides". */
 export interface CourseFilesView {

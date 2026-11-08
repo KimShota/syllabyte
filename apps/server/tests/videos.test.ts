@@ -5,64 +5,9 @@ import { describe, expect, it } from "vitest";
 import { openDb } from "../src/db";
 import { videoOf, work } from "./fakeWorker";
 import { makeServer } from "./helpers";
+import { annNeedingVideos, multipart, student, type Server } from "./scenarios";
 
 /** Videos made by the pipeline (plan/participant-ready-plan.md S1-S4): the job, the files, what a student is handed. */
-
-type Server = ReturnType<typeof makeServer>;
-type Student = Awaited<ReturnType<typeof student>>;
-
-async function student(s: Server, email: string) {
-  const st = await s.signIn(email);
-  return Object.assign(st, {
-    raw: (path: string, init: RequestInit) => s.app.request(path, { ...init, headers: { Authorization: `Bearer ${st.token}` } }),
-    json: async (path: string) => (await (await st.get(path)).json()) as any,
-  });
-}
-
-async function multipart(who: Student, path: string, field: string, files: { name: string; text: string }[]) {
-  const form = new FormData();
-  for (const f of files) form.append(field, new File([f.text], f.name));
-  return (await who.raw(path, { method: "POST", body: form })).status;
-}
-
-const DECKS = [
-  { name: "slides.pdf", text: "Potential outcomes intro\norder 1\nmore" },
-  { name: "download (1).pdf", text: "Selection bias explained\norder 2\nmore" },
-];
-
-/** Ann has a course with two lectures, has sat the first lecture's check, and so needs its two videos. */
-async function annNeedingVideos() {
-  const s = makeServer();
-  const ann = await student(s, "ann@nyu.edu");
-  expect(await multipart(ann, "/api/courses", "syllabus", [{ name: "syllabus.pdf", text: "Syllabus of CS-UH 2219E" }])).toBe(200);
-  await work(s);
-  const courseId = (await ann.json("/api/courses/mine")).course.id as string;
-  expect(await multipart(ann, `/api/courses/${courseId}/slides`, "files", DECKS)).toBe(200);
-  await work(s, { kinds: ["deck_read", "placement"] });
-  const { uploads } = await ann.json(`/api/courses/${courseId}/uploads`);
-  const mine = await ann.json("/api/courses/mine");
-  const order = [
-    ...mine.course.lectures.map((l: any) => ({ at: l.position, entry: { lecture_n: l.n } })),
-    ...uploads.filter((u: any) => u.can_place).map((u: any) => ({ at: u.suggested_position, entry: { upload_id: u.id } })),
-  ]
-    .sort((a, b) => a.at - b.at)
-    .map((r) => r.entry);
-  expect((await ann.post(`/api/courses/${courseId}/uploads/confirm`, { order })).status).toBe(200);
-  await work(s, { kinds: ["deck"] });
-  const first = `lecture-${(await ann.json("/api/courses/mine")).course.lectures[0].n}`;
-  for (let guard = 0; guard < 40; guard++) {
-    const v = await ann.rpc<{ current: { item: { id: string; correct_index: number } } | null; preparing: string | null }>("getSitting", first);
-    if (v.preparing === "writing") {
-      await work(s, { kinds: ["question"] });
-      continue;
-    }
-    if (!v.current) break;
-    await ann.rpc("answerSitting", first, v.current.item.id, v.current.item.correct_index, 1000);
-  }
-  await ann.rpc("finishSitting", first);
-  const annId = (s.db.prepare("SELECT id FROM users WHERE email = 'ann@nyu.edu'").get() as { id: string }).id;
-  return { s, ann, annId, courseId };
-}
 
 /** the fields of core's Video (packages/core/src/types.ts) */
 const VIDEO_FIELDS = [
@@ -207,14 +152,13 @@ describe("what a student is handed", () => {
     // and one at another level than the video's gets nothing either (the video is made at the level their answers set)
     const rows = s.db.prepare("SELECT ku_id, level FROM videos WHERE course_id = ?").all(courseId) as { ku_id: string; level: number }[];
     const other = rows[0].level === 1 ? 2 : 1;
-    s.db
-      .prepare("INSERT INTO user_state (user_id, json, updated_at) VALUES (?, ?, 0) ON CONFLICT (user_id) DO UPDATE SET json = excluded.json")
-      .run(bobId, JSON.stringify({ levels: { [rows[0].ku_id]: { level: other } }, made: {} }));
+    const saveFor = (state: object) => s.db
+      .prepare("INSERT INTO course_state (user_id, course_id, json, updated_at) VALUES (?, ?, ?, 0) ON CONFLICT (user_id, course_id) DO UPDATE SET json = excluded.json")
+      .run(bobId, courseId, JSON.stringify(state));
+    saveFor({ levels: { [rows[0].ku_id]: { level: other } }, made: {} });
     expect(s.courses.fixturesFor(bobId)!.videos.map((v) => v.ku_id)).not.toContain(rows[0].ku_id);
     // once a video was made for them it is theirs whatever their level becomes later (D15)
-    s.db
-      .prepare("UPDATE user_state SET json = ? WHERE user_id = ?")
-      .run(JSON.stringify({ levels: { [rows[0].ku_id]: { level: other } }, made: { [rows[0].ku_id]: rows[0].level } }), bobId);
+    saveFor({ levels: { [rows[0].ku_id]: { level: other } }, made: { [rows[0].ku_id]: rows[0].level } });
     expect(s.courses.fixturesFor(bobId)!.videos.map((v) => v.ku_id)).toContain(rows[0].ku_id);
   });
 });
@@ -237,7 +181,7 @@ describe("the student's app", () => {
     expect((await s.app.request(variant.video.video_url)).status).toBe(200); // the link the phone gets plays
 
     // made for them once and never again: no new request, and the saved state says so
-    const saved = JSON.parse((s.db.prepare("SELECT json FROM user_state WHERE user_id = ?").get(annId) as { json: string }).json);
+    const saved = JSON.parse((s.db.prepare("SELECT json FROM course_state WHERE user_id = ? AND course_id = ?").get(annId, courseId) as { json: string }).json);
     expect(saved.made[card.ku_id]).toBe(variant.video.file_level);
     expect(s.uploads.syncVideoJobs()).toBe(0);
   });

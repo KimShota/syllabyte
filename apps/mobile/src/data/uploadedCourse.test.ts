@@ -4,9 +4,10 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 
 // the server's address is read when the data layer loads (data/backend.ts)
 let uploadedCourseDef: typeof import("./course").uploadedCourseDef;
+let courseStubs: typeof import("./course").courseStubs;
 beforeAll(async () => {
   vi.stubEnv("EXPO_PUBLIC_API_BASE", "http://10.0.0.5:8788");
-  ({ uploadedCourseDef } = await import("./course"));
+  ({ uploadedCourseDef, courseStubs } = await import("./course"));
 });
 
 const COURSE = {
@@ -38,5 +39,21 @@ describe("an uploaded course's KUs", () => {
     expect(none.videoId).toBe("ku-a"); // the KU has a video; its file isn't known yet
     expect(none.videoUri).toBeUndefined();
     expect(none.transcript).toEqual([]);
+  });
+});
+
+describe("the student's other courses", () => {
+  const list = [
+    { id: "a", code: "CS-1", name: "Data structures", active: true, lectures: 5, lectures_ready: 3, progress: 0.4 },
+    { id: "b", code: "ML-2", name: "Machine learning", active: false, lectures: 8, lectures_ready: 6, progress: 0.25 },
+  ];
+
+  it("are everything but the one they are in, with the counts the drawer and Home show", () => {
+    expect(courseStubs(list)).toEqual([{ id: "b", code: "ML-2", name: "Machine learning", term: "", progress: 0.25, lecturesDone: 6, lecturesPlanned: 8 }]);
+  });
+
+  it("are none for a student with one course", () => {
+    expect(courseStubs([list[0]])).toEqual([]);
+    expect(courseStubs([])).toEqual([]);
   });
 });

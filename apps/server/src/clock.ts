@@ -54,7 +54,8 @@ export function advanceToModuleEnd(db: Db, code: string, n: number, courseFor?: 
   const mod = studyModules(course)[n - 1];
   if (!mod) throw new Error(`there is no module ${n}`);
   const lastWeek = Math.max(...course.lectures.filter((l) => mod.lectures.includes(l.n)).map((l) => l.week));
-  const row = db.prepare("SELECT json FROM user_state WHERE user_id = ?").get(id) as { json: string } | undefined;
+  // the study's anchor is the student's, not a course's (src/state.ts profile)
+  const row = db.prepare("SELECT json FROM user_profile WHERE user_id = ?").get(id) as { json: string } | undefined;
   const start = row ? (JSON.parse(row.json) as { semester_start: number }).semester_start : undefined;
   if (start === undefined) throw new Error("that student has not opened the app yet");
   const due = start + lastWeek * 7 * DAY;

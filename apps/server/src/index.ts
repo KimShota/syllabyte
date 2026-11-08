@@ -31,9 +31,10 @@ const caps = {
   decksPerCourse: cap("SYLLABYTE_DECKS_PER_COURSE", DEFAULT_CAPS.decksPerCourse),
   maxFileBytes: cap("SYLLABYTE_MAX_FILE_MB", DEFAULT_CAPS.maxFileBytes / 1024 / 1024) * 1024 * 1024,
   newDecksPerDay: cap("SYLLABYTE_NEW_DECKS_PER_DAY", DEFAULT_CAPS.newDecksPerDay),
+  coursesPerStudent: cap("SYLLABYTE_COURSES_PER_STUDENT", DEFAULT_CAPS.coursesPerStudent),
 };
 const uploads = new Uploads(db, courses, process.env.SYLLABYTE_FILES ?? "data/files", caps);
-const runner = new StateRunner(db, { semesterStart, courseFor: (id) => courses.fixturesFor(id),
+const runner = new StateRunner(db, { semesterStart, courseFor: (id) => courses.fixturesFor(id), courseIdOf: (id) => courses.courseOf(id),
     after: (id, state) => courses.recordVideoNeeds(id, state),
     needs: (id, needs) => uploads.requestQuestions(id, needs),
   });

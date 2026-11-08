@@ -28,8 +28,10 @@ export interface Caps {
   decksPerCourse: number;
   maxFileBytes: number;
   newDecksPerDay: number;
+  /** courses one student can be in (a syllabus that joins one they are in already doesn't count) */
+  coursesPerStudent: number;
 }
-export const DEFAULT_CAPS: Caps = { decksPerCourse: 30, maxFileBytes: 25 * 1024 * 1024, newDecksPerDay: 15 };
+export const DEFAULT_CAPS: Caps = { decksPerCourse: 30, maxFileBytes: 25 * 1024 * 1024, newDecksPerDay: 15, coursesPerStudent: 6 };
 
 const SYLLABUS_TYPES = new Set([".pdf", ".docx"]);
 const SLIDE_TYPES = new Set([".pdf", ".pptx"]);
@@ -78,7 +80,12 @@ interface SyllabusUploadRow {
   course_id: string | null;
   error: string | null;
   created_at: number;
+  /** the student has seen why it failed */
+  seen: number;
 }
+
+/** A syllabus for another course, from a student who has one already. */
+type AddingView = { status: "reading" } | { status: "failed"; error: string };
 
 interface DeckUploadRow {
   id: string;
@@ -167,9 +174,14 @@ export class Uploads {
 
   // ------------------------------------------------------------------ syllabus
 
-  /** A syllabus (U5): read by the worker, then the student joins or creates the course. One course per student (U4). */
+  /**
+   * A syllabus (U5): read by the worker, then the student joins or creates the course, and it becomes the one they are in.
+   * A student can add more courses, up to a cap.
+   */
   addSyllabus(userId: string, fileName: string, bytes: Uint8Array): { upload_id: string } {
-    if (this.courses.courseOf(userId)) throw new UploadError("You already have a course.", 409);
+    if (this.courses.coursesOf(userId).length >= this.caps.coursesPerStudent) {
+      throw new UploadError(`You can be in up to ${this.caps.coursesPerStudent} courses.`, 409);
+    }
     const pending = this.db.prepare("SELECT id FROM syllabus_uploads WHERE user_id = ? AND status = 'reading'").get(userId);
     if (pending) throw new UploadError("Your syllabus is still being read.", 409);
     const ext = extname(fileName).toLowerCase();
@@ -226,18 +238,24 @@ export class Uploads {
     return this.db.prepare("SELECT * FROM syllabus_uploads WHERE id = ?").get(job.target_id) as unknown as SyllabusUploadRow;
   }
 
-  /** The student's course status: none yet, their syllabus being read (or failed), or the course. */
+  /**
+   * The student's course status: none yet, their first syllabus being read (or failed), or the course they are in. With
+   * a course, a syllabus being read for another is `adding` (the app keeps working meanwhile), and a failed one is
+   * `adding` too until the student has seen the error (`seenSyllabusError`).
+   */
   myCourse(userId: string) {
     const courseId = this.courses.courseOf(userId);
+    const up = this.db.prepare("SELECT * FROM syllabus_uploads WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(userId) as SyllabusUploadRow | undefined;
     if (!courseId) {
-      const up = this.db.prepare("SELECT * FROM syllabus_uploads WHERE user_id = ? ORDER BY created_at DESC LIMIT 1").get(userId) as SyllabusUploadRow | undefined;
       if (up?.status === "reading") return { status: "reading" as const };
       if (up?.status === "failed") return { status: "failed" as const, error: up.error };
       return { status: "none" as const };
     }
+    const adding: AddingView | null =
+      up?.status === "reading" ? { status: "reading" } : up?.status === "failed" && !up.seen ? { status: "failed", error: up.error ?? "That syllabus could not be read." } : null;
     const c = this.courses.get(courseId)!;
     const pending = this.db.prepare("SELECT COUNT(*) AS n FROM video_requests WHERE course_id = ? AND status IN ('waiting', 'making')").get(courseId) as { n: number };
-    return { status: "ready" as const, course: { id: c.id, code: c.code, name: c.name, lectures: this.lectureStates(courseId), videos_pending: pending.n } };
+    return { status: "ready" as const, course: { id: c.id, code: c.code, name: c.name, lectures: this.lectureStates(courseId), videos_pending: pending.n }, adding };
   }
 
   /** The files this student uploaded to the course: their syllabus and every slide file, with what became of each. */
@@ -313,9 +331,14 @@ export class Uploads {
     });
   }
 
+  /** The student has read why their last syllabus failed: it stops being reported. */
+  seenSyllabusError(userId: string): void {
+    this.db.prepare("UPDATE syllabus_uploads SET seen = 1 WHERE user_id = ? AND status = 'failed'").run(userId);
+  }
+
   private member(userId: string, courseId: string) {
     const c = this.courses.get(courseId);
-    if (!c || this.courses.courseOf(userId) !== courseId) throw new UploadError("Not your course.", 404);
+    if (!c || !this.courses.coursesOf(userId).includes(courseId)) throw new UploadError("Not your course.", 404);
     return c;
   }
 

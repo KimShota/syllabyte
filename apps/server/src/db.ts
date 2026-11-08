@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { migrateStates } from "./state";
 
 export type Db = DatabaseSync;
 export type Role = "student" | "instructor" | "researcher";
@@ -43,10 +44,31 @@ CREATE TABLE IF NOT EXISTS study_clock (
   user_id   TEXT PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
   offset_ms INTEGER NOT NULL DEFAULT 0
 );
+-- The student's saved state before several courses: one document each. Kept as a backup; src/state.ts migrates it into
+-- user_profile and course_state and nothing writes it any more.
 CREATE TABLE IF NOT EXISTS user_state (
   user_id    TEXT PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
   json       TEXT NOT NULL,
   updated_at INTEGER NOT NULL
+);
+-- Saved state in two layers (src/state.ts): the student's profile, and one document per course. course_id "" is the demo
+-- course (a student who has none), so it is not a foreign key.
+CREATE TABLE IF NOT EXISTS user_profile (
+  user_id    TEXT PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+  json       TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS course_state (
+  user_id    TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  course_id  TEXT NOT NULL,
+  json       TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, course_id)
+);
+-- The course a student is in now, when they have several (src/courses.ts courseOf). Without a row: their first course.
+CREATE TABLE IF NOT EXISTS active_course (
+  user_id   TEXT PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+  course_id TEXT NOT NULL REFERENCES courses (id) ON DELETE CASCADE
 );
 
 -- Uploaded courses (plan/slide-uploads-plan.md). A course is shared by everyone whose syllabus has the same normalized
@@ -210,6 +232,9 @@ export function openDb(path: string): Db {
   db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
   migrate(db);
   db.exec(SCHEMA);
+  // a syllabus's failure is shown to the student until they have seen it (a student with courses can leave the screen)
+  if (!columns(db, "syllabus_uploads").includes("seen")) db.exec("ALTER TABLE syllabus_uploads ADD COLUMN seen INTEGER NOT NULL DEFAULT 0");
+  migrateStates(db);
   return db;
 }
 

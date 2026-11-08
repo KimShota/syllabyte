@@ -32,8 +32,17 @@ export default function Welcome() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const myCourse = useMyCourse();
+  // a student who is in a course is adding another: the screen can be left, and the course they are in stays theirs
+  const hasCourses = REMOTE && myCourse?.status === "ready";
   // the last syllabus couldn't be read: say why
-  const lastError = myCourse?.status === "failed" ? myCourse.error : null;
+  const lastError = myCourse?.status === "failed" ? myCourse.error : myCourse?.status === "ready" && myCourse.adding?.status === "failed" ? myCourse.adding.error : null;
+
+  function leave() {
+    // they have read the error: Home should not keep showing it
+    if (lastError) void courseCalls?.syllabusErrorSeen().then(() => refreshCourse()).catch(() => undefined);
+    if (router.canGoBack()) router.back();
+    else router.replace("/");
+  }
 
   async function start() {
     if (!REMOTE || !courseCalls) {
@@ -63,12 +72,14 @@ export default function Welcome() {
             <Icon name="menu-book" size={28} color={colors.onPrimary} />
           </View>
           <T variant="titleMobile" style={{ fontFamily: fonts.extraBold, textAlign: "center" }} accessibilityRole="header">
-            Welcome to SyllaByte
+            {hasCourses ? "Add a course" : "Welcome to SyllaByte"}
           </T>
           <T variant="body" color="#606474" style={{ textAlign: "center", marginTop: 8, maxWidth: 300, fontFamily: fonts.medium }}>
-            {REMOTE
-              ? "Start with your syllabus: it lists your lectures. Add slides now, or as the semester goes."
-              : "Upload your course materials to auto-generate interactive study roadmaps."}
+            {hasCourses
+              ? "Upload the syllabus of the course you want to add. Add slides now, or as the semester goes."
+              : REMOTE
+                ? "Start with your syllabus: it lists your lectures. Add slides now, or as the semester goes."
+                : "Upload your course materials to auto-generate interactive study roadmaps."}
           </T>
         </View>
 
@@ -122,6 +133,13 @@ export default function Welcome() {
           <T variant="caption" color={colors.onSurfaceVariant} style={{ textAlign: "center" }}>
             No files yet? Continue with the demo course, CS-UH 2219E.
           </T>
+        ) : null}
+        {hasCourses ? (
+          <Pressable accessibilityRole="button" accessibilityLabel="Back to my courses" onPress={leave} hitSlop={8} style={{ alignItems: "center", paddingVertical: 8 }}>
+            <T variant="bodySemibold" color={colors.primary} style={{ fontSize: 14 }}>
+              Back to my courses
+            </T>
+          </Pressable>
         ) : null}
       </View>
     </View>

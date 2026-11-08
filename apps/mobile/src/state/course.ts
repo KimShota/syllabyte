@@ -8,7 +8,7 @@ import { api } from "@syllabyte/core/api/client";
 import type { MyCourseView } from "@syllabyte/core/api/types";
 import type { Course, Video } from "@syllabyte/core/types";
 import { getVersion, subscribe as subscribeStore, touch } from "@syllabyte/core/store";
-import { showUploadedCourse } from "@/data/course";
+import { courseStubs, showUploadedCourse } from "@/data/course";
 import { busy, onlyVideosPending } from "./courseWait";
 import { courseCalls, useSession } from "./session";
 
@@ -34,7 +34,9 @@ const subscribe = (l: () => void) => {
 export const useMyCourse = (): MyCourseView | null => useSyncExternalStore(subscribe, () => view, () => view);
 export const getMyCourse = (): MyCourseView | null => view;
 
+/** by course and video: two courses can each have a KU with the same id, and a video is the student's at their level */
 const videoCache = new Map<string, { video: Video; at: number }>();
+const cacheKey = (courseId: string, videoId: string) => `${courseId}:${videoId}`;
 
 /**
  * The made videos of the student's course, as the server hands them over at their level (getVariant reads and records
@@ -43,17 +45,18 @@ const videoCache = new Map<string, { video: Video; at: number }>();
 export async function loadVideos(course: Course): Promise<Map<string, Video>> {
   const now = Date.now();
   const wanted = course.kus.flatMap((k) => (k.video_id ? [k.video_id] : []));
+  const key = (id: string) => cacheKey(course.id, id);
   await Promise.all(
     wanted
-      .filter((id) => !videoCache.has(id) || now - videoCache.get(id)!.at > VIDEO_TTL_MS)
+      .filter((id) => !videoCache.has(key(id)) || now - videoCache.get(key(id))!.at > VIDEO_TTL_MS)
       .map((id) =>
         api
           .getVariant(id)
-          .then((v) => void videoCache.set(id, { video: v.video, at: now }))
+          .then((v) => void videoCache.set(key(id), { video: v.video, at: now }))
           .catch(() => undefined),
       ),
   );
-  return new Map(wanted.flatMap((id) => (videoCache.has(id) ? [[id, videoCache.get(id)!.video] as const] : [])));
+  return new Map(wanted.flatMap((id) => (videoCache.has(key(id)) ? [[id, videoCache.get(key(id))!.video] as const] : [])));
 }
 
 let inFlight: Promise<MyCourseView | null> | null = null;
@@ -66,14 +69,14 @@ export function refreshCourse(): Promise<MyCourseView | null> {
       const next = await courseCalls.mine();
       if (next.status === "ready") {
         const course = (await api.getMe()).course;
-        const videos = await loadVideos(course);
+        const [videos, list] = await Promise.all([loadVideos(course), courseCalls.list().catch(() => [])]);
         const key = JSON.stringify([
           course.id, course.kus.map((k) => [k.id, k.title, k.short_title, k.lecture_n, k.video_id]), next.course.lectures,
-          [...videos].map(([id, v]) => [id, v.video_url, v.duration_s]),
+          [...videos].map(([id, v]) => [id, v.video_url, v.duration_s]), list,
         ]);
         if (key !== shownKey) {
           shownKey = key;
-          showUploadedCourse(course, next.course.lectures, videos);
+          showUploadedCourse(course, next.course.lectures, videos, courseStubs(list));
         }
       }
       const changed = JSON.stringify(next) !== JSON.stringify(view);
@@ -91,6 +94,25 @@ export function refreshCourse(): Promise<MyCourseView | null> {
   return inFlight;
 }
 
+/**
+ * Moves the student to another of their courses: the server switches (their state, questions and videos are that
+ * course's from the next call), then the phone shows it. Resolves once the course on screen is the new one.
+ */
+export async function switchCourse(courseId: string): Promise<void> {
+  if (!courseCalls || view?.status === "ready" && view.course.id === courseId) return;
+  await courseCalls.activate(courseId);
+  shownKey = null;
+  await refreshCourse();
+}
+
+/** The student signed out: whatever was kept about their courses is not for the next one who signs in on this phone. */
+export function resetCourseCaches(): void {
+  videoCache.clear();
+  shownKey = null;
+  view = null;
+  listeners.forEach((l) => l());
+}
+
 /** Keeps the course current: at sign-in, after anything the student changes, and every few seconds while busy. */
 export function CourseSync(): null {
   const signedIn = useSession().status === "signedIn";
@@ -98,6 +120,7 @@ export function CourseSync(): null {
   const storeVersion = useSyncExternalStore(subscribeStore, getVersion, getVersion);
   useEffect(() => {
     if (signedIn) void refreshCourse().catch(() => {});
+    else resetCourseCaches();
   }, [signedIn, storeVersion]);
   useEffect(() => {
     if (!signedIn || !busy(current)) return;

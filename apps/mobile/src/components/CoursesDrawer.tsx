@@ -10,6 +10,7 @@ import { REMOTE } from "@/data/backend";
 import { COURSE, OTHER_COURSES, useCourseVersion, lectureNumber } from "@/data/course";
 import { courseProgress } from "@/data/selectors";
 import { useProgress } from "@/state/progress";
+import { switchCourse } from "@/state/course";
 import { colors, fonts, radius, shadow } from "@/theme/tokens";
 
 function initials(name: string) {
@@ -38,9 +39,12 @@ export function CoursesDrawer({ visible, onClose, currentId }: { visible: boolea
     })),
   ];
 
-  function go(id: string) {
+  async function go(id: string) {
     onClose();
-    if (id !== currentId) router.replace({ pathname: "/course/[courseId]", params: { courseId: id } });
+    if (id === currentId) return;
+    // with a backend the student is in one course at a time: switch the server to it, then show it
+    if (REMOTE && id !== COURSE.id) await switchCourse(id).catch(() => undefined);
+    router.replace({ pathname: "/course/[courseId]", params: { courseId: id } });
   }
 
   return (
@@ -87,7 +91,7 @@ export function CoursesDrawer({ visible, onClose, currentId }: { visible: boolea
               accessibilityRole="button"
               accessibilityState={{ selected: current }}
               accessibilityLabel={`${c.name}, ${current ? "current course" : c.meta}`}
-              onPress={() => go(c.id)}
+              onPress={() => void go(c.id)}
               style={({ pressed }) => [styles.row, current && styles.rowCurrent, pressed && { backgroundColor: colors.surfaceContainerLow }]}
             >
               <View style={styles.rowTop}>
@@ -134,8 +138,6 @@ export function CoursesDrawer({ visible, onClose, currentId }: { visible: boolea
           );
         })}
 
-        {/* one course per student while uploads are real (plan/slide-uploads-plan.md U4) */}
-        {REMOTE ? null : (
         <View style={styles.add}>
           <Button
             label="Add New Course"
@@ -144,14 +146,15 @@ export function CoursesDrawer({ visible, onClose, currentId }: { visible: boolea
             style={{ backgroundColor: colors.primaryDeep }}
             onPress={() => {
               onClose();
-              router.dismissTo({ pathname: "/", params: { upload: String(Date.now()) } });
+              // with a backend the syllabus goes up from the welcome screen; the demo has its own sheet on Home
+              if (REMOTE) router.push("/welcome");
+              else router.dismissTo({ pathname: "/", params: { upload: String(Date.now()) } });
             }}
           />
           <T variant="caption" color={colors.onSurfaceVariant} style={{ fontSize: 11, textAlign: "center" }}>
             Upload syllabus or slides to generate learning roadmaps
           </T>
         </View>
-        )}
       </View>
     </Sheet>
   );

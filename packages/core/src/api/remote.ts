@@ -1,6 +1,6 @@
 import type { ClientEvent } from "../events";
 import type { QuestionNeed } from "../types";
-import type { Api, CourseFilesView, MyCourseView, UploadOrderEntry, UploadFile, UploadView } from "./types";
+import type { Api, CourseFilesView, CourseListItem, MyCourseView, UploadOrderEntry, UploadFile, UploadView } from "./types";
 
 /**
  * The `Api` over HTTP to apps/server (plan/backend-plan.md): every method is `POST /api/rpc/<method>` with
@@ -166,6 +166,17 @@ export function createBackend(o: BackendOptions) {
     /** The student's uploaded course and its slides (plan/slide-uploads-plan.md). */
     courses: {
       mine: async (): Promise<MyCourseView> => (await get("/api/courses/mine")) as unknown as MyCourseView,
+      /** every course the student is in, the one they are in now marked */
+      list: async (): Promise<CourseListItem[]> => ((await get("/api/courses")) as unknown as { courses: CourseListItem[] }).courses,
+      /** switches to one of their courses: every call after this one is about it (state, questions, videos) */
+      activate: async (courseId: string): Promise<void> => {
+        await request(`/api/courses/${courseId}/activate`, {}, true);
+        o.onChanged();
+      },
+      /** the student has read why their last syllabus could not be read */
+      syllabusErrorSeen: async (): Promise<void> => {
+        await request("/api/courses/syllabus-error/seen", {}, true);
+      },
       /** the syllabus: the course is created or joined once the server has read it (poll `mine`) */
       create: async (syllabus: UploadFile): Promise<{ upload_id: string }> => (await upload("/api/courses", "syllabus", [syllabus])) as unknown as { upload_id: string },
       addSlides: async (courseId: string, files: UploadFile[]): Promise<UploadView[]> =>

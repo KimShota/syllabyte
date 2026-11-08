@@ -6,6 +6,7 @@ import { startOfWeek } from "@syllabyte/core/logic/time";
 import type { DemoState, Fixtures, QuestionNeed } from "@syllabyte/core/types";
 import type { Db } from "./db";
 import type { User } from "./auth";
+import { NO_COURSE, StateStore } from "./state";
 
 /**
  * Runs the shared app rules (packages/core) for one student at a time.
@@ -27,12 +28,18 @@ export class StateRunner {
     private opts: {
       semesterStart?: number;
       courseFor?: (userId: string) => Fixtures | null;
+      /** the course a student is in now, for the researcher's export (one row per student) */
+      courseIdOf?: (userId: string) => string | null;
       /** after each request of a student with a course that changed their state, e.g. to record the videos they need */
       after?: (userId: string, state: DemoState) => void;
       /** after every request of a student with a course: the questions their checks need written (V4) */
       needs?: (userId: string, needs: QuestionNeed[]) => void;
     } = {},
-  ) {}
+  ) {
+    this.store = new StateStore(db);
+  }
+
+  private store: StateStore;
 
   run<T>(user: User, visit: string | null, fn: () => Promise<T> | T): Promise<T> {
     const job = this.tail.then(() => this.exec(user, visit, fn));
@@ -42,8 +49,10 @@ export class StateRunner {
 
   private async exec<T>(user: User, visit: string | null, fn: () => Promise<T> | T): Promise<T> {
     const course = this.opts.courseFor?.(user.id) ?? null;
+    // a student's state is kept per course (src/state.ts): this request runs on the one they are in now
+    const courseId = course?.course.id ?? NO_COURSE;
     setFixtures(course ?? FIX);
-    replaceState(this.load(user));
+    replaceState(this.load(user, courseId));
     const v = getVersion();
     const e = getEventVersion();
     // a video made since their last request joins their playlist (core's syncPlaylistWithVideos); after the versions
@@ -61,20 +70,24 @@ export class StateRunner {
       if (course && this.opts.needs) this.opts.needs(user.id, questionNeedsNow());
       return out;
     } finally {
-      if (getVersion() !== v || getEventVersion() !== e) this.save(user.id);
+      if (getVersion() !== v || getEventVersion() !== e) this.save(user.id, courseId);
     }
   }
 
-  /** The saved state of a student; a first visit starts a fresh one under their participant code. */
-  private load(user: User): DemoState {
-    const row = this.db.prepare("SELECT json FROM user_state WHERE user_id = ?").get(user.id) as { json: string } | undefined;
+  /**
+   * The saved state of a student in a course: their profile (consent, settings, the questionnaires, the event log) and
+   * that course's document (levels, answers, playlist). A first visit, or a first visit to a course, starts a fresh
+   * document under their participant code; the profile carries over between courses.
+   */
+  private load(user: User, courseId: string): DemoState {
+    const profile = this.store.profile(user.id);
+    const doc = this.store.course(user.id, courseId);
     const base = freshState();
     base.participant_code = user.participant_code;
     base.clock_offset_ms = this.clockOffset(user.id);
     if (this.opts.semesterStart) base.semester_start = startOfWeek(this.opts.semesterStart);
-    if (!row) return base;
-    const parsed = JSON.parse(row.json) as DemoState;
-    return { ...base, ...parsed, participant_code: user.participant_code, clock_offset_ms: this.clockOffset(user.id) };
+    if (!profile && !doc) return base;
+    return { ...base, ...(doc ?? {}), ...(profile ?? {}), participant_code: user.participant_code, clock_offset_ms: this.clockOffset(user.id) } as DemoState;
   }
 
   /** How far the facilitator has moved this student's study clock (src/clock.ts); 0 for everyone else. */
@@ -83,16 +96,13 @@ export class StateRunner {
     return row?.offset_ms ?? 0;
   }
 
-  private save(userId: string): void {
-    this.db
-      .prepare("INSERT INTO user_state (user_id, json, updated_at) VALUES (?, ?, ?) ON CONFLICT (user_id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at")
-      .run(userId, JSON.stringify(getState()), Date.now());
+  private save(userId: string, courseId: string): void {
+    this.store.save(userId, courseId, getState());
   }
 
-  /** Every student's saved state, for the researcher export. */
+  /** One saved state per student, for the researcher export: the course they are in now. */
   allStates(): DemoState[] {
-    const rows = this.db.prepare("SELECT json FROM user_state").all() as { json: string }[];
-    return rows.map((r) => JSON.parse(r.json) as DemoState);
+    return this.store.allStates((id) => this.opts.courseIdOf?.(id) ?? null);
   }
 }
 

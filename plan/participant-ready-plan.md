@@ -50,8 +50,7 @@ deployed for real participants. Findings below were read from the code on 2026-1
   pilot course.
 - **Quality bar:** videos run about 100 s against the under-a-minute target, and none pass all four critic scores at 7
   (see `plan/one-shot-storyboard-plan.md`). Whether that is good enough for participants is a study decision.
-- **Several courses per student** is deferred to its own plan (U4); the server refuses a second syllabus (409). Not part
-  of this branch.
+- **Several courses per student** (U4) is built on branch `multi-course`: see "Multi-course" below.
 
 ## Status 2026-11-08: S1-S5 built and run on a copy of the ML trial course
 
@@ -86,3 +85,45 @@ counted as pending, so the student sees "drafting from slides" until the researc
 engine (it runs on a laptop today), `--kinds video` as its own worker so decks and checks are not held behind videos, and
 a decision on whether videos stay on the server's disk (about 2 MB each, fine for a pilot) or move to R2. Open on the
 product side: videos are about twice the under-a-minute target, and none passed all four critic scores at 7.
+
+
+## Multi-course, 2026-11-08 (branch `multi-course`, from `participant-ready`)
+
+A student can be in several courses and switch between them. The plan had deferred this (U4: "its own plan, after this
+one"); the user asked for it after the "+ Upload Another Course" button turned out to be hidden with a server.
+
+**Design.** Everything that meant "the student's course" keeps meaning one course, the *active* one (`active_course`;
+without a row, the first they joined), so the question, video and state code did not change. What changed:
+- *State is stored per course* (apps/server/src/state.ts). `user_state` (one document each) is migrated, losslessly,
+  into `user_profile` (consent, condition, settings, the event log, questionnaires, flags, study clock anchor: the
+  student's) and `course_state` (levels, answers, sittings, playlist, watched, notes: that course's). Core still sees one
+  `DemoState`; the runner joins the two layers on load and splits them on save. Old rows stay as a backup. Checked on
+  the real trial student: keys, values and sizes preserved.
+- *Server:* a second syllabus is allowed (cap `SYLLABYTE_COURSES_PER_STUDENT`, default 6); a syllabus that matches a
+  course they are in joins it; the newly added course becomes active; `GET /api/courses` (list with progress),
+  `POST /api/courses/:id/activate`, `POST /api/courses/syllabus-error/seen`; the course view carries `adding`
+  (a syllabus being read, or failed until seen) so the app keeps working meanwhile. The facilitator's `moveStudent` and
+  `mergeCourses` now touch only the courses they mean; the researcher's export is still one row per student.
+- *App:* Home and the drawer list every course; opening another switches the server first; "+ Upload Another Course" and
+  "Add New Course" go to the welcome screen (now "Add a course", with "Back to my courses"); Home shows a "Reading your
+  syllabus" card, or why it failed; the video cache is per course and cleared on sign-out.
+
+**Checked.** Server 110 tests (15 new: the split, the migration, adding, the cap, joining, failure and "seen", activate,
+state kept apart per course with the profile shared, the list's progress, the export, the facilitator tools; mutation
+checks failed the right tests), core 251, mobile 34, Python 474. In the simulator on the migrated trial data: Home lists
+both courses with the upload button; after switching, a fresh document is made for the new course and the first
+course's document is unchanged; switching back shows Machine Learning as she left it (1/17 watched, its videos); the
+reading card and the failure card appear and update by polling. Not exercised in the simulator: picking a syllabus file
+(no touch input there); the server side of that flow is tested with the fake worker.
+
+**Open, for the researcher.**
+1. *(Corrected.)* There is no baseline in an uploaded course (`UPLOADED_COURSE_CONFIG.cat_week0_lectures = 0`, plan V6), so
+   adding a course does not lock the app: the app-wide gate is for the demo course only. What locks is a lecture's own
+   check: that lecture's videos wait for it, and the student can go anywhere else, including back to their other course.
+   An earlier version of this section said the baseline would trap a student in a new course; that was wrong, from
+   reading the gate without its condition.
+2. *Events are not tagged with a course.* The event log is the student's, shared by their courses, so an analysis by
+   course cannot tell which an event belongs to. Adding the course id to each event is small; it changes the data.
+3. *Questionnaires are the student's, not a course's:* asked once, as the study design has it, whichever course is open.
+4. *Progress on Home* is KUs watched over KUs in the course; for a course that is not open it is read from its saved
+   document, so it only moves when that course is used.
