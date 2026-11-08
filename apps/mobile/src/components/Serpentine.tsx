@@ -25,12 +25,15 @@ export interface SerpentineRow {
 export function Serpentine({
   rows,
   segments,
+  turnGap = 0,
   focusKey,
   focusRef,
   onFocusLayout,
 }: {
   rows: SerpentineRow[];
   segments: SpineSegment[];
+  /** Bend across the empty space at each row boundary, keeping the spine clear of cards. */
+  turnGap?: number;
   /** the row a screen opens on (see useScrollToFocus): it gets `focusRef` and reports its layout */
   focusKey?: string | null;
   focusRef?: Ref<HostInstance>;
@@ -38,10 +41,12 @@ export function Serpentine({
 }) {
   const [width, setWidth] = useState(0);
   const centers: { x: number; y: number }[] = [];
+  const boundaries: number[] = [];
   let y = 0;
   for (const row of rows) {
     centers.push({ x: row.nodeX * width, y: y + (row.nodeY ?? row.height / 2) });
     y += row.height;
+    boundaries.push(y);
   }
   const totalHeight = y;
 
@@ -52,12 +57,16 @@ export function Serpentine({
           {centers.slice(0, -1).map((a, i) => {
             const b = centers[i + 1];
             const mid = (a.y + b.y) / 2;
+            const boundary = boundaries[i];
+            const path = turnGap > 0
+              ? `M ${a.x} ${a.y} L ${a.x} ${Math.max(a.y, boundary - turnGap / 2)} C ${a.x} ${boundary}, ${b.x} ${boundary}, ${b.x} ${Math.min(b.y, boundary + turnGap / 2)} L ${b.x} ${b.y}`
+              : `M ${a.x} ${a.y} C ${a.x} ${mid}, ${b.x} ${mid}, ${b.x} ${b.y}`;
             const seg = segments[i] ?? segments[segments.length - 1];
             if (!seg) return null;
             return (
               <Path
                 key={i}
-                d={`M ${a.x} ${a.y} C ${a.x} ${mid}, ${b.x} ${mid}, ${b.x} ${b.y}`}
+                d={path}
                 stroke={seg.color}
                 strokeWidth={seg.width ?? 3}
                 strokeDasharray={seg.dashed ? "6 6" : undefined}

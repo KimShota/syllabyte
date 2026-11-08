@@ -201,7 +201,7 @@ function Path({
       const nodeRight = lectureNumber(view.lecture.n) % 2 === 1;
       return {
         key: rowKey(view.lecture.n),
-        height: Math.max(view.status === "active" ? 150 : 124, (cardHeights[rowKey(view.lecture.n)] ?? 0) + 24),
+        height: Math.max(view.status === "active" ? 176 : 148, (cardHeights[rowKey(view.lecture.n)] ?? 0) + 48),
         nodeX: nodeRight ? RIGHT : LEFT,
         render: (width: number) => (
           <LectureRow
@@ -223,12 +223,15 @@ function Path({
     const upper = i - offset < 0 ? "awaiting" : top[i - offset].status;
     return segmentFor(upper, top[i + 1 - offset].status);
   });
-  return <Serpentine rows={rows} segments={segments} focusKey={focusKey} focusRef={focusRef} onFocusLayout={onFocusLayout} />;
+  return <Serpentine rows={rows} segments={segments} turnGap={32} focusKey={focusKey} focusRef={focusRef} onFocusLayout={onFocusLayout} />;
 }
 
 function LectureRow({ view, nodeRight, width, onCardHeight }: { view: LectureNodeView; nodeRight: boolean; width: number; onCardHeight: (height: number) => void }) {
   const { lecture, status, progress } = view;
-  const cardWidth = Math.min(260, width * 0.64);
+  // Reserve the active node's full animated halo plus a clear gap, including on narrow phones.
+  const nodeCenter = (nodeRight ? RIGHT : LEFT) * width;
+  const haloRadius = (NODE + 16) * 1.18 / 2;
+  const cardWidth = Math.max(0, Math.min(260, width * 0.64, (nodeRight ? nodeCenter : width - nodeCenter) - haloRadius - 16));
   const openLecture = () => router.push({ pathname: "/course/[courseId]/lecture/[n]", params: { courseId: COURSE.id, n: String(lecture.n) } });
   const label = `Lecture ${lectureNumber(lecture.n)}: ${lecture.title}`;
 
@@ -328,7 +331,7 @@ function CardBody({ view, alignRight }: { view: LectureNodeView; alignRight: boo
       {status === "completed" ? (
         <View style={[styles.chip, { backgroundColor: colors.secondaryContainer }]}>
           <Icon name="check-circle" size={13} color={colors.onSecondaryContainer} />
-          <T variant="codeSm" color={colors.onSecondaryContainer}>
+          <T variant="codeSm" color={colors.onSecondaryContainer} style={{ flexShrink: 1 }}>
             {progress.total} of {progress.total} completed
           </T>
         </View>
@@ -375,7 +378,7 @@ function AwaitingChip({ state }: { state: LectureNodeView["lecture"]["state"] })
   return (
     <View style={[styles.chip, { backgroundColor: look.bg }]}>
       <Icon name={look.icon} size={12} color={look.color} />
-      <T variant="codeSm" color={look.color} style={{ fontSize: 10 }}>
+      <T variant="codeSm" color={look.color} style={{ fontSize: 10, flexShrink: 1 }}>
         {look.text}
       </T>
     </View>
@@ -416,7 +419,7 @@ const styles = StyleSheet.create({
   statusLabel: { fontSize: 11, lineHeight: 16 },
   title: { marginTop: 6, fontSize: 14, lineHeight: 19, alignSelf: "stretch" },
   eyebrow: { textTransform: "uppercase", letterSpacing: 0.8 },
-  chip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 8, paddingVertical: 2, borderRadius: radius.full, marginTop: 8 },
+  chip: { flexDirection: "row", alignItems: "center", maxWidth: "100%", gap: 6, paddingHorizontal: 8, paddingVertical: 2, borderRadius: radius.full, marginTop: 8 },
   chipDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.outline },
   next: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 6 },
   progressRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 },
