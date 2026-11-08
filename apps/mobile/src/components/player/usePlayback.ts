@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useEventListener } from "expo";
 import { useVideoPlayer, type VideoPlayer } from "expo-video";
 import type { Ku } from "@/data/types";
@@ -51,17 +51,26 @@ export function usePlayback(ku: Ku, { active, hold, rate }: { active: boolean; h
 
   const running = active && playing && !hold && !ended;
 
+  // The rate is set first, in the same effect, and play or pause last: on iOS setting a playback rate starts playback, so
+  // as its own effect (after this one) it started every page the feed had mounted beside the one on screen, and they
+  // all played at once.
   useEffect(() => {
     if (!hasVideo) return;
+    setRate(player, rate);
     if (running) {
       if (player.currentTime >= ku.durationS - 0.1) setPosition(player, 0);
       player.play();
     } else player.pause();
-  }, [hasVideo, running, player, ku.durationS]);
+  }, [hasVideo, running, rate, player, ku.durationS]);
 
+  // And whatever starts a page that is not the one playing (a source that finished loading, the system), it is stopped again.
+  const runningNow = useRef(running);
   useEffect(() => {
-    if (hasVideo) setRate(player, rate);
-  }, [hasVideo, rate, player]);
+    runningNow.current = running;
+  }, [running]);
+  useEventListener(player, "playingChange", ({ isPlaying }) => {
+    if (hasVideo && isPlaying && !runningNow.current) player.pause();
+  });
 
   useEffect(() => {
     if (hasVideo || !running) return;
