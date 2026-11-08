@@ -81,6 +81,16 @@ For videos, add `--kinds video`: this runs up to three videos at once. Use `--co
 limit, including `--concurrency 1` for sequential generation. Other worker kinds default to one job at a time.
 Restart an existing worker to apply a new concurrency setting. Paused jobs must be retried separately.
 
+The mobile analyzer uses `GET courses/materials` to list the student's original syllabus and slide files, including
+bundled slides before course creation. It queues separate `preview` jobs once per file. An updated worker renders
+every PDF page to a small JPEG and sends `PUT worker/jobs/:id/pages/:page`, followed by
+`POST worker/jobs/:id/preview` with its manifest. Images use signed, short-lived `material-previews/:fileId/:page`
+links; only the uploader receives these links. Preview errors never fail the ingestion job.
+Office files are rendered through LibreOffice when available; otherwise the analyzer shows the actual extracted
+slide text or DOCX sections, labeled accordingly. Page cycling is a preview; status reports document-level processing.
+Restart both backend and worker after upgrading. Older workers continue processing materials but do not claim
+preview jobs. A worker with explicit `--kinds` must include `preview` (or use a separate `--kinds preview` worker).
+
 For uploaded courses, answering a new KU's precheck question settles its level and immediately requests its video.
 The worker can generate it while the student answers the remaining questions. That KU is not asked again in the same
 check, and its level stays fixed through the end of that check. KUs not asked about receive levels and video requests

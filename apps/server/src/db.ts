@@ -192,7 +192,7 @@ CREATE TABLE IF NOT EXISTS ku_links (
 -- 'video' (one video for a KU at a level; target "ku_id|level"). The worker claims them over HTTP (src/uploads.ts).
 CREATE TABLE IF NOT EXISTS jobs (
   id          TEXT PRIMARY KEY,
-  kind        TEXT NOT NULL CHECK (kind IN ('syllabus', 'deck_read', 'placement', 'deck', 'question', 'link_pass', 'video')),
+  kind        TEXT NOT NULL CHECK (kind IN ('syllabus', 'deck_read', 'placement', 'deck', 'question', 'link_pass', 'video', 'preview')),
   -- the syllabus upload, deck upload or deck it works on; a placement's student; a question's "ku_id|tier"
   target_id   TEXT NOT NULL,
   course_id   TEXT,
@@ -271,10 +271,16 @@ function migrate(db: Db): void {
   if (tables.has("courses") && !columns(db, "courses").includes("topics_json")) db.exec("ALTER TABLE courses ADD COLUMN topics_json TEXT NOT NULL DEFAULT '[]'");
   if (tables.has("decks") && !columns(db, "decks").includes("suggestion_json")) db.exec("ALTER TABLE decks ADD COLUMN suggestion_json TEXT");
   const jobs = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'jobs'").get() as { sql: string } | undefined;
-  if (jobs && !jobs.sql.includes("'video'")) {
+  if (jobs && !jobs.sql.includes("'preview'")) {
     // a CHECK constraint can't be altered: rebuild the table with the new kinds
-    db.exec(`ALTER TABLE jobs RENAME TO jobs_before_v4; DROP INDEX IF EXISTS jobs_queue;`);
-    db.exec(SCHEMA.slice(SCHEMA.indexOf("CREATE TABLE IF NOT EXISTS jobs"), SCHEMA.indexOf("CREATE INDEX IF NOT EXISTS jobs_queue")));
-    db.exec("INSERT INTO jobs SELECT * FROM jobs_before_v4; DROP TABLE jobs_before_v4;");
+    db.exec("SAVEPOINT preview_jobs");
+    try {
+      db.exec(`ALTER TABLE jobs RENAME TO jobs_before_preview; DROP INDEX IF EXISTS jobs_queue;`);
+      db.exec(SCHEMA.slice(SCHEMA.indexOf("CREATE TABLE IF NOT EXISTS jobs"), SCHEMA.indexOf("CREATE INDEX IF NOT EXISTS jobs_queue")));
+      db.exec("INSERT INTO jobs SELECT * FROM jobs_before_preview; DROP TABLE jobs_before_preview; RELEASE preview_jobs;");
+    } catch (error) {
+      db.exec("ROLLBACK TO preview_jobs; RELEASE preview_jobs");
+      throw error;
+    }
   }
 }

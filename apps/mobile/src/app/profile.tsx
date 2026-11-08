@@ -12,6 +12,7 @@ import { REMOTE } from "@/data/backend";
 import { COURSE, useCourseVersion } from "@/data/course";
 import { SPEEDS, setPrefs, signOut, speedLabel, usePrefs, useQuery } from "@/state/app";
 import { useSession } from "@/state/session";
+import { useMyCourse } from "@/state/course";
 import { pickProfilePhoto, removeProfilePhoto, type PhotoSource } from "@/state/photo";
 import { colors, fonts, radius, shadow, space } from "@/theme/tokens";
 
@@ -29,6 +30,7 @@ export default function Profile() {
   const aboutYou = useQuery(() => api.getBattery(ABOUT_YOU));
   const aboutYouStatus = !aboutYou ? null : aboutYou.submitted ? "Done" : Object.keys(aboutYou.answers).length ? "In progress" : "Not started";
   const { email } = useSession();
+  const myCourse = useMyCourse();
   // with a backend the student is who signed in; without one, the demo student
   const name = REMOTE ? (email ?? "Signed in") : DEMO_STUDENT.name;
   const initials = REMOTE
@@ -100,12 +102,12 @@ export default function Profile() {
                 </T>
               </Pressable>
             </Row>
-            <Row
+            {!REMOTE || myCourse?.status === "ready" ? <Row
               icon="folder-open"
               label="Syllabus & Course Slides"
               chevron
               onPress={() => router.push({ pathname: "/course/[courseId]/files", params: { courseId: COURSE.id } })}
-            />
+            /> : null}
             {aboutYou && aboutYouStatus ? (
               <Row icon="assignment" label={aboutYou.title} chevron onPress={() => router.push({ pathname: "/study/[id]", params: { id: ABOUT_YOU } })}>
                 <View style={[styles.statusChip, aboutYou.submitted && { backgroundColor: colors.secondaryContainer }]}>

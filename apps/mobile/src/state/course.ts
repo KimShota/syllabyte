@@ -11,8 +11,9 @@ import { getVersion, subscribe as subscribeStore, touch } from "@syllabyte/core/
 import { courseStubs, showUploadedCourse } from "@/data/course";
 import { busy, onlyVideosPending } from "./courseWait";
 import { courseCalls, useSession } from "./session";
+export { setupRoute } from "./courseWait";
 
-/** how often to look again while a syllabus is read or slides are analyzed (the student is waiting on the screen) */
+/** how often to look again while a syllabus or slides are processed, wherever the student is in the app */
 const POLL_MS = 4000;
 /** and while only videos are being made: a video that lands needs no sooner a look, and every rebuild is a risk to a screen playing one */
 const VIDEO_POLL_MS = 10_000;
@@ -129,16 +130,3 @@ export function CourseSync(): null {
   }, [signedIn, current]);
   return null;
 }
-
-/**
- * Where a student without a usable course goes first: the welcome screen (no course, or the syllabus couldn't be
- * read) or the analyzing screen (it is being read). Null once the course exists: its lectures come from the slides
- * (plan/slide-uploads-plan.md V3), so there is no list to confirm.
- */
-export function setupRoute(v: MyCourseView | null): "/welcome" | "/analyzing" | null {
-  if (!v) return null;
-  if (v.status === "none" || v.status === "failed") return "/welcome";
-  if (v.status === "reading") return "/analyzing";
-  return null;
-}
-

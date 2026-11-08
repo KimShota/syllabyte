@@ -3,7 +3,7 @@
  * (packages/core/fixtures: gitignored, because they come from the course's own slides): the lectures, every KU and
  * its title, which KUs have a video, and the videos' narration. What the design shows but the pipeline doesn't make
  * yet is placeholder data here: the professor, term and exam, lecture dates, the sections of a lecture, the lectures
- * still to come, the other courses, and the slides the "Analyzing" screen cycles through.
+ * still to come and the other courses.
  *
  * With a backend, the student's uploaded course (plan/slide-uploads-plan.md) replaces it once loaded
  * (state/course.ts): `COURSE`, `KUS` and `OTHER_COURSES` are live, and screens re-render through `useCourseVersion`.
@@ -147,15 +147,6 @@ const DEMO_OTHER_COURSES: CourseStub[] = [
 export let COURSE: CourseDef = DEMO_COURSE;
 export const KUS: Record<string, Ku> = { ...DEMO_KUS };
 export let OTHER_COURSES: CourseStub[] = DEMO_OTHER_COURSES;
-
-/** Slides the "Analyzing your materials" screen cycles through. */
-export const ANALYZER_SLIDES: { n: number; title: string; boxes: [string, string, string]; captions: [string, string, string] }[] = [
-  { n: 3, title: "Does insurance improve health?", boxes: ["Insured", "Health index", "Uninsured"], captions: ["Treated", "Outcome", "Control"] },
-  { n: 10, title: "Potential outcomes", boxes: ["Y1,i", "Person i", "Y0,i"], captions: ["With insurance", "Same moment", "Without"] },
-  { n: 17, title: "Selection bias", boxes: ["Difference", "= Effect", "+ Bias"], captions: ["In means", "Causal", "Selection"] },
-  { n: 25, title: "Randomization", boxes: ["Coin toss", "Groups", "Balance"], captions: ["Assignment", "Comparable", "Checked"] },
-];
-export const ANALYZER_TOTAL_SLIDES = Math.max(1, ...FIX.course.lectures.map((l) => l.slide_end));
 
 // ------------------------------------------------------------------ an uploaded course
 

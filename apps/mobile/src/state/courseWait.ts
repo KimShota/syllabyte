@@ -1,5 +1,10 @@
 import type { MyCourseView } from "@syllabyte/core/api/types";
 
+/** Offer uploads on first entry, but let students return Home without adding a course. */
+export function setupRoute(v: MyCourseView | null, setupDone = false): "/welcome" | null {
+  return v?.status === "none" && !setupDone ? "/welcome" : null;
+}
+
 /**
  * When the course will change by itself, so the phone keeps looking at it (state/course.ts): a syllabus is being read,
  * slides are being analyzed, or videos are being made. Kept apart from the screens' state so it can be tested.

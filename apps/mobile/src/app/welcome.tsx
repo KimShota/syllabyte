@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { UploadFile } from "@syllabyte/core/api/types";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { router } from "expo-router";
@@ -9,6 +9,7 @@ import { IconButton } from "@/components/Header";
 import { Icon, type IconName } from "@/components/Icon";
 import { T } from "@/components/T";
 import { REMOTE } from "@/data/backend";
+import { setPrefs } from "@/state/app";
 import { refreshCourse, useMyCourse } from "@/state/course";
 import { courseCalls } from "@/state/session";
 import { SLIDE_TYPES, SYLLABUS_TYPES, toUploadFile } from "@/state/uploads";
@@ -32,6 +33,7 @@ export default function Welcome() {
   const [slides, setSlides] = useState<UploadFile[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const left = useRef(false);
   const myCourse = useMyCourse();
   // a student who is in a course is adding another: the screen can be left, and the course they are in stays theirs
   const hasCourses = REMOTE && myCourse?.status === "ready";
@@ -39,10 +41,11 @@ export default function Welcome() {
   const lastError = myCourse?.status === "failed" ? myCourse.error : myCourse?.status === "ready" && myCourse.adding?.status === "failed" ? myCourse.adding.error : null;
 
   function leave() {
+    left.current = true;
+    setPrefs({ setupDone: true });
     // they have read the error: Home should not keep showing it
     if (lastError) void courseCalls?.syllabusErrorSeen().then(() => refreshCourse()).catch(() => undefined);
-    if (router.canGoBack()) router.back();
-    else router.replace("/");
+    router.dismissTo("/");
   }
 
   async function start() {
@@ -56,7 +59,7 @@ export default function Welcome() {
     try {
       await courseCalls.create(syllabus, slides);
       await refreshCourse();
-      router.replace("/analyzing");
+      if (!left.current) router.replace("/analyzing");
     } catch (e) {
       setError(e instanceof Error ? e.message : "The syllabus could not be uploaded.");
     } finally {
@@ -66,11 +69,9 @@ export default function Welcome() {
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom + 8 }]}>
-      {hasCourses ? (
-        <View style={styles.topBar}>
-          <IconButton icon="arrow-back" label="Back to my courses" onPress={leave} />
-        </View>
-      ) : null}
+      <View style={styles.topBar}>
+        <IconButton icon="arrow-back" label="Back to home" onPress={leave} />
+      </View>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.header}>
           <View style={styles.logo}>

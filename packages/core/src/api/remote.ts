@@ -1,6 +1,6 @@
 import type { ClientEvent } from "../events";
 import type { QuestionNeed } from "../types";
-import type { Api, CourseFilesView, CourseListItem, MyCourseView, UploadOrderEntry, UploadFile, UploadView } from "./types";
+import type { AnalyzerMaterial, Api, CourseFilesView, CourseListItem, MyCourseView, UploadOrderEntry, UploadFile, UploadView } from "./types";
 
 /**
  * The `Api` over HTTP to apps/server (plan/backend-plan.md): every method is `POST /api/rpc/<method>` with
@@ -178,6 +178,7 @@ export function createBackend(o: BackendOptions) {
     },
     /** The student's uploaded course and its slides (plan/slide-uploads-plan.md). */
     courses: {
+      materials: async (): Promise<AnalyzerMaterial[]> => ((await get("/api/courses/materials")) as unknown as { materials: AnalyzerMaterial[] }).materials,
       mine: async (): Promise<MyCourseView> => (await get("/api/courses/mine")) as unknown as MyCourseView,
       /** every course the student is in, the one they are in now marked */
       list: async (): Promise<CourseListItem[]> => ((await get("/api/courses")) as unknown as { courses: CourseListItem[] }).courses,

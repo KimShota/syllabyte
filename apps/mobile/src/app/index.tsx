@@ -38,19 +38,25 @@ export default function Home() {
   };
 
   if (!me || (REMOTE && !myCourse)) return <View style={styles.screen} />;
-  // with a backend, the course comes first: the syllabus, then (for whoever added it) its lecture list
-  const setup = REMOTE ? setupRoute(myCourse) : null;
+  // Offer the first upload once; students can leave it to explore Home without adding a course.
+  const setup = REMOTE ? setupRoute(myCourse, prefs.setupDone) : null;
   if (setup) return <Redirect href={setup} />;
   if (!REMOTE && !prefs.setupDone && !me.onboarding_done) return <Redirect href="/welcome" />;
 
-  const adding = REMOTE && myCourse?.status === "ready" ? myCourse.adding : null;
+  const adding = REMOTE
+    ? myCourse?.status === "ready" ? myCourse.adding
+      : myCourse?.status === "reading" || myCourse?.status === "failed" ? myCourse : null
+    : null;
+  const processing = adding?.status === "reading" || (REMOTE && myCourse?.status === "ready" &&
+    ((myCourse.course.slides_pending ?? 0) > 0 || myCourse.course.lectures.some((l) => l.state === "analyzing")));
   // with a backend the student is in one course at a time: opening another switches the server to it first
   async function openCourse(id: string) {
     if (REMOTE && id !== COURSE.id) await switchCourse(id).catch(() => undefined);
     router.push({ pathname: "/course/[courseId]", params: { courseId: id } });
   }
   const main = courseProgress(COURSE, progress);
-  const courses = [
+  // The demo or a previous account's course must not appear while the first uploaded course is being created.
+  const courses = REMOTE && myCourse?.status !== "ready" ? [] : [
     { id: COURSE.id, name: COURSE.name, progress: main.fraction, analyzing: undefined as number | undefined },
     ...OTHER_COURSES.map((c) => ({ id: c.id, name: c.name, progress: c.progress, analyzing: c.analyzing?.progress })),
   ];
@@ -89,6 +95,11 @@ export default function Home() {
         <TaskCards />
 
         <View style={styles.list}>
+          {REMOTE && myCourse?.status === "none" ? (
+            <T variant="body" color={colors.onSurfaceVariant} style={{ textAlign: "center" }}>
+              No courses yet. Upload a syllabus when you’re ready.
+            </T>
+          ) : null}
           {courses.map((c) => (
             <CourseCard
               key={c.id}
@@ -98,16 +109,20 @@ export default function Home() {
               onPress={() => void openCourse(c.id)}
             />
           ))}
-          {/* another course's syllabus: being read (the app keeps working), or why it could not be */}
-          {adding?.status === "reading" ? (
-            <View style={[styles.card, styles.cardAnalyzing]} accessibilityLabel="Reading the syllabus of the course you added">
+          {processing ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Processing your materials. View progress in the analyzer"
+              onPress={() => router.push({ pathname: "/analyzing", params: { from: "home" } })}
+              style={({ pressed }) => [styles.card, styles.cardAnalyzing, pressed && { backgroundColor: colors.surfaceContainerLow }]}
+            >
               <View style={styles.cardTop}>
                 <View style={styles.cardName}>
                   <Spin>
                     <Icon name="sync" size={20} color={colors.primary} />
                   </Spin>
                   <T variant="cardTitle" style={{ fontSize: 17, lineHeight: 23, flexShrink: 1 }}>
-                    Reading your syllabus…
+                    Processing your materials…
                   </T>
                 </View>
                 <View style={styles.analyzingChip}>
@@ -116,7 +131,16 @@ export default function Home() {
                   </T>
                 </View>
               </View>
-            </View>
+              <T variant="caption" color={colors.onSurfaceVariant}>
+                You can keep exploring. Your course will update here when it is ready.
+              </T>
+              <View style={styles.viewProgress}>
+                <T variant="caption" color={colors.primary} style={{ fontFamily: fonts.semibold }}>
+                  View progress
+                </T>
+                <Icon name="arrow-forward" size={16} color={colors.primary} />
+              </View>
+            </Pressable>
           ) : null}
           {adding?.status === "failed" ? (
             <View style={styles.card} accessibilityRole="alert">
@@ -124,15 +148,18 @@ export default function Home() {
                 We could not add that course
               </T>
               <T variant="caption" color={colors.error}>
-                {adding.error}
+                {adding.error ?? "Your syllabus could not be read. Please try uploading it again."}
               </T>
               <Pressable
                 accessibilityRole="button"
-                onPress={() => void courseCalls?.syllabusErrorSeen().then(() => refreshCourse())}
+                onPress={() => {
+                  if (myCourse?.status === "failed") router.push("/welcome");
+                  else void courseCalls?.syllabusErrorSeen().then(() => refreshCourse()).catch(() => undefined);
+                }}
                 style={({ pressed }) => [styles.okButton, pressed && { backgroundColor: colors.surfaceContainerHigh }]}
               >
                 <T variant="bodySemibold" color={colors.primary} style={{ fontSize: 14 }}>
-                  OK
+                  {myCourse?.status === "failed" ? "Try again" : "OK"}
                 </T>
               </Pressable>
             </View>
@@ -144,7 +171,7 @@ export default function Home() {
           >
             <Icon name="upload-file" size={20} color={colors.primary} />
             <T variant="bodySemibold" color={colors.primary} style={{ fontSize: 14 }}>
-              + Upload Another Course
+              {REMOTE && myCourse?.status === "none" ? "+ Upload a Course" : "+ Upload Another Course"}
             </T>
           </Pressable>
         </View>
@@ -227,6 +254,7 @@ const styles = StyleSheet.create({
     ...shadow.card,
   },
   cardAnalyzing: { borderColor: "rgba(91,63,214,0.3)" },
+  viewProgress: { flexDirection: "row", alignItems: "center", gap: 6 },
   cardTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
   cardName: { flexDirection: "row", alignItems: "center", gap: 8, flex: 1 },
   analyzingChip: { backgroundColor: colors.secondaryContainer, borderRadius: radius.full, paddingHorizontal: 8, paddingVertical: 2 },

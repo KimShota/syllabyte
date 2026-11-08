@@ -201,6 +201,17 @@ export interface CourseFilesView {
   }[];
 }
 
+/** Real uploaded documents shown in the analyzer. Page previews are separate from document-level AI processing. */
+export interface AnalyzerMaterial {
+  id: string;
+  file_name: string;
+  kind: "syllabus" | "slides";
+  state: "queued" | "reading" | "organizing" | "analyzing" | "ready" | "failed";
+  preview_state: "preparing" | "ready" | "failed";
+  unit: "page" | "slide" | "section";
+  pages: { n: number; text: string; image_url: string | null }[];
+}
+
 /** One row of the review screen (V1). */
 export interface UploadView {
   id: string;

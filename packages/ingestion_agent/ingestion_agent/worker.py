@@ -42,9 +42,10 @@ from ingestion_agent.upload_jobs import (
 )
 from ingestion_agent.uploads import UploadError, read_deck
 from ingestion_agent.video_job import run_video_job
+from ingestion_agent.material_previews import render_material
 from syllabyte_common.models import SlideDeck
 
-KINDS = ("syllabus", "deck_read", "placement", "deck", "question", "link_pass", "video")
+KINDS = ("syllabus", "deck_read", "placement", "deck", "question", "link_pass", "video", "preview")
 
 
 def log(msg: str) -> None:
@@ -79,7 +80,7 @@ class Worker:
 
     def run_once(self) -> bool:
         """Claims and runs one job; False when there was nothing to do."""
-        job = self._post("/api/worker/claim", {"kinds": self.kinds} if self.kinds else {})["job"]
+        job = self._post("/api/worker/claim", {"kinds": self.kinds or list(KINDS)})["job"]
         if not job:
             return False
         job_id, kind, payload = job["id"], job["kind"], job["payload"]
@@ -96,7 +97,8 @@ class Worker:
             manifest = RunManifest(run_id=f"{kind}-{job_id}")
             result = self._run(job_id, kind, payload, path, work, manifest)
             if result is not None:
-                self._post(f"/api/worker/jobs/{job_id}/result", {"result": result})
+                endpoint = "preview" if kind == "preview" else "result"
+                self._post(f"/api/worker/jobs/{job_id}/{endpoint}", {"result": result})
             cost = manifest.total_cost_usd(PRICE_PER_MTOK)
             with self._lock:
                 self.spent_usd += cost
@@ -113,6 +115,11 @@ class Worker:
         return True
 
     def _run(self, job_id: str, kind: str, payload: dict, path: Path | None, work: Path, manifest: RunManifest) -> dict | None:
+        if kind == "preview":
+            def send_page(n: int, image: Path) -> None:
+                response = self.client.put(f"/api/worker/jobs/{job_id}/pages/{n}", content=image.read_bytes())
+                response.raise_for_status()
+            return render_material(path, work / "previews", send_page)
         if kind == "syllabus":
             joined = []
 

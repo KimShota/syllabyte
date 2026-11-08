@@ -2,6 +2,10 @@ import type { Session } from "./session";
 
 export const isAuthPage = (pathname: string): boolean => pathname === "/landing" || pathname === "/signin";
 
+/** Browsing remains available when background processing makes the first baseline ready. Learning still requires it. */
+export const canExploreBeforeBaseline = (pathname: string): boolean =>
+  pathname === "/" || pathname === "/profile" || /^\/course\/[^/]+(?:\/files)?$/.test(pathname);
+
 /** Keep public entry pages accessible, including the emailed /signin link, and protect the rest of the app. */
 export function sessionRedirect(status: Session["status"], pathname: string): "/landing" | "/" | null {
   if (status === "signedOut" && !isAuthPage(pathname)) return "/landing";

@@ -12,7 +12,7 @@ import { REMOTE } from "@/data/backend";
 import { setScreen, startApp, useAppReady, usePrefs, useQuery } from "@/state/app";
 import { CourseSync } from "@/state/course";
 import { retryConnection, useReachable, useSession } from "@/state/session";
-import { isAuthPage, sessionRedirect } from "@/state/sessionRoutes";
+import { canExploreBeforeBaseline, isAuthPage, sessionRedirect } from "@/state/sessionRoutes";
 import { T } from "@/components/T";
 import { colors, fonts } from "@/theme/tokens";
 
@@ -20,17 +20,15 @@ SplashScreen.preventAutoHideAsync();
 // read the saved state while the fonts load
 void startApp();
 
-/** The quick check is the first thing every student does, and there is no way around it (plan D8, mobile-app-plan). */
+/** Uploaded-course browsing stays open; the quick check still comes before learning. */
 const OPEN_BEFORE_BASELINE = (pathname: string) =>
-  isAuthPage(pathname) || pathname === "/welcome" || pathname === "/analyzing" || pathname.startsWith("/quiz") ||
+  (REMOTE && canExploreBeforeBaseline(pathname)) || isAuthPage(pathname) || pathname === "/welcome" || pathname === "/analyzing" || pathname.startsWith("/quiz") ||
   // adding slides is how an uploaded course gets its first questions
   /^\/course\/[^/]+\/review$/.test(pathname);
 
 /**
- * Until the baseline is finished, every screen but the first-run screens and the check itself sends the student
- * back to the check (it resumes where they left off). Leaving the check, swiping back or opening a link to a video
- * all end up there. An uploaded course has no baseline until its first slides are processed (plan/slide-uploads-plan.md
- * U9): until then the student can look around and add slides.
+ * Until the baseline is finished, learning screens send the student to the check (which resumes where they left off).
+ * Home, profile, course overview and files remain open for uploaded courses, including when slides finish processing.
  */
 function BaselineGate({ pathname }: { pathname: string }) {
   const me = useQuery(() => api.getMe());

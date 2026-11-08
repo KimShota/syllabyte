@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sessionRedirect } from "./sessionRoutes";
+import { canExploreBeforeBaseline, sessionRedirect } from "./sessionRoutes";
 
 describe("public landing and email sign-in routes", () => {
   it.each(["/", "/welcome", "/profile", "/course/c1", "/player/ku-a"])("opens the landing page instead of a protected route: %s", (pathname) => {
@@ -16,5 +16,15 @@ describe("public landing and email sign-in routes", () => {
     expect(sessionRedirect("loading", "/")).toBeNull();
     expect(sessionRedirect("loading", "/signin")).toBeNull();
     expect(sessionRedirect("signedIn", "/course/c1")).toBeNull();
+  });
+});
+
+describe("exploring while uploaded materials finish processing", () => {
+  it.each(["/", "/profile", "/course/c1", "/course/c1/files"])("does not interrupt browsing when the baseline becomes ready: %s", (pathname) => {
+    expect(canExploreBeforeBaseline(pathname)).toBe(true);
+  });
+
+  it.each(["/player/ku-a", "/course/c1/feed", "/course/c1/lecture/1"])("still requires the baseline before learning: %s", (pathname) => {
+    expect(canExploreBeforeBaseline(pathname)).toBe(false);
   });
 });

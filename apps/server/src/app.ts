@@ -87,7 +87,9 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
   const small = bodyLimit({ maxSize: 512 * 1024, onError: (c) => c.json({ error: "too large" }, 413) });
   const files = bodyLimit({ maxSize: 160 * 1024 * 1024, onError: (c) => c.json({ error: "Those files are too large together. Upload fewer at a time." }, 413) });
   const videoFile = bodyLimit({ maxSize: MAX_VIDEO_FILE_BYTES, onError: (c) => c.json({ error: "too large" }, 413) });
-  app.use("*", (c, next) => (isUpload(c.req.path) ? files(c, next) : isWorkerFile(c.req.path) ? videoFile(c, next) : small(c, next)));
+  const previewBody = bodyLimit({ maxSize: 8 * 1024 * 1024, onError: (c) => c.json({ error: "too large" }, 413) });
+  const isPreviewBody = (path: string) => /^\/api\/worker\/jobs\/[^/]+\/(preview|pages\/\d+)$/.test(path);
+  app.use("*", (c, next) => (isUpload(c.req.path) ? files(c, next) : isWorkerFile(c.req.path) ? videoFile(c, next) : isPreviewBody(c.req.path) ? previewBody(c, next) : small(c, next)));
   // the videos handed to a student carry links signed here (src/courses.ts fixturesFor)
   courses.mediaSigner = (subject) => auth.signLink(subject, MEDIA_LINK_MS);
 
@@ -272,6 +274,23 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
 
   app.get("/api/courses/mine", (c) => c.json(uploads.myCourse(c.get("user").id)));
 
+  app.get("/api/courses/materials", uploadErrors((c) => {
+    const materials = uploads.analyzerMaterials(c.get("user").id).map((file) => {
+      const signature = auth.signLink(`preview:${file.id}`, FILE_LINK_MS);
+      return { ...file, pages: file.pages.map((page) => ({ ...page, image_url: page.image_url ? `${page.image_url}?${signature}` : null })) };
+    });
+    c.header("Cache-Control", "private, no-store");
+    return c.json({ materials });
+  }));
+
+  app.get("/api/material-previews/:fileId/:page", uploadErrors((c) => {
+    const { fileId, page } = c.req.param();
+    if (!auth.checkLink(`preview:${fileId}`, c.req.query("e"), c.req.query("s"))) return c.json({ error: "This preview link has expired." }, 403);
+    const path = uploads.previewPage(fileId, Number(page));
+    if (!path) return c.json({ error: "No such page." }, 404);
+    return c.body(readFileSync(path), 200, { "Content-Type": "image/jpeg", "Cache-Control": "private, max-age=300" });
+  }));
+
   /** Every course the student is in, with the one they are in now marked: the Home screen's list. */
   app.get("/api/courses", (c) => c.json({ courses: courses.courseList(c.get("user").id) }));
 
@@ -408,6 +427,19 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
       return c.json({ ok: true });
     }),
   );
+
+  app.put("/api/worker/jobs/:id/pages/:page", uploadErrors(async (c) => {
+    uploads.putPreviewPage(idOf(c), Number(c.req.param("page")), new Uint8Array(await c.req.arrayBuffer()));
+    return c.json({ ok: true });
+  }));
+
+  app.post("/api/worker/jobs/:id/preview", uploadErrors(async (c) => {
+    const body = await json(c);
+    if (!isObject(body.result)) return c.json({ error: "result is required" }, 400);
+    // The larger manifest limit is reserved for preview jobs.
+    uploads.completePreview(idOf(c), body.result);
+    return c.json({ ok: true });
+  }));
 
   app.post(
     "/api/worker/jobs/:id/syllabus-key",

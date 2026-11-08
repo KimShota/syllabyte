@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { extname, join } from "node:path";
 import type { DeckKu, DeckResult } from "@syllabyte/core/logic/assemble";
 import { tierDifficulty } from "@syllabyte/core/logic/kuProfile";
-import type { CourseFilesView, LectureStateView as LectureState, UploadOrderEntry, UploadView } from "@syllabyte/core/api/types";
+import type { AnalyzerMaterial, CourseFilesView, LectureStateView as LectureState, UploadOrderEntry, UploadView } from "@syllabyte/core/api/types";
 import type { Item, ItemTier, QuestionNeed, Video } from "@syllabyte/core/types";
 import type { Courses, DeckRow } from "./courses";
 import type { Db } from "./db";
@@ -43,7 +43,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const UPDATED_VERSION_SHARE = 0.5;
 const TIERS: ItemTier[] = ["basic", "applied", "advanced"];
 /** a student's check is waiting for these */
-const PRIORITY = { question: -10, deck_read: 1, placement: 2, syllabus: 0, deck: 10, video: 20, link_pass: 50 } as const;
+const PRIORITY = { question: -10, preview: -5, deck_read: 1, placement: 2, syllabus: 0, deck: 10, video: 20, link_pass: 50 } as const;
 /** the files a video job uploads before its result (the worker's PUT /api/worker/jobs/:id/files/:name) */
 export const VIDEO_FILES = ["video.mp4", "poster.jpg", "captions.vtt"] as const;
 export type VideoFileName = (typeof VIDEO_FILES)[number];
@@ -57,7 +57,7 @@ export class UploadError extends Error {
   }
 }
 
-export type JobKind = "syllabus" | "deck_read" | "placement" | "deck" | "question" | "link_pass" | "video";
+export type JobKind = "syllabus" | "deck_read" | "placement" | "deck" | "question" | "link_pass" | "video" | "preview";
 interface JobRow {
   id: string;
   kind: JobKind;
@@ -356,10 +356,83 @@ export class Uploads {
   uploadedFile(fileId: string): { path: string; name: string } | null {
     const row =
       this.db.prepare("SELECT file_path, file_name FROM syllabus_uploads WHERE id = ?").get(fileId) ??
-      this.db.prepare("SELECT file_path, file_name FROM deck_uploads WHERE id = ?").get(fileId);
+      this.db.prepare("SELECT file_path, file_name FROM deck_uploads WHERE id = ?").get(fileId) ??
+      this.db.prepare("SELECT file_path, file_name FROM syllabus_slides WHERE id = ?").get(fileId);
     if (!row) return null;
     const r = row as { file_path: string; file_name: string };
     return { path: r.file_path, name: r.file_name };
+  }
+
+  /** Own files only, including the syllabus and bundled slides before the first course has even been created. */
+  analyzerMaterials(userId: string): AnalyzerMaterial[] {
+    const courseId = this.courses.courseOf(userId);
+    const latest = this.db.prepare("SELECT * FROM syllabus_uploads WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(userId) as SyllabusUploadRow | undefined;
+    const pending = latest?.status === "reading" || (!courseId && latest);
+    const syllabus = pending ? latest : this.db.prepare("SELECT * FROM syllabus_uploads WHERE user_id = ? AND course_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(userId, courseId ?? "") as SyllabusUploadRow | undefined;
+    const sources: { id: string; file_name: string; kind: AnalyzerMaterial["kind"]; state: AnalyzerMaterial["state"] }[] = [];
+    if (syllabus) sources.push({ id: syllabus.id, file_name: syllabus.file_name, kind: "syllabus", state: syllabus.status === "reading" ? "reading" : syllabus.status === "failed" ? "failed" : "ready" });
+    if (pending && latest) {
+      const slides = this.db.prepare("SELECT id, file_name FROM syllabus_slides WHERE syllabus_id = ? ORDER BY created_at, rowid").all(latest.id) as { id: string; file_name: string }[];
+      sources.push(...slides.map((s) => ({ ...s, kind: "slides" as const, state: "queued" as const })));
+    } else if (courseId) {
+      const slides = this.db.prepare(`SELECT u.id, u.file_name, u.status, d.status AS deck_status FROM deck_uploads u
+        LEFT JOIN decks d ON d.id = u.deck_id WHERE u.user_id = ? AND u.course_id = ? ORDER BY u.created_at, u.rowid`).all(userId, courseId) as
+        { id: string; file_name: string; status: string; deck_status: string | null }[];
+      for (const s of slides) sources.push({ id: s.id, file_name: s.file_name, kind: "slides", state:
+        s.status === "failed" || s.deck_status === "failed" ? "failed" : s.status === "reading" ? "reading" :
+        s.deck_status === "queued" || s.deck_status === "processing" ? "analyzing" : s.status === "read" ? "organizing" : "ready" });
+    }
+    return sources.map((source) => {
+      const path = this.previewPath(source.id, "manifest.json");
+      const job = this.db.prepare("SELECT status FROM jobs WHERE kind = 'preview' AND target_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(source.id) as { status: string } | undefined;
+      if (!existsSync(path) && !job) this.enqueue("preview", source.id, null);
+      const manifest = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) as { unit: AnalyzerMaterial["unit"]; pages: { n: number; text: string; image: boolean }[] } : null;
+      return { ...source, preview_state: manifest ? "ready" : job?.status === "failed" ? "failed" : "preparing",
+        unit: manifest?.unit ?? (source.kind === "slides" ? "slide" : "page"),
+        pages: (manifest?.pages ?? []).map((p) => ({ n: p.n, text: p.text, image_url: p.image ? `/api/material-previews/${source.id}/${p.n}` : null })),
+      };
+    });
+  }
+
+  private previewPath(fileId: string, name: string): string {
+    // IDs come from uploads, never from a worker-supplied filename or filesystem path.
+    if (!/^[a-f0-9-]{36}$/.test(fileId)) throw new UploadError("No such preview.", 404);
+    return join(this.filesDir, "previews", fileId, name);
+  }
+
+  putPreviewPage(jobId: string, page: number, bytes: Uint8Array): void {
+    const job = this.job(jobId);
+    if (job.kind !== "preview" || job.status !== "claimed") throw new UploadError("That preview job is not claimed.", 409);
+    if (!Number.isInteger(page) || page < 1 || page > 2000 || bytes.byteLength > 2 * 1024 * 1024 ||
+      bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes.at(-2) !== 0xff || bytes.at(-1) !== 0xd9) throw new UploadError("A preview must be a JPEG page under 2 MB.");
+    const path = this.previewPath(job.target_id, `${page}.jpg`);
+    mkdirSync(join(this.filesDir, "previews", job.target_id), { recursive: true });
+    writeFileSync(path, bytes);
+  }
+
+  previewPage(fileId: string, page: number): string | null {
+    if (!Number.isInteger(page) || page < 1 || page > 2000) return null;
+    const path = this.previewPath(fileId, `${page}.jpg`);
+    return existsSync(path) ? path : null;
+  }
+
+  private previewResult(job: JobRow, result: Record<string, unknown>): void {
+    if (!["page", "slide", "section"].includes(result.unit as string) || !Array.isArray(result.pages) || !result.pages.length || result.pages.length > 2000) throw new UploadError("A preview needs its document pages.");
+    const pages = result.pages.map((p: unknown, i: number) => {
+      const page = p as { n?: number; text?: string; image?: boolean } | null;
+      if (!page || page.n !== i + 1 || typeof page.text !== "string" || typeof page.image !== "boolean" ||
+        (page.image && !this.previewPage(job.target_id, page.n))) throw new UploadError("A preview page is missing or invalid.");
+      return { n: page.n, text: page.text.slice(0, 2000), image: page.image };
+    });
+    mkdirSync(join(this.filesDir, "previews", job.target_id), { recursive: true });
+    const path = this.previewPath(job.target_id, "manifest.json");
+    writeFileSync(path + ".tmp", JSON.stringify({ unit: result.unit, pages }));
+    renameSync(path + ".tmp", path);
+  }
+
+  completePreview(jobId: string, result: Record<string, unknown>): void {
+    if (this.job(jobId).kind !== "preview") throw new UploadError("Not a preview job.");
+    this.complete(jobId, result);
   }
 
   /** Each lecture in teaching order, with its deck's state (U14). */
@@ -764,6 +837,8 @@ export class Uploads {
     if (!kinds?.length || kinds.includes("video")) this.syncVideoJobs();
     const queued = this.db.prepare("SELECT * FROM jobs WHERE status = 'queued' ORDER BY priority, created_at").all() as unknown as JobRow[];
     for (const j of queued) {
+      // Older workers do not know how to render previews. New workers advertise supported kinds explicitly.
+      if (j.kind === "preview" && !kinds?.includes("preview")) continue;
       if (kinds?.length && !kinds.includes(j.kind)) continue;
       if (!this.claimable(j)) continue;
       let payload: Record<string, unknown>;
@@ -785,6 +860,7 @@ export class Uploads {
   /** The file a job reads: the syllabus, the slide file, or the deck's file (for a question, its KU's deck). */
   fileOf(jobOrId: JobRow | string): { path: string; name: string } | null {
     const j = typeof jobOrId === "string" ? this.job(jobOrId) : jobOrId;
+    if (j.kind === "preview") return this.uploadedFile(j.target_id);
     if (j.kind === "syllabus") {
       const r = this.db.prepare("SELECT file_path, file_name FROM syllabus_uploads WHERE id = ?").get(j.target_id) as { file_path: string; file_name: string };
       return { path: r.file_path, name: r.file_name };
@@ -810,6 +886,7 @@ export class Uploads {
   }
 
   private payload(j: JobRow): Record<string, unknown> {
+    if (j.kind === "preview") return { file_id: j.target_id };
     if (j.kind === "syllabus") return { upload_id: j.target_id };
     if (j.kind === "placement") return this.placementPayload(j.target_id);
     if (j.kind === "question") return this.questionPayload(j);
@@ -853,7 +930,8 @@ export class Uploads {
     // a syllabus of a known course is finished when its key arrives (syllabusKey)
     if (j.status === "done") return;
     if (j.status !== "claimed") throw new UploadError("That job is not claimed.", 409);
-    if (j.kind === "syllabus") this.syllabusResult(jobId, result as { key: string; text: string; schedule?: Schedule });
+    if (j.kind === "preview") this.previewResult(j, result);
+    else if (j.kind === "syllabus") this.syllabusResult(jobId, result as { key: string; text: string; schedule?: Schedule });
     else if (j.kind === "deck_read") this.deckReadResult(jobId, result as unknown as { content_key: string } & DeckParse);
     else if (j.kind === "placement") this.placementResult(j, result as { order: string[]; unsure: string[] });
     else if (j.kind === "deck") this.deckResult(j, result as unknown as DeckResult);

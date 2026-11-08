@@ -1,6 +1,6 @@
 import type { MyCourseView } from "@syllabyte/core/api/types";
 import { describe, expect, it } from "vitest";
-import { busy, onlyVideosPending } from "./courseWait";
+import { busy, onlyVideosPending, setupRoute } from "./courseWait";
 
 const ready = (over: { videos_pending?: number; slides_pending?: number; states?: string[]; adding?: unknown }): MyCourseView =>
   ({
@@ -10,6 +10,21 @@ const ready = (over: { videos_pending?: number; slides_pending?: number; states?
   }) as unknown as MyCourseView;
 
 describe("when the phone keeps looking at the course", () => {
+  it("keeps Home available during the first upload and once its processing finishes or fails", () => {
+    expect(setupRoute({ status: "none" })).toBe("/welcome");
+    expect(setupRoute({ status: "reading" })).toBeNull();
+    expect(setupRoute(ready({ states: [], slides_pending: 2 }))).toBeNull();
+    expect(setupRoute(ready({}))).toBeNull();
+    expect(setupRoute({ status: "failed", error: "Please upload a PDF." })).toBeNull();
+    expect(setupRoute(null)).toBeNull();
+  });
+
+  it("lets a student return Home without uploading their first course", () => {
+    expect(setupRoute({ status: "none" }, false)).toBe("/welcome");
+    expect(setupRoute({ status: "none" }, true)).toBeNull();
+    expect(setupRoute({ status: "reading" }, true)).toBeNull();
+  });
+
   it("looks while a syllabus is read, slides are analyzed or videos are made, and stops otherwise", () => {
     expect(busy({ status: "reading" })).toBe(true);
     expect(busy(ready({ states: ["analyzing"] }))).toBe(true);
