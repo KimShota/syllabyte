@@ -1,4 +1,4 @@
-import { useEffect, useState, type Ref } from "react";
+import { useState, type Ref } from "react";
 import { Pressable, ScrollView, StyleSheet, View, type HostInstance } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -16,7 +16,7 @@ import { COURSE, OTHER_COURSES, useCourseVersion, lectureNumber } from "@/data/c
 import { courseLectures, type LectureNodeView } from "@/data/selectors";
 import type { LectureStatus } from "@/data/types";
 import { useProgress } from "@/state/progress";
-import { courseCalls } from "@/state/session";
+import { refreshCourse, useMyCourse } from "@/state/course";
 import { pickAndAddSlides } from "@/state/uploads";
 import { colors, fonts, radius, shadow, space } from "@/theme/tokens";
 
@@ -32,24 +32,10 @@ export default function CourseRoadmap() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
-  const [needsReview, setNeedsReview] = useState(false);
+  const myCourse = useMyCourse();
   useCourseVersion();
 
   const stub = OTHER_COURSES.find((c) => c.id === courseId);
-  useEffect(() => {
-    const calls = courseCalls;
-    if (!REMOTE || stub || !calls) return;
-    let active = true;
-    const load = () => void calls.uploads(courseId).then((rows) => {
-      if (active) setNeedsReview(rows.some((row) => row.status === "reading" || row.status === "read"));
-    }).catch(() => {});
-    load();
-    const id = setInterval(load, 4000);
-    return () => {
-      active = false;
-      clearInterval(id);
-    };
-  }, [courseId, stub]);
   const lectures = courseLectures(COURSE, progress);
   // open where the student is: the lecture in progress, else the first one not completed
   const current = lectures.find((l) => l.status === "active") ?? lectures.find((l) => l.status !== "completed");
@@ -102,13 +88,10 @@ export default function CourseRoadmap() {
           {/* an uploaded course: slides are added here, all at once or a lecture at a time (plan/slide-uploads-plan.md) */}
           {REMOTE && !stub ? (
             <View style={styles.addSlides}>
-              {needsReview ? (
-                <Button
-                  label="Place your slides"
-                  icon="slideshow"
-                  height={44}
-                  onPress={() => router.push({ pathname: "/course/[courseId]/review", params: { courseId } })}
-                />
+              {myCourse?.status === "ready" && (myCourse.course.slides_pending ?? 0) > 0 ? (
+                <T variant="caption" color={colors.onSurfaceVariant} accessibilityLiveRegion="polite">
+                  Organizing your slides automatically. Processing continues in the background.
+                </T>
               ) : null}
               <Button
                 label={adding ? "Uploading…" : "Add slides"}
@@ -121,7 +104,7 @@ export default function CourseRoadmap() {
                   setAdding(true);
                   try {
                     const added = await pickAndAddSlides(COURSE.id);
-                    if (added) router.push({ pathname: "/course/[courseId]/review", params: { courseId: COURSE.id } });
+                    if (added) await refreshCourse();
                   } catch (e) {
                     setAddError(e instanceof Error ? e.message : "The files could not be uploaded.");
                   } finally {

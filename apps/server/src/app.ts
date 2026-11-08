@@ -252,7 +252,7 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
     uploadErrors(async (c) => {
       const [file] = await fileParts(c, "syllabus");
       if (!file) return c.json({ error: "Choose your syllabus file." }, 400);
-      return c.json(uploads.addSyllabus(c.get("user").id, file.name, file.bytes));
+      return c.json(uploads.addSyllabus(c.get("user").id, file.name, file.bytes, await fileParts(c, "slides")));
     }),
   );
 

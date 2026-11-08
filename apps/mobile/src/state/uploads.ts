@@ -1,6 +1,5 @@
 /**
- * Picking and sending course files (plan/slide-uploads-plan.md). Slides chosen on the welcome screen wait here
- * until the course exists, then go up like any other slides and land on the review screen.
+ * Picking and sending course files. The server saves, organizes and analyzes slides in the background.
  */
 import * as DocumentPicker from "expo-document-picker";
 import { File } from "expo-file-system";
@@ -28,22 +27,6 @@ export async function pickFiles(types: string[], multiple: boolean): Promise<Upl
   return res.canceled ? null : res.assets.map(toUploadFile);
 }
 
-let pending: UploadFile[] = [];
-
-/** Slides picked before the course exists (the welcome screen). */
-export function setPendingSlides(files: UploadFile[]): void {
-  pending = files;
-}
-
-/** Sends the slides picked on the welcome screen, if any; true when there were some. */
-export async function sendPendingSlides(courseId: string): Promise<boolean> {
-  if (!courseCalls || pending.length === 0) return false;
-  const files = pending;
-  await courseCalls.addSlides(courseId, files);
-  pending = [];
-  return true;
-}
-
 /** "Add slides": pick one or more files and upload them; false when the student cancelled. Throws the server's message. */
 export async function pickAndAddSlides(courseId: string): Promise<UploadView[] | false> {
   if (!courseCalls) return false;
@@ -53,10 +36,9 @@ export async function pickAndAddSlides(courseId: string): Promise<UploadView[] |
 }
 
 /**
- * The course is ready: the first run is over. Slides picked on the welcome screen go up
- * now and the student places them on the review screen; otherwise Home.
+ * The course exists: open its roadmap while the server organizes and analyzes the already saved slides.
  */
-export async function finishSetup(courseId: string): Promise<{ pathname: "/course/[courseId]/review"; params: { courseId: string } } | "/"> {
+export async function finishSetup(courseId: string): Promise<{ pathname: "/course/[courseId]"; params: { courseId: string } }> {
   setPrefs({ setupDone: true });
-  return (await sendPendingSlides(courseId)) ? { pathname: "/course/[courseId]/review", params: { courseId } } : "/";
+  return { pathname: "/course/[courseId]", params: { courseId } };
 }

@@ -19,7 +19,7 @@ const SLIDE_MS = 1800;
 /**
  * "Analyzing your materials…": a scan over each slide, then on to the baseline check. With a backend
  * (plan/slide-uploads-plan.md) it runs while the server reads the syllabus, then goes on into the course (or to the
- * review screen for slides picked with the syllabus); a syllabus that couldn't be read goes back to the welcome
+ * roadmap while slides are organized automatically); a syllabus that couldn't be read goes back to the welcome
  * screen, which says why.
  */
 export default function Analyzing() {

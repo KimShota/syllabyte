@@ -97,13 +97,15 @@ export function createBackend(o: BackendOptions) {
   }
 
   /** Files as multipart/form-data under `field`. On a phone a file is its { uri, name, type }; in a browser, its Blob. */
-  async function upload(path: string, field: string, files: UploadFile[]): Promise<Record<string, unknown>> {
+  async function upload(path: string, field: string, files: UploadFile[], extra: Record<string, UploadFile[]> = {}): Promise<Record<string, unknown>> {
     const token = o.token();
     if (!token) throw new ApiError("Sign in to continue", 401);
     const form = new FormData();
-    for (const f of files) {
-      if (f.file) form.append(field, f.file, f.name);
-      else form.append(field, { uri: f.uri, name: f.name, type: f.mimeType ?? "application/octet-stream" } as unknown as Blob);
+    for (const [name, attachments] of Object.entries({ [field]: files, ...extra })) {
+      for (const f of attachments) {
+        if (f.file) form.append(name, f.file, f.name);
+        else form.append(name, { uri: f.uri, name: f.name, type: f.mimeType ?? "application/octet-stream" } as unknown as Blob);
+      }
     }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 180_000);
@@ -181,7 +183,8 @@ export function createBackend(o: BackendOptions) {
         await request("/api/courses/syllabus-error/seen", {}, true);
       },
       /** the syllabus: the course is created or joined once the server has read it (poll `mine`) */
-      create: async (syllabus: UploadFile): Promise<{ upload_id: string }> => (await upload("/api/courses", "syllabus", [syllabus])) as unknown as { upload_id: string },
+      create: async (syllabus: UploadFile, slides: UploadFile[] = []): Promise<{ upload_id: string }> =>
+        (await upload("/api/courses", "syllabus", [syllabus], { slides })) as unknown as { upload_id: string },
       addSlides: async (courseId: string, files: UploadFile[]): Promise<UploadView[]> =>
         ((await upload(`/api/courses/${courseId}/slides`, "files", files)) as unknown as { uploads: UploadView[] }).uploads,
       /** the student's own syllabus and slide files, for "Syllabus & Course Slides" */

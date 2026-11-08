@@ -146,6 +146,15 @@ CREATE TABLE IF NOT EXISTS decks (
   UNIQUE (course_id, content_key)
 );
 -- Every slide file any student uploaded, and what became of it (also the research log for updated versions, U12).
+-- Slides saved with a syllabus before its course is known. Transferred to deck_uploads when the syllabus resolves.
+CREATE TABLE IF NOT EXISTS syllabus_slides (
+  id TEXT PRIMARY KEY,
+  syllabus_id TEXT NOT NULL REFERENCES syllabus_uploads (id) ON DELETE CASCADE,
+  file_name TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  byte_size INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS deck_uploads (
   id         TEXT PRIMARY KEY,
   user_id    TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,

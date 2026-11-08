@@ -11,17 +11,10 @@ async function upload(s: Server, token: string, path: string, field: string, fil
   return s.app.request(path, { method: "POST", body: form, headers: { Authorization: `Bearer ${token}` } });
 }
 
-/** Uploads slide files and confirms them where the placement call put them. */
+/** Uploads slide files and lets the worker organize and analyze them. */
 async function addSlides(s: Server, st: { token: string; get: (p: string) => Response | Promise<Response>; post: (p: string, b: unknown) => Response | Promise<Response> }, courseId: string, files: { name: string; text: string }[]) {
   await upload(s, st.token, `/api/courses/${courseId}/slides`, "files", files);
   await work(s, { kinds: ["deck_read", "placement"] });
-  const mine = (await (await st.get("/api/courses/mine")).json()) as any;
-  const { uploads } = (await (await st.get(`/api/courses/${courseId}/uploads`)).json()) as any;
-  const order = [
-    ...mine.course.lectures.map((l: any) => ({ at: l.position, e: { lecture_n: l.n } })),
-    ...uploads.filter((u: any) => u.can_place).map((u: any) => ({ at: u.suggested_position, e: { upload_id: u.id } })),
-  ].sort((a, b) => a.at - b.at).map((r) => r.e);
-  await st.post(`/api/courses/${courseId}/uploads/confirm`, { order });
   await work(s);
 }
 

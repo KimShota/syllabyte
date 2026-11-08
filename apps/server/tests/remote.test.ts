@@ -191,9 +191,47 @@ describe("the event queue", () => {
 });
 
 describe("the phone's course calls", () => {
+  it.each([false, true])("saves syllabus and slides together and finishes after a server restart (existing course: %s)", async (existing) => {
+    const s = makeServer();
+    if (existing) {
+      const classmate = phone(s);
+      await classmate.signIn("classmate@nyu.edu");
+      await classmate.backend.courses.create(file("syllabus.pdf", "Syllabus of CS-UH 2219E"));
+      await work(s);
+    }
+    const p = phone(s);
+    await p.signIn("ann@nyu.edu");
+    await p.backend.courses.create(file("syllabus.pdf", "Syllabus of CS-UH 2219E"), [
+      file("later.pdf", "Selection bias explained\norder 2\nmore"),
+      file("intro.pdf", "Potential outcomes intro\norder 1\nmore"),
+    ]);
+    expect(s.db.prepare("SELECT COUNT(*) AS n FROM syllabus_slides").get()).toMatchObject({ n: 2 });
+
+    // No more phone calls: a new server instance and its worker complete the saved upload.
+    const restarted = makeServer({ db: s.db });
+    const jobs = await work(restarted);
+    expect(jobs.filter((j) => j.kind === "deck")).toHaveLength(2);
+    expect(s.db.prepare("SELECT COUNT(*) AS n FROM syllabus_slides").get()).toMatchObject({ n: 0 });
+    const after = await p.backend.courses.mine();
+    expect(after.status === "ready" && after.course.lectures.map((l) => [l.title, l.state])).toEqual([
+      ["Potential outcomes intro", "ready"], ["Selection bias explained", "ready"],
+    ]);
+    if (after.status !== "ready") throw new Error("course not ready");
+    expect(await p.backend.courses.uploads(after.course.id)).toEqual([]);
+  });
+
+  it("rejects invalid bundled slides before queuing the syllabus", async () => {
+    const s = makeServer();
+    const p = phone(s);
+    await p.signIn("ann@nyu.edu");
+    await expect(p.backend.courses.create(file("syllabus.pdf", "Syllabus"), [file("deck.key", "Keynote")])).rejects.toThrow(/Export To > PDF/);
+    expect(s.db.prepare("SELECT COUNT(*) AS n FROM syllabus_uploads").get()).toMatchObject({ n: 0 });
+    expect(s.db.prepare("SELECT COUNT(*) AS n FROM jobs").get()).toMatchObject({ n: 0 });
+  });
+
   const file = (name: string, text: string) => ({ name, uri: `file:///${name}`, file: new Blob([text]) });
 
-  it("adds a course from the syllabus, uploads slides and places them", async () => {
+  it("adds a course from the syllabus and processes slides automatically", async () => {
     const s = makeServer();
     const p = phone(s);
     await p.signIn("ann@nyu.edu");
@@ -211,12 +249,9 @@ describe("the phone's course calls", () => {
     expect(added.map((u) => u.status)).toEqual(["reading"]);
     expect(p.log.changed).toBeGreaterThan(changedBefore);
     await work(s);
-    const [row] = await p.backend.courses.uploads(mine.course.id);
-    expect(row).toMatchObject({ title: "Potential outcomes intro", placing: false, can_place: true });
-    await p.backend.courses.confirmUploads(mine.course.id, [{ upload_id: row.id, title: "Potential outcomes" }]);
-    await work(s);
+    expect(await p.backend.courses.uploads(mine.course.id)).toEqual([]);
     const after = await p.backend.courses.mine();
-    expect(after.status === "ready" && after.course.lectures.map((l) => [l.title, l.state])).toEqual([["Potential outcomes", "ready"]]);
+    expect(after.status === "ready" && after.course.lectures.map((l) => [l.title, l.state])).toEqual([["Potential outcomes intro", "ready"]]);
 
     // a check waiting for a question the worker gave up on can ask for it again
     await p.backend.courses.retryQuestion({ ku_id: "ku-potential-outcomes-intro-a", tier: "applied" });

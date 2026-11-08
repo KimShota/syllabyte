@@ -8,7 +8,7 @@ import { BackButton, Header } from "@/components/Header";
 import { Icon, type IconName } from "@/components/Icon";
 import { T } from "@/components/T";
 import { BACKEND_BASE } from "@/data/backend";
-import { lectureNumber } from "@/data/course";
+import { lectureNumber, useCourseVersion } from "@/data/course";
 import { courseCalls } from "@/state/session";
 import { colors, fonts, radius, shadow, space } from "@/theme/tokens";
 
@@ -30,10 +30,11 @@ export default function CourseFiles() {
   const insets = useSafeAreaInsets();
   const [files, setFiles] = useState<CourseFilesView | null>(null);
   const [failed, setFailed] = useState(false);
+  const courseVersion = useCourseVersion();
 
   useEffect(() => {
     courseCalls?.files(courseId).then(setFiles, () => setFailed(true));
-  }, [courseId]);
+  }, [courseId, courseVersion]);
 
   return (
     <View style={styles.screen}>
@@ -94,7 +95,7 @@ function SlideRow({ file, courseId }: { file: SlideFile; courseId: string }) {
     lecture: file.lecture ? `Lecture ${n} · ${file.lecture.title}` : "A lecture",
     same_as: `Same slides as Lecture ${n}`,
     updated_version: `Newer version of Lecture ${n}; the earlier slides are kept`,
-    to_review: "Waiting for you to place it",
+    to_review: "Organizing automatically…",
     reading: "Reading…",
     failed: "Couldn't read this file",
   }[file.state];

@@ -28,16 +28,21 @@ Endpoints (all under `/api`): `POST auth/request-code`, `POST auth/verify`, `GET
 (researchers), `GET health`. Send `Authorization: Bearer <token>`, and `X-Visit: <id of this app launch>` so the
 "next session" cap counts per visit.
 
-Uploads (`plan/slide-uploads-plan.md`): `GET courses/mine`, `POST courses` (multipart `syllabus`),
-`POST courses/:id/lectures` (the creator confirms the list), `POST courses/:id/slides` (multipart `files`),
-`GET courses/:id/uploads`, `POST courses/:id/uploads/confirm`, `POST research/jobs/:id/retry` (researchers). The worker
+Uploads: `GET courses/mine`, `POST courses` (multipart `syllabus` and optional `slides`),
+`POST courses/:id/slides` (multipart `files`), `GET courses/:id/uploads`, and `POST research/jobs/:id/retry`
+(researchers). `POST courses/:id/uploads/confirm` remains available to older clients; normal uploads proceed
+automatically. The worker
 (with `Authorization: Bearer $SYLLABYTE_WORKER_TOKEN`): `POST worker/claim`, `GET worker/jobs/:id/file`,
 `POST worker/jobs/:id/syllabus-key`, `POST worker/jobs/:id/result`, `POST worker/jobs/:id/fail`.
 
 ## Uploaded courses and the worker
 
 A student's syllabus creates their course, or joins the course of anyone whose syllabus has the same text; their slide
-files are placed in its lectures. The Python worker reads and processes them (LLM calls: the lecture list once per
+files are organized into lectures automatically. The initial upload saves the syllabus and optional slides together,
+so processing continues if the app closes. The worker uses the syllabus topics and slide content to order decks, then
+queues analysis without a review or confirmation step. If placement fails twice, decks are appended in upload order
+and analysis continues. `courses/mine` reports `slides_pending` while reading and organization are in progress,
+including before the first lecture exists. The Python worker reads and processes them (LLM calls: the lecture list once per
 course, then each new deck's KUs and questions), claiming jobs from this server. Until it has a host of its own it runs
 on a laptop, from the repository root:
 

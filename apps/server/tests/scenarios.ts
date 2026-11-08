@@ -35,15 +35,6 @@ export async function annNeedingVideos(opts: Parameters<typeof makeServer>[0] = 
   const courseId = (await ann.json("/api/courses/mine")).course.id as string;
   expect(await multipart(ann, `/api/courses/${courseId}/slides`, "files", DECKS)).toBe(200);
   await work(s, { kinds: ["deck_read", "placement"] });
-  const { uploads } = await ann.json(`/api/courses/${courseId}/uploads`);
-  const mine = await ann.json("/api/courses/mine");
-  const order = [
-    ...mine.course.lectures.map((l: any) => ({ at: l.position, entry: { lecture_n: l.n } })),
-    ...uploads.filter((u: any) => u.can_place).map((u: any) => ({ at: u.suggested_position, entry: { upload_id: u.id } })),
-  ]
-    .sort((a, b) => a.at - b.at)
-    .map((r) => r.entry);
-  expect((await ann.post(`/api/courses/${courseId}/uploads/confirm`, { order })).status).toBe(200);
   await work(s, { kinds: ["deck"] });
   const first = `lecture-${(await ann.json("/api/courses/mine")).course.lectures[0].n}`;
   for (let guard = 0; guard < 40; guard++) {

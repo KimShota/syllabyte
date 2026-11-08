@@ -12,14 +12,14 @@ export type { LectureState, UploadView };
 
 /**
  * Uploads (plan/slide-uploads-plan.md, revised 2026-10-21 as V1-V6): a student's syllabus creates or joins a shared
- * course, each slide file they confirm becomes one lecture of it, and the Python worker does the reading, the KUs and
+ * course, each new slide file automatically becomes one lecture of it, and the Python worker does the reading, the KUs and
  * the questions through a job queue.
  *
  *   syllabus    -> job 'syllabus'  -> join the course with the same key, or create it, keeping its topics as hints
  *   slide file  -> job 'deck_read' -> the same deck already in the course (free), an updated version of one (logged),
  *                                     or a new deck the reader says what it teaches (caps, U16)
  *   all read    -> job 'placement' -> the new decks' suggested titles and order among the lectures (V1)
- *   confirm     -> a lecture per new deck, where the student put it -> job 'deck' in course order (U3)
+ *   placement   -> automatically create lectures in teaching order -> job 'deck' in course order (U3)
  *   deck done   -> job 'link_pass' when later lectures already have KUs (U7)
  *   a check     -> job 'question' for the (KU, tier) a student's check needs, before anything else (V4)
  */
@@ -178,7 +178,7 @@ export class Uploads {
    * A syllabus (U5): read by the worker, then the student joins or creates the course, and it becomes the one they are in.
    * A student can add more courses, up to a cap.
    */
-  addSyllabus(userId: string, fileName: string, bytes: Uint8Array): { upload_id: string } {
+  addSyllabus(userId: string, fileName: string, bytes: Uint8Array, slides: { name: string; bytes: Uint8Array }[] = []): { upload_id: string } {
     if (this.courses.coursesOf(userId).length >= this.caps.coursesPerStudent) {
       throw new UploadError(`You can be in up to ${this.caps.coursesPerStudent} courses.`, 409);
     }
@@ -187,12 +187,26 @@ export class Uploads {
     const ext = extname(fileName).toLowerCase();
     if (!SYLLABUS_TYPES.has(ext)) throw new UploadError("A syllabus must be a PDF or Word (.docx) file.");
     if (bytes.byteLength > this.caps.maxFileBytes) throw new UploadError(`That file is over ${this.maxFileMb()} MB.`, 413);
+    this.validateSlides(slides);
     const id = randomUUID();
     const path = this.store("syllabi", id, fileName, bytes);
-    this.db
-      .prepare("INSERT INTO syllabus_uploads (id, user_id, file_name, file_path, status, created_at) VALUES (?, ?, ?, ?, 'reading', ?)")
-      .run(id, userId, fileName, path, this.now());
-    this.enqueue("syllabus", id, null);
+    this.db.exec("SAVEPOINT syllabus_files");
+    try {
+      this.db
+        .prepare("INSERT INTO syllabus_uploads (id, user_id, file_name, file_path, status, created_at) VALUES (?, ?, ?, ?, 'reading', ?)")
+        .run(id, userId, fileName, path, this.now());
+      for (const f of slides) {
+        const slideId = randomUUID();
+        const slidePath = this.store("slides", slideId, f.name, f.bytes);
+        this.db.prepare("INSERT INTO syllabus_slides (id, syllabus_id, file_name, file_path, byte_size, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+          .run(slideId, id, f.name, slidePath, f.bytes.byteLength, this.now());
+      }
+      this.enqueue("syllabus", id, null);
+      this.db.exec("RELEASE syllabus_files");
+    } catch (error) {
+      this.db.exec("ROLLBACK TO syllabus_files; RELEASE syllabus_files");
+      throw error;
+    }
     return { upload_id: id };
   }
 
@@ -214,9 +228,29 @@ export class Uploads {
   private joinCourse(up: SyllabusUploadRow, courseId: string): void {
     this.courses.addMember(courseId, up.user_id);
     this.db.prepare("UPDATE syllabus_uploads SET status = 'joined', course_id = ? WHERE id = ?").run(courseId, up.id);
+    this.releaseSyllabusSlides(up, courseId);
   }
 
-  /** A new course: no lectures until slides are confirmed (V3); the syllabus's schedule is kept as topic hints. */
+  /** Both files are already on the server: the app does not need to return after the syllabus is read. */
+  private releaseSyllabusSlides(up: SyllabusUploadRow, courseId: string): void {
+    this.db.exec("SAVEPOINT release_slides");
+    try {
+      const slides = this.db.prepare("SELECT * FROM syllabus_slides WHERE syllabus_id = ? ORDER BY created_at, rowid").all(up.id) as
+        { id: string; file_name: string; file_path: string; byte_size: number; created_at: number }[];
+      for (const f of slides) {
+        const inserted = this.db.prepare("INSERT OR IGNORE INTO deck_uploads (id, user_id, course_id, file_name, file_path, byte_size, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'reading', ?)")
+          .run(f.id, up.user_id, courseId, f.file_name, f.file_path, f.byte_size, f.created_at);
+        if (inserted.changes) this.enqueue("deck_read", f.id, courseId);
+      }
+      this.db.prepare("DELETE FROM syllabus_slides WHERE syllabus_id = ?").run(up.id);
+      this.db.exec("RELEASE release_slides");
+    } catch (error) {
+      this.db.exec("ROLLBACK TO release_slides; RELEASE release_slides");
+      throw error;
+    }
+  }
+
+  /** A new course: slides create lectures automatically; the syllabus's schedule is kept as topic hints. */
   private syllabusResult(jobId: string, r: { key: string; text: string; schedule?: Schedule }): void {
     const up = this.syllabusUploadOf(jobId);
     if (up.status !== "reading") return;
@@ -235,6 +269,7 @@ export class Uploads {
     this.db.prepare("UPDATE courses SET schedule_found = ?, topics_json = ? WHERE id = ?").run(topics.length ? 1 : 0, JSON.stringify(topics), courseId);
     this.courses.addMember(courseId, up.user_id);
     this.db.prepare("UPDATE syllabus_uploads SET status = 'created', course_id = ? WHERE id = ?").run(courseId, up.id);
+    this.releaseSyllabusSlides(up, courseId);
   }
 
   private syllabusUploadOf(jobId: string): SyllabusUploadRow {
@@ -260,7 +295,8 @@ export class Uploads {
       up?.status === "reading" ? { status: "reading" } : up?.status === "failed" && !up.seen ? { status: "failed", error: up.error ?? "That syllabus could not be read." } : null;
     const c = this.courses.get(courseId)!;
     const pending = this.db.prepare("SELECT COUNT(*) AS n FROM video_requests WHERE course_id = ? AND status IN ('waiting', 'making')").get(courseId) as { n: number };
-    return { status: "ready" as const, course: { id: c.id, code: c.code, name: c.name, lectures: this.lectureStates(courseId), videos_pending: pending.n }, adding };
+    const slides = this.db.prepare("SELECT COUNT(*) AS n FROM deck_uploads WHERE course_id = ? AND status IN ('reading', 'read')").get(courseId) as { n: number };
+    return { status: "ready" as const, course: { id: c.id, code: c.code, name: c.name, lectures: this.lectureStates(courseId), videos_pending: pending.n, ...(slides.n ? { slides_pending: slides.n } : {}) }, adding };
   }
 
   /** The files this student uploaded to the course: their syllabus and every slide file, with what became of each. */
@@ -353,12 +389,7 @@ export class Uploads {
   addSlides(userId: string, courseId: string, files: { name: string; bytes: Uint8Array }[]): UploadView[] {
     this.member(userId, courseId);
     if (files.length === 0) throw new UploadError("Choose at least one file.");
-    for (const f of files) {
-      const ext = extname(f.name).toLowerCase();
-      if (ext === ".key") throw new UploadError(`${f.name}: Keynote files can't be read. In Keynote, choose File > Export To > PDF, then upload the PDF.`);
-      if (!SLIDE_TYPES.has(ext)) throw new UploadError(`${f.name}: slides must be a PDF or PowerPoint (.pptx) file.`);
-      if (f.bytes.byteLength > this.caps.maxFileBytes) throw new UploadError(`${f.name} is over ${this.maxFileMb()} MB.`, 413);
-    }
+    this.validateSlides(files);
     const ids: string[] = [];
     for (const f of files) {
       const id = randomUUID();
@@ -370,6 +401,15 @@ export class Uploads {
       ids.push(id);
     }
     return this.uploadViews(userId, courseId).filter((u) => ids.includes(u.id));
+  }
+
+  private validateSlides(files: { name: string; bytes: Uint8Array }[]): void {
+    for (const f of files) {
+      const ext = extname(f.name).toLowerCase();
+      if (ext === ".key") throw new UploadError(`${f.name}: Keynote files can't be read. In Keynote, choose File > Export To > PDF, then upload the PDF.`);
+      if (!SLIDE_TYPES.has(ext)) throw new UploadError(`${f.name}: slides must be a PDF or PowerPoint (.pptx) file.`);
+      if (f.bytes.byteLength > this.caps.maxFileBytes) throw new UploadError(`${f.name} is over ${this.maxFileMb()} MB.`, 413);
+    }
   }
 
   /** The deck of the course most of whose pages `keys` has: what a new upload would be an updated version of (V2). */
@@ -391,13 +431,13 @@ export class Uploads {
     const up = this.db.prepare("SELECT * FROM deck_uploads WHERE id = ?").get(job.target_id) as unknown as DeckUploadRow;
     const same = this.db.prepare("SELECT id FROM decks WHERE course_id = ? AND content_key = ?").get(up.course_id, r.content_key) as { id: string } | undefined;
     if (same) {
-      this.db.prepare("UPDATE deck_uploads SET status = 'read', deck_id = ?, outcome = 'existing' WHERE id = ?").run(same.id, up.id);
+      this.db.prepare("UPDATE deck_uploads SET status = 'confirmed', deck_id = ?, outcome = 'existing' WHERE id = ?").run(same.id, up.id);
       return;
     }
     const older = this.updatedVersionOf(up.course_id, r.page_keys ?? []);
     if (older) {
       // not processed: everyone keeps the KUs and videos of the slides already in; the upload is logged (U12, V2)
-      this.db.prepare("UPDATE deck_uploads SET status = 'read', deck_id = ?, outcome = 'updated_version' WHERE id = ?").run(older.id, up.id);
+      this.db.prepare("UPDATE deck_uploads SET status = 'confirmed', deck_id = ?, outcome = 'updated_version' WHERE id = ?").run(older.id, up.id);
       return;
     }
     const inCourse = (this.db.prepare("SELECT COUNT(*) AS n FROM decks WHERE course_id = ?").get(up.course_id) as { n: number }).n;
@@ -467,7 +507,11 @@ export class Uploads {
     const [userId, courseId] = j.target_id.split("|");
     const decks = new Map(this.unplacedOf(userId, courseId).map((d) => [d.id, d]));
     const posOf = new Map(this.courses.lectures(courseId).map((l) => [`lecture:${l.n}`, l.position ?? l.n]));
-    const order = (Array.isArray(r.order) ? r.order : []).filter((id) => posOf.has(id) || decks.has(id));
+    let order = [...new Set((Array.isArray(r.order) ? r.order : []).filter((id) => posOf.has(id) || decks.has(id)))];
+    if (order.filter((id) => posOf.has(id)).join("|") !== [...posOf.keys()].join("|")) {
+      // A malformed answer must not reorder or drop existing lectures. Append new decks safely instead.
+      order = [...posOf.keys(), ...order.filter((id) => decks.has(id))];
+    }
     for (const id of decks.keys()) if (!order.includes(id)) order.push(id);
     const unsure = new Set(Array.isArray(r.unsure) ? r.unsure : []);
     this.positionsFor(order, posOf, (id) => decks.has(id), (id, position) => {
@@ -475,6 +519,31 @@ export class Uploads {
       const s: Suggestion = { position, sure: !unsure.has(id) && p.summary?.is_lecture !== false };
       this.db.prepare("UPDATE decks SET suggestion_json = ? WHERE id = ?").run(JSON.stringify(s), id);
     });
+    this.autoConfirmUploads(userId, courseId);
+  }
+
+  /** Apply the worker's order, preserving existing lectures and queuing analysis without a student action. */
+  private autoConfirmUploads(userId: string, courseId: string): void {
+    const entries: { position: number; entry: UploadOrderEntry }[] = this.courses.lectures(courseId)
+      .map((l) => ({ position: l.position ?? l.n, entry: { lecture_n: l.n } }));
+    for (const d of this.unplacedOf(userId, courseId)) {
+      if (!d.suggestion_json) return; // another placement job is still preparing this deck
+      const p = parseOf(d);
+      const title = (p.summary?.title?.trim() || p.first_title?.trim() || stem(d.file_name).trim() || "Lecture").slice(0, 120);
+      entries.push({
+        position: (JSON.parse(d.suggestion_json) as Suggestion).position,
+        entry: { upload_id: d.id, title },
+      });
+    }
+    this.db.exec("SAVEPOINT automatic_placement");
+    try {
+      this.confirmUploads(userId, courseId, entries.sort((a, b) => a.position - b.position).map((e) => e.entry));
+      this.db.exec("RELEASE automatic_placement");
+    } catch (error) {
+      this.db.exec("ROLLBACK TO automatic_placement; RELEASE automatic_placement");
+      this.courses.touched(courseId);
+      throw error;
+    }
   }
 
   /** Walks `order` (lecture keys with positions, and new ids) and gives each new id a position between its neighbours. */
@@ -680,6 +749,13 @@ export class Uploads {
 
   /** The next job for the worker (only of `kinds` when given), with what it needs; null when there is nothing to do. */
   claim(kinds?: string[]): ClaimedJob | null {
+    // Copies and updates from an older server no longer need confirmation.
+    this.db.prepare("UPDATE deck_uploads SET status = 'confirmed' WHERE status = 'read' AND outcome IN ('existing', 'updated_version')").run();
+    // Resume suggestions left waiting for manual confirmation by an older server version.
+    const pending = this.db.prepare(`SELECT DISTINCT u.user_id, u.course_id FROM deck_uploads u JOIN decks d ON d.id = u.deck_id
+      WHERE u.status = 'read' AND u.outcome = 'new' AND d.status = 'unplaced' AND d.suggestion_json IS NOT NULL`).all() as
+      { user_id: string; course_id: string }[];
+    for (const row of pending) this.autoConfirmUploads(row.user_id, row.course_id);
     const stale = this.now() - STALE_CLAIM_MS;
     for (const j of this.db.prepare("SELECT * FROM jobs WHERE kind = 'video' AND status = 'claimed' AND claimed_at < ?").all(stale) as unknown as JobRow[]) {
       this.setVideoStatus(j, "waiting");
@@ -835,6 +911,7 @@ export class Uploads {
       this.unplacedOf(userId, courseId).forEach((d, k) => {
         this.db.prepare("UPDATE decks SET suggestion_json = ? WHERE id = ?").run(JSON.stringify({ position: last + k + 1, sure: false } satisfies Suggestion), d.id);
       });
+      this.autoConfirmUploads(userId, courseId);
     } else if (j.kind === "deck") {
       this.db.prepare("UPDATE decks SET status = 'failed', error = ? WHERE id = ?").run(shown, j.target_id);
       this.courses.touched(j.course_id!);

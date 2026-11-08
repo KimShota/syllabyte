@@ -137,7 +137,7 @@ export interface Api {
 // ---------------------------------------------------------------- uploads (plan/slide-uploads-plan.md)
 
 /** A lecture of an uploaded course and how far its slides are (U14). */
-/** A lecture of an uploaded course and its slides (plan/slide-uploads-plan.md V1-V3): one per confirmed deck. */
+/** A lecture of an uploaded course and its slides (plan/slide-uploads-plan.md V1-V3): one per automatically organized deck. */
 export interface LectureStateView {
   n: number;
   /** sorts the lectures in teaching order, and an upload's `suggested_position` among them (not a lecture number) */
@@ -162,6 +162,8 @@ export type MyCourseView =
         lectures: LectureStateView[];
         /** videos for this course that are still being made (a student's check set their level, the worker has not finished), so the phone keeps looking */
         videos_pending: number;
+        /** Slide files still being read or organized before their lectures exist. */
+        slides_pending?: number;
       };
       /** a syllabus for another course, from a student who is in one: being read, or failed until they have seen why */
       adding: { status: "reading" } | { status: "failed"; error: string } | null;
@@ -192,7 +194,7 @@ export interface CourseFilesView {
     /**
      * lecture: these slides are that lecture; same_as: a copy of slides the course already has (that lecture);
      * updated_version: a newer version of that lecture's slides, logged but not used; to_review: waiting for the
-     * student to confirm where it goes; reading: still being read; failed: could not be read or processed
+     * server to organize it automatically (legacy state name); reading: still being read; failed: could not be read or processed
      */
     state: "lecture" | "same_as" | "updated_version" | "to_review" | "reading" | "failed";
     lecture: { n: number; title: string } | null;

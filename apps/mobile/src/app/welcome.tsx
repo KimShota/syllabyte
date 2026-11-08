@@ -10,7 +10,7 @@ import { T } from "@/components/T";
 import { BACKEND_BASE, REMOTE } from "@/data/backend";
 import { refreshCourse, useMyCourse } from "@/state/course";
 import { courseCalls } from "@/state/session";
-import { setPendingSlides, SLIDE_TYPES, SYLLABUS_TYPES, toUploadFile } from "@/state/uploads";
+import { SLIDE_TYPES, SYLLABUS_TYPES, toUploadFile } from "@/state/uploads";
 import { colors, fonts, radius, shadow } from "@/theme/tokens";
 
 const MIME = {
@@ -22,7 +22,7 @@ const MIME = {
 
 /**
  * First run: upload the syllabus and the lecture slides. With a backend (plan/slide-uploads-plan.md) the syllabus is
- * required and sent now; slides are optional (they can be added any time) and are sent once the course exists.
+ * required; optional slides are saved with it so the server can finish setup even if the app closes.
  * Without one, the demo course stands in for whatever is picked.
  */
 export default function Welcome() {
@@ -70,8 +70,7 @@ export default function Welcome() {
     setError(null);
     setSending(true);
     try {
-      setPendingSlides(slides);
-      await courseCalls.create(syllabus);
+      await courseCalls.create(syllabus, slides);
       await refreshCourse();
       router.replace("/analyzing");
     } catch (e) {
