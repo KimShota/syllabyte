@@ -1,5 +1,7 @@
 "use client";
 
+import { QuestionText } from "@/components/QuestionText";
+
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Loading, Screen } from "@/components/AppShell";
@@ -90,16 +92,16 @@ export default function OnboardingResult() {
             <li key={item.id}>
               <Card>
                 <p className="eyebrow !text-primary">Question {i + 1}</p>
-                <p className="mt-1 font-bold">{item.stem}</p>
+                <p className="mt-1 font-bold"><QuestionText>{item.stem}</QuestionText></p>
                 <p className="mt-2 text-body">
                   <span className="text-muted">You chose: </span>
-                  {choice === undefined || choice === "not_sure" ? "Not sure yet" : item.options[choice]}
+                  <QuestionText>{choice === undefined || choice === "not_sure" ? "Not sure yet" : item.options[choice]}</QuestionText>
                 </p>
                 <p className="text-body">
                   <span className="text-muted">Right answer: </span>
-                  {item.options[item.correct_index]}
+                  <QuestionText>{item.options[item.correct_index]}</QuestionText>
                 </p>
-                <p className="mt-2 text-body text-ink/85">{item.explanation}</p>
+                <p className="mt-2 text-body text-ink/85"><QuestionText>{item.explanation}</QuestionText></p>
               </Card>
             </li>
           ))}

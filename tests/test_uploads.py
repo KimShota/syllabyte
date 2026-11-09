@@ -304,7 +304,7 @@ def test_a_question_job_sends_back_a_question_a_student_could_not_take_before_th
     from assessment_agent import question_writing
 
     prompts, critic_systems = [], []
-    bad = BankMCQ(stem="The diagram nests boxes; which sit inside machine learning?", options=["one", "two", "three"], correct_index=0, explanation="E.")
+    bad = BankMCQ(stem="The slide nests boxes; which sit inside machine learning?", options=["one", "two", "three"], correct_index=0, explanation="E.")
     good = BankMCQ(stem="Which three paradigms make up machine learning?", options=["one", "two", "three"], correct_index=0, explanation="E.")
 
     def write(**kw):
@@ -320,7 +320,7 @@ def test_a_question_job_sends_back_a_question_a_student_could_not_take_before_th
     _, deck = read_deck(make_pdf(tmp_path / "d.pdf", ["Alpha page"]), tmp_path / "w", "d8")
     payload = {"item_id": "as-ku-a-basic-1", "ku": uku("ku-a", slides=[1]).model_dump(mode="json"), "prereq_titles": [], "tier": "basic", "beta": -1.0}
     out = upload_jobs.run_question_job(payload, deck, log=lambda m: None)
-    assert len(prompts) == 2 and "material the student has not seen ('The diagram')" in prompts[1]
+    assert len(prompts) == 2 and "material the student has not seen ('The slide')" in prompts[1]
     assert "has never seen these slides" in prompts[0]
     assert out["item"]["stem"] == good.stem and out["flags"] == []
     assert all("pre-lecture questions" in s for s in critic_systems)

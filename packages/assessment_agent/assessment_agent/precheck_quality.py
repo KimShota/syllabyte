@@ -11,7 +11,8 @@ def precheck_problems(question: BankMCQ) -> list[str]:
     problems = mcq_problems(question)
     if question.hint is not None:
         problems.append("a diagnostic pre-check must have hint=null; do not supply hints")
-    if any(not option.strip() for option in question.options) or len({o.strip().casefold() for o in question.options}) != 3:
+    # Case is meaningful in code and mathematical symbols (x and X are distinct).
+    if any(not option.strip() for option in question.options) or len({o.strip() for o in question.options}) != 3:
         problems.append("provide three distinct, non-empty options")
     return problems
 

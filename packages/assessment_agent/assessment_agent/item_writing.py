@@ -19,13 +19,15 @@ ITEM_SYSTEM = """You write short multiple-choice questions for a university cour
 Rules:
 - Ground every question ONLY in the supplied slides and narration. Never use outside facts.
 - Exactly 3 options. Exactly one is correct. The two wrong options must be plausible (a common misconception) but clearly wrong given the material. Never use "all of the above" or "none of the above".
-- The stem is one sentence, under 28 words, and self-contained. Do not say "according to the slide" or "in the video".
+- The stem is concise and self-contained; include the data and assumptions needed to answer. Do not say "according to the slide" or "in the video".
 - Vary which option is correct (correct_index 0, 1 and 2 should all appear across a batch).
 - explanation: one or two plain sentences saying why the right option is right.
 - hint: a nudge toward the idea that does not reveal the answer, or null.
 - difficulty_prior: your estimate on a logit scale, -2 (very easy) to 2 (hard); 0 is medium.
-- Write math as plain text (for example "Y1 - Y0"), never LaTeX.
-- Keep options short (under 14 words each)."""
+- Preserve standard CS and mathematical notation: variables, Greek letters, quantifiers, equations, subscripts and complexity notation are allowed. Use readable Unicode or unambiguous plain text, e.g. x², λ, ∀x, O(n log n), (a + b)/c. Do not emit LaTeX commands or dollar-delimited math: the app displays text notation.
+- Format code with single backticks for inline code or fenced triple-backtick blocks with a language name and newlines for multiline code. Preserve indentation. Never execute code. State the language/version or pseudocode conventions when the answer depends on them.
+- Define problem-specific symbols, domains, dimensions, units and assumptions when needed, without defining the concept the question tests. Supply a matrix, graph edge list or data table as a small fenced text block when needed; never refer to an absent diagram.
+- Keep options concise and comparable in specificity; formulas and code may differ in length without giving away the answer."""
 
 
 class Verdict(BaseModel):
@@ -41,6 +43,7 @@ class Verdicts(BaseModel):
 CRITIC_SYSTEM = """You check quiz items and factual claims against course material. Be strict but fair.
 For every item verify: (1) the keyed answer is correct according to the material; (2) no other option is also defensible; (3) the wrong options are not secretly correct; (4) the stem is self-contained and unambiguous.
 For every claim verify it is a statement the cited narration actually makes and the slides support, with no added facts.
+For CS and math, verify calculations, signs, units, domains, matrix dimensions, quantifier scope, boundary cases, and code semantics as applicable. Ensure exactly one option is correct: reject equivalent formulas or answers differing only by formatting. Do not reject an option just because its formula is longer or it uses a necessary quantifier/negation. Flag a wording cue only when it actually reveals the answer. Reject undefined problem-specific symbols or ambiguous code behavior, but allow standard notation for the knowledge being tested.
 Return one verdict per id. Set ok=false only for a real problem and say what it is in one sentence."""
 
 

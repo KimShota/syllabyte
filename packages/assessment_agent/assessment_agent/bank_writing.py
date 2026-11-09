@@ -15,17 +15,16 @@ from assessment_agent.bank import MAX_STEM_WORDS, TIER_BLOOM, TIERS, KuBankGen, 
 from assessment_agent.item_writing import ITEM_SYSTEM, generate_with_critic, mcq_text
 from assessment_agent.precheck_quality import precheck_bank_problems, require_approved
 
-_STEM_RULE = "- The stem is one sentence, under 28 words, and self-contained."
+_STEM_RULE = "- The stem is concise and self-contained; include the data and assumptions needed to answer."
 assert _STEM_RULE in ITEM_SYSTEM, "item_writing.ITEM_SYSTEM changed; update the stem rule here"
 _NEW_STEM_RULE = (
-    f"- The stem is self-contained and at most {MAX_STEM_WORDS} words: students read it on a phone. If it sets up a "
+    f"- The stem is self-contained and at most {MAX_STEM_WORDS} words of prose, excluding fenced code/data: students read it on a phone. Use only as much setup as the task needs. If it sets up a "
     "situation or states a claim, the question comes after it, and it always ends with a question mark."
 )
 BANK_SYSTEM = "\n".join(
     l.replace(_STEM_RULE, _NEW_STEM_RULE)  # keeps what follows on the line: "Do not say 'according to the slide'…"
     for l in ITEM_SYSTEM.splitlines()
-    # a pre-check has no notation at all (STAY_IN_SLIDES), so the rule on how to write it is dropped
-    if not l.startswith(("- difficulty_prior", "- Write math", "- hint:"))
+    if not l.startswith(("- difficulty_prior", "- hint:"))
 ) + "\n- Set hint=null. Pre-checks measure prior understanding; do not provide hints or teach the answer in the stem."
 
 
@@ -37,14 +36,14 @@ TIER_TASKS = {
 STAY_IN_SLIDES = (
     "The student takes this check BEFORE the lecture and has never seen these slides. Test the ideas the slides teach, "
     "never the slides themselves: the stem, the options, the explanation and the hint must all make sense to someone who "
-    "has not seen them. Never refer to a slide, diagram, figure, panel, chart, plot, table or image, and never name an "
+    "has not seen them. Never rely on a slide or an absent diagram, figure, panel, chart, plot, table or image, and never name an "
     "example, dataset or story the way the slides do (\"the house example\", \"the robot\"). When a question needs a "
     "case, describe it fully in the stem, briefly: retell the slides' own case, or use a short new case in the same "
     "setting, so long as answering it needs only the idea the slides teach and nothing from another domain. Where the "
-    "slides state a number, rule or definition, use it exactly as stated, in words. Write for a general reader: no "
-    "specialist notation anywhere, not even with an explanation: no letters standing for quantities or parts of a "
-    "definition (T, P and E; f; x and y), no Greek letters, subscripts, formulas or equations (Y1 - Y0, theta). Say the "
-    "idea in plain words instead. Avoid private course labels or names of people unless needed to identify the concept. "
+    "slides state a number, rule or definition, preserve its meaning and notation. Standard CS and mathematical "
+    "notation is allowed, including variables, Greek letters, equations, quantifiers and code. Define problem-specific "
+    "symbols and supply necessary domains, dimensions and assumptions without teaching the answer. Avoid private "
+    "course labels or names of people unless needed to identify the concept. "
     "Standard topic terms such as stack or queue can be the knowledge being tested; leave their definitions for the "
     "post-check explanation. Test one idea per question: the right option makes one point, not two joined together, and every wrong option "
     "is wrong as a whole, not partly true. Do not state, define or explain the target rule in the stem when knowing "
@@ -52,14 +51,13 @@ STAY_IN_SLIDES = (
     "Use standard technical terms when their meaning is the knowledge being tested; do not explain them in a way that "
     "reveals which option is correct. Favor transferable understanding of the topic over recalling slide wording or trivia."
 )
-WRONG_OPTIONS = "Wrong options: each must be a plausible misconception about this idea. Never make a wrong option restate the claim the question asks the student to evaluate, never make it a true statement, and never make it merely the negation of the right answer."
+WRONG_OPTIONS = "Wrong options: each must be a plausible misconception about this idea. Never make a wrong option restate the claim the question asks the student to evaluate, never make it a true statement, and a negation is appropriate when distinguishing a proposition from its negation is the skill being tested."
 SAME_LENGTH_OPTIONS = (
-    "Options: the three must be about the same length and equally specific, so the right one cannot be spotted by its "
-    "wording. The right option must not be the longest, the only hedged or qualified one, or the only one that explains "
-    "itself; if it needs a clause, give the wrong ones a clause too. Do not give the wrong options away with absolute "
-    "words (always, never, only, guaranteed, nothing, none, cannot) while the right one is measured: a student who "
-    "knows how tests work rules those out without knowing the idea. Use such a word only where the idea itself is "
-    "absolute, and then in the right option as readily as in a wrong one."
+    "Options: keep them comparable in specificity and avoid wording that reveals the answer. "
+    "Do not pad mathematical expressions or code to equalize their character counts. Quantifiers and absolute words "
+    "such as always, never, only and none are allowed when their truth is the concept being tested. "
+    "Do not give the wrong options away with irrelevant absolutes or give only the key an explanatory clause. "
+    "All three answers must be semantically distinct: check algebraic equivalence and code behavior, not just wording."
 )
 EXPLANATION_AND_HINT = (
     "Set hint=null: diagnostic pre-checks have no hints. The explanation is one or two complete sentences in plain "
@@ -68,13 +66,15 @@ EXPLANATION_AND_HINT = (
 # what the critic adds for a pre-check question, on top of its usual checks of the key and the wrong options
 PRECHECK_CRITIC_CHECKS = (
     "These are pre-lecture questions, so also check: (5) someone who has never seen the slides can understand the stem "
-    "and options (no reference to a slide, figure, diagram, plot or table, and no example named the way the slides name "
+    "and options (no dependence on a slide or an absent figure, diagram, plot or table, and no example named the way the slides name "
     "it); (6) the keyed option does not stand out by being longer, more detailed or more hedged than the others, and the "
-    "wrong options are not marked out by absolute words (always, never, only, guaranteed, nothing) that the key avoids; "
-    f"(7) the stem is at most {MAX_STEM_WORDS} words; (8) the question tests one idea: the key does not bundle two "
-    "points, and no wrong option is partly true; (9) a general reader could follow it without the slides: no specialist "
-    "notation at all (letters standing for quantities, Greek letters, subscripts, formulas), or private course labels. "
-    "Standard technical terms may name the knowledge being tested: do not require the stem to define those terms; "
+    "wrong options are not marked out by irrelevant qualifiers. Different formula lengths and necessary quantifiers "
+    "are not giveaways; "
+    f"(7) the stem is at most {MAX_STEM_WORDS} words of prose, excluding fenced code/data, and includes all needed context; "
+    "(8) the question tests one idea: the key does not bundle two points, and no wrong option is partly true; "
+    "(9) standard CS and mathematical notation is allowed. Verify the meaning, domains, dimensions, quantifiers and "
+    "code semantics, and ensure problem-specific symbols are defined. Standard technical terms may name the "
+    "knowledge being tested: do not require the stem to define those terms; "
     "(10) the explanation consists of clean, complete sentences with no stray "
     "characters, and hint is null; (11) the stem does not teach, define or repeat the target rule or give the correct "
     "option away through a wording match; it tests the student's existing understanding; (12) the task matches its "

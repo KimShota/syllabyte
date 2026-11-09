@@ -1,3 +1,5 @@
+import { QuestionText } from "@/components/QuestionText";
+import { questionLabel } from "@syllabyte/core/questionContent";
 import { useEffect, useRef, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
@@ -123,9 +125,7 @@ export default function QuizQuestion() {
 
       <ScrollView contentContainerStyle={styles.body}>
         <View style={styles.stemCard}>
-          <T variant="cardTitle" style={{ letterSpacing: -0.2 }} accessibilityRole="header">
-            {item.stem}
-          </T>
+          <QuestionText variant="cardTitle" accessibilityRole="header" textStyle={{ letterSpacing: -0.2 }}>{item.stem}</QuestionText>
         </View>
 
         <View style={styles.options} accessibilityRole="radiogroup">
@@ -189,7 +189,7 @@ function Option({ letter, label, selected, onPress }: { letter: string; label: s
     <Pressable
       accessibilityRole="radio"
       accessibilityState={{ selected }}
-      accessibilityLabel={`${letter}. ${label}`}
+      accessibilityLabel={`${letter}. ${questionLabel(label)}`}
       onPress={onPress}
       style={({ pressed }) => [styles.option, selected && styles.optionSelected, pressed && !selected && { backgroundColor: colors.surfaceContainer }]}
     >
@@ -198,9 +198,7 @@ function Option({ letter, label, selected, onPress }: { letter: string; label: s
           {letter}
         </T>
       </View>
-      <T variant="bodySemibold" style={{ flex: 1 }}>
-        {label}
-      </T>
+      <QuestionText variant="bodySemibold" style={{ flex: 1 }}>{label}</QuestionText>
       <View style={[styles.tick, selected && { backgroundColor: colors.primaryDeep }]}>
         {selected ? <Icon name="check" size={16} color={colors.onPrimary} /> : null}
       </View>

@@ -837,7 +837,7 @@ export class Uploads {
       const item = items[0];
       if (items.length !== 1 || item.id !== `as-${j.course_id}-${j.target_id}-${tier}-bank-${j.id}` || item.ku_id !== j.target_id ||
         item.context !== "assessment" || !Array.isArray(item.options) || item.options.length !== 3 ||
-        item.options.some((o) => typeof o !== "string" || !o.trim()) || new Set(item.options.map((o) => o.trim().toLowerCase())).size !== 3 ||
+        item.options.some((o) => typeof o !== "string" || !o.trim()) || new Set(item.options.map((o) => o.trim())).size !== 3 ||
         !Number.isInteger(item.correct_index) || item.correct_index < 0 || item.correct_index > 2 ||
         typeof item.stem !== "string" || !item.stem.trim() || typeof item.explanation !== "string" || !item.explanation.trim() ||
         !Array.isArray(item.source_refs) || !item.source_refs.length || item.source_refs.some((ref) => !ref || ref.deck_name !== found.deck.id || !Number.isInteger(ref.slide_number) || ref.slide_number < 1 || ref.slide_number > parseOf(found.deck).page_count)) {

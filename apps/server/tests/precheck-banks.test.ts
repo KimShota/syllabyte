@@ -132,6 +132,20 @@ describe("background pre-check banks", () => {
     expect(first.current).not.toBeNull();
   });
 
+  it("preserves case-sensitive symbols and multiline code in published questions", async () => {
+    const { s, ann } = await readyCourse();
+    const job = await claimBank(s);
+    const bank = questionBankOf(job.payload);
+    bank.items[1].stem = "In Python 3:\n```python\nX = 2\nx = 3\n```\nWhich name holds 2?";
+    bank.items[1].options = ["X", "x", "y"];
+    bank.items[1].correct_index = 0;
+    expect((await s.worker.post(`/api/worker/jobs/${job.id}/result`, { result: bank })).status).toBe(200);
+    const sitting = await ann.rpc<Sitting>("getSitting", "lecture-1");
+    expect(sitting.current!.item.stem).toBe(bank.items[1].stem);
+    expect(sitting.current!.item.options).toEqual(["X", "x", "y"]);
+    expect(sitting.current!.item.correct_index).toBe(0);
+  });
+
   it("migrates existing queued jobs to support question banks", () => {
     const path = join(mkdtempSync(join(tmpdir(), "syllabyte-banks-")), "db.sqlite");
     let db = openDb(path);

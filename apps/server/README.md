@@ -104,6 +104,12 @@ slide-specific trivia. Every question must have an explicit review verdict; unre
 the entire bank, and flagged legacy questions are excluded. Retries remain bounded and failed attempts count toward
 the worker's spending limit. A cold or failed bank can still require waiting; no latency benchmark is implied.
 
+Questions may use standard CS/math symbols, equations, quantifiers and case-sensitive identifiers. Pre-check stems
+allow up to 90 words of prose plus fenced code/data. The reviewer checks necessary assumptions, code semantics,
+equivalent answer choices and genuine wording cues; formula length and absolute words alone are not rejection rules.
+Clients show Unicode/plain-text math and preserve inline/fenced code. They do not typeset LaTeX. Restart workers to
+apply the new writing rules; existing approved banks are reused rather than automatically regenerated.
+
 Restart the backend and worker to use the new jobs. To prepare banks without starting videos, run from the root:
 
 ```bash

@@ -140,3 +140,38 @@ def test_the_one_question_fallback_also_requires_complete_review(monkeypatch):
     with pytest.raises(QuestionQualityError, match="exactly one verdict"):
         question_writing.write_question(KU, [], "basic", ("Stack material", []), avoid=[], model="test", critic_model="test",
             manifest=RunManifest(run_id="test"), log=lambda _: None)
+
+
+def test_case_sensitive_answer_options_survive_review_and_balancing(monkeypatch):
+    def write(**kw):
+        bank = generated()
+        bank.basic.stem = "In Python 3, which variable is assigned?\n```python\nX = 2\n```\nWhich name was assigned?"
+        bank.basic.options = ["X", "x", "y"]
+        bank.basic.explanation = "Python variable names are case-sensitive, so X is assigned."
+        return bank
+
+    monkeypatch.setattr(bank_writing, "structured", write)
+    monkeypatch.setattr(item_writing, "structured", verdicts)
+    result = run_question_bank_job(payload(), DECK, log=lambda _: None)
+    assert result["flags"] == []
+    assert result["items"][0]["options"] == ["X", "x", "y"]
+    assert "```python\nX = 2\n```" in result["items"][0]["stem"]
+
+
+def test_symbolic_questions_still_require_semantic_review(monkeypatch):
+    def write(**kw):
+        bank = generated()
+        bank.basic.stem = "What is the derivative of x²?"
+        bank.basic.options = ["2x", "x + x", "x"]  # two correct answers despite different strings
+        return bank
+
+    def reject(**kw):
+        result = verdicts()
+        result.verdicts[0].ok = False
+        result.verdicts[0].issue = "2x and x + x are equivalent; more than one option is correct."
+        return result
+
+    monkeypatch.setattr(bank_writing, "structured", write)
+    monkeypatch.setattr(item_writing, "structured", reject)
+    with pytest.raises(QuestionQualityError, match="equivalent"):
+        run_question_bank_job(payload(), DECK, log=lambda _: None)
