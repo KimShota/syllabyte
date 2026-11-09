@@ -6,6 +6,7 @@ The upload worker's jobs (plan/slide-uploads-plan.md), each a function of what t
     placement   the teaching order of the new decks among the course's lectures (V1)
     deck        the deck's KUs (with the earlier lectures' KUs as context), each with its tier difficulties (V4)
     question    one question on a KU at a tier, checked by the critic (V4)
+    question_bank three independent difficulty tiers on a KU, generated and reviewed together before the pre-check
     link_pass   links from later lectures' KUs to a lecture that arrived after them (U7)
 
 The results are JSON the server stores as they are: a deck's result is the `DeckResult` of
@@ -20,7 +21,8 @@ from pathlib import Path
 from assessment_agent.bank import assemble_ku_items, balance_positions, tier_difficulties, validate_bank
 from assessment_agent.bank_writing import write_ku_bank
 from assessment_agent.item_writing import slides_material
-from assessment_agent.question_writing import question_item, write_question
+from assessment_agent.question_writing import QuestionGen, question_item, write_question
+from assessment_agent.precheck_quality import require_approved
 from curriculum_alignment_agent.deck_kus import EarlierKu, UploadKU, extract_deck_kus, find_links
 from syllabyte_common.learner import Item
 from syllabyte_common.llm import DEFAULT_MODEL, PRICE_PER_MTOK
@@ -80,8 +82,30 @@ def run_question_job(
         ku, payload.get("prereq_titles", []), payload["tier"], slides_material(slides), avoid=payload.get("avoid", []),
         model=model, critic_model=critic_model or model, manifest=manifest, log=log,
     )
+    require_approved(flags)
+    if not gen.slides or any(n not in by_n for n in gen.slides):
+        raise ValueError("The question must cite pages from its own deck.")
     item = question_item(payload["item_id"], ku.id, payload["tier"], gen, beta=payload["beta"], target_index=payload.get("target_index", 0), deck_name=deck.name)
     return {"item": item.model_dump(mode="json"), "flags": flags, "cost_usd": round(manifest.total_cost_usd(PRICE_PER_MTOK), 4)}
+
+
+def run_question_bank_job(
+    payload: dict, deck: SlideDeck, *, model: str = DEFAULT_MODEL, critic_model: str | None = None,
+    manifest: RunManifest | None = None, log: Log = print,
+) -> dict:
+    """One generation and joint review for a KU's three tiers; no questions are published if any remain flagged."""
+    ku = UploadKU.model_validate(payload["ku"])
+    manifest = manifest or RunManifest(run_id=f"question-bank-{ku.id}")
+    by_n = {slide.slide_number: slide for slide in deck.slides}
+    slides = [by_n[n] for n in sorted({r.slide_number for r in ku.source_refs}) if n in by_n] or deck.slides[:3]
+    gen, flags = write_ku_bank(ku, payload.get("prereq_titles", []), slides_material(slides), model=model,
+        critic_model=critic_model or model, manifest=manifest, log=log, strict=True, avoid=payload.get("avoid", []))
+    require_approved(flags)
+    if not gen.slides or any(n not in by_n for n in gen.slides):
+        raise ValueError("The question bank must cite pages from its own deck.")
+    items = [question_item(q["item_id"], ku.id, q["tier"], QuestionGen(question=getattr(gen, q["tier"]), slides=gen.slides),
+        beta=q["beta"], target_index=q["target_index"], deck_name=deck.name).model_dump(mode="json") for q in payload["questions"]]
+    return {"items": items, "flags": [], "cost_usd": round(manifest.total_cost_usd(PRICE_PER_MTOK), 4)}
 
 
 def deck_bank(

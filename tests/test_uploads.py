@@ -285,7 +285,7 @@ def test_a_question_job_writes_one_checked_question_at_the_tier(tmp_path, monkey
         return question_writing.QuestionGen(question=BankMCQ(stem="Which is right?", options=["yes", "no", "maybe"], correct_index=0, explanation="Because."), slides=[2])
 
     monkeypatch.setattr(question_writing, "structured", write)
-    monkeypatch.setattr(item_writing, "structured", lambda **kw: item_writing.Verdicts(verdicts=[]))
+    monkeypatch.setattr(item_writing, "structured", lambda **kw: item_writing.Verdicts(verdicts=[item_writing.Verdict(id="ku-a-applied", ok=True)]))
     _, deck = read_deck(make_pdf(tmp_path / "d.pdf", ["Alpha page", "Beta page"]), tmp_path / "w", "d7")
     payload = {
         "item_id": "as-ku-a-applied-2", "ku": uku("ku-a", slides=[1, 2]).model_dump(mode="json"), "prereq_titles": [],
@@ -313,7 +313,7 @@ def test_a_question_job_sends_back_a_question_a_student_could_not_take_before_th
 
     def critic(**kw):
         critic_systems.append(kw["system"])
-        return item_writing.Verdicts(verdicts=[])
+        return item_writing.Verdicts(verdicts=[item_writing.Verdict(id="ku-a-basic", ok=True)])
 
     monkeypatch.setattr(question_writing, "structured", write)
     monkeypatch.setattr(item_writing, "structured", critic)

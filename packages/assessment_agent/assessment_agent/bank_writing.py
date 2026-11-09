@@ -13,6 +13,7 @@ from syllabyte_common.models import KnowledgeUnit, RunManifest
 
 from assessment_agent.bank import MAX_STEM_WORDS, TIER_BLOOM, TIERS, KuBankGen, stem_problems
 from assessment_agent.item_writing import ITEM_SYSTEM, generate_with_critic, mcq_text
+from assessment_agent.precheck_quality import precheck_bank_problems, require_approved
 
 _STEM_RULE = "- The stem is one sentence, under 28 words, and self-contained."
 assert _STEM_RULE in ITEM_SYSTEM, "item_writing.ITEM_SYSTEM changed; update the stem rule here"
@@ -24,12 +25,12 @@ BANK_SYSTEM = "\n".join(
     l.replace(_STEM_RULE, _NEW_STEM_RULE)  # keeps what follows on the line: "Do not say 'according to the slide'…"
     for l in ITEM_SYSTEM.splitlines()
     # a pre-check has no notation at all (STAY_IN_SLIDES), so the rule on how to write it is dropped
-    if not l.startswith(("- difficulty_prior", "- Write math"))
-)
+    if not l.startswith(("- difficulty_prior", "- Write math", "- hint:"))
+) + "\n- Set hint=null. Pre-checks measure prior understanding; do not provide hints or teach the answer in the stem."
 
 
 TIER_TASKS = {
-    "basic": "- basic: one fact or definition from the slides, asked about the idea rather than the slides' name or symbol for it, so a student who learned it elsewhere can answer.",
+    "basic": "- basic: recognize one fact, definition or simple example of the idea, so a student who learned it elsewhere can answer. Do not require a multi-step calculation or diagnose a design failure at this tier.",
     "applied": "- applied: handle a new case in the slides' own setting: classify it, compute with it, or read it. It must need more than the basic question's lookup, and must not be the same lookup with another value.",
     "advanced": '- advanced: judge a claim or design, spot what is wrong with an argument, or predict what changes when a condition changes. Vary the shape across units; do not always open with "A colleague claims".',
 }
@@ -43,9 +44,13 @@ STAY_IN_SLIDES = (
     "slides state a number, rule or definition, use it exactly as stated, in words. Write for a general reader: no "
     "specialist notation anywhere, not even with an explanation: no letters standing for quantities or parts of a "
     "definition (T, P and E; f; x and y), no Greek letters, subscripts, formulas or equations (Y1 - Y0, theta). Say the "
-    "idea in plain words instead. Name a person's definition or a technical term only where the question still makes "
-    "sense to someone who has never heard the name. Test one idea per question: the right option makes one point, not two joined together, and every wrong option "
-    "is wrong as a whole, not partly true."
+    "idea in plain words instead. Avoid private course labels or names of people unless needed to identify the concept. "
+    "Standard topic terms such as stack or queue can be the knowledge being tested; leave their definitions for the "
+    "post-check explanation. Test one idea per question: the right option makes one point, not two joined together, and every wrong option "
+    "is wrong as a whole, not partly true. Do not state, define or explain the target rule in the stem when knowing "
+    "that rule is what the question tests. Supply the scenario and necessary data, but leave the reasoning to the student. "
+    "Use standard technical terms when their meaning is the knowledge being tested; do not explain them in a way that "
+    "reveals which option is correct. Favor transferable understanding of the topic over recalling slide wording or trivia."
 )
 WRONG_OPTIONS = "Wrong options: each must be a plausible misconception about this idea. Never make a wrong option restate the claim the question asks the student to evaluate, never make it a true statement, and never make it merely the negation of the right answer."
 SAME_LENGTH_OPTIONS = (
@@ -57,8 +62,8 @@ SAME_LENGTH_OPTIONS = (
     "absolute, and then in the right option as readily as in a wrong one."
 )
 EXPLANATION_AND_HINT = (
-    "The explanation and the hint are each one or two complete sentences in plain words, ending in a full stop or a "
-    "question mark, with nothing after it. The hint points toward the idea without giving away the answer."
+    "Set hint=null: diagnostic pre-checks have no hints. The explanation is one or two complete sentences in plain "
+    "words, ending in a full stop or question mark, with nothing after it. It is feedback for after the check, never information for the stem."
 )
 # what the critic adds for a pre-check question, on top of its usual checks of the key and the wrong options
 PRECHECK_CRITIC_CHECKS = (
@@ -68,9 +73,14 @@ PRECHECK_CRITIC_CHECKS = (
     "wrong options are not marked out by absolute words (always, never, only, guaranteed, nothing) that the key avoids; "
     f"(7) the stem is at most {MAX_STEM_WORDS} words; (8) the question tests one idea: the key does not bundle two "
     "points, and no wrong option is partly true; (9) a general reader could follow it without the slides: no specialist "
-    "notation at all (letters standing for quantities, Greek letters, subscripts, formulas), and no term or name a "
-    "newcomer could not know; (10) the explanation and the hint are clean, complete sentences with no stray "
-    "characters, and the hint does not give the answer away."
+    "notation at all (letters standing for quantities, Greek letters, subscripts, formulas), or private course labels. "
+    "Standard technical terms may name the knowledge being tested: do not require the stem to define those terms; "
+    "(10) the explanation consists of clean, complete sentences with no stray "
+    "characters, and hint is null; (11) the stem does not teach, define or repeat the target rule or give the correct "
+    "option away through a wording match; it tests the student's existing understanding; (12) the task matches its "
+    "stated tier: basic is recognition/understanding, applied uses a concrete case, advanced judges or predicts; "
+    "(13) questions test ideas from this knowledge unit, not incidental slide trivia, and one question does not "
+    "reveal the answer to another in the bank. Reject a question for a genuine cue or tier mismatch."
 )
 
 
@@ -114,30 +124,36 @@ def write_ku_bank(
     critic_model: str,
     manifest: RunManifest,
     log: Callable[[str], None] = print,
+    strict: bool = False,
+    avoid: list[str] | None = None,
 ) -> tuple[KuBankGen, list[dict]]:
     """The KU's three items and the critic's remaining flags. `material`: the KU's slides as text and image blocks."""
 
     def ask(extra: str) -> KuBankGen:
+        previous = "\nAlready saved questions; ask independently and avoid repeating their stems:\n" + "\n".join(avoid) if avoid else ""
         return structured(
-            schema=KuBankGen, content=[text_block(bank_prompt(ku, prereq_titles, material[0], extra)), *material[1]],
+            schema=KuBankGen, content=[text_block(bank_prompt(ku, prereq_titles, material[0], previous + extra)), *material[1]],
             system=BANK_SYSTEM, stage="item_bank", ku_id=ku.id, model=model, max_tokens=6000, manifest=manifest,
         )
 
     def make(extra: str) -> KuBankGen:
         g = ask(extra)
-        problems = stem_problems(g)
+        problems = precheck_bank_problems(g) if strict else stem_problems(g)
         if problems:
             log(f"  {ku.id}: {problems} — asking again once")
             g = ask(extra + "\n\nYour previous attempt had problems. Fix them:\n" + "\n".join(f"- {p}" for p in problems))
         return g
 
     def describe(g: KuBankGen) -> str:
-        return "\n".join(mcq_text(f"as-{ku.id}-{t}", getattr(g, t)) for t in TIERS)
+        return "\n".join(f"Tier: {t} ({TIER_BLOOM[t]})\n" + mcq_text(f"as-{ku.id}-{t}", getattr(g, t)) for t in TIERS)
 
     gen, flags = generate_with_critic(
         make=make, describe=describe, ids_of=lambda g: [f"as-{ku.id}-{t}" for t in TIERS], material=material,
-        stage=f"bank_{ku.id}", model=critic_model, manifest=manifest, log=log, critic_checks=PRECHECK_CRITIC_CHECKS,
+        stage=f"bank_{ku.id}", model=critic_model, manifest=manifest, log=log, critic_checks=PRECHECK_CRITIC_CHECKS, require_all_verdicts=strict,
     )
     # anything the retry did not fix stays visible on the review sheet
-    flags += [{"id": f"as-{ku.id}-{p.split(':')[0]}", "issue": p.split(': ', 1)[1]} for p in stem_problems(gen)]
+    problems = precheck_bank_problems(gen) if strict else stem_problems(gen)
+    flags += [{"id": f"as-{ku.id}-{p.split(':')[0]}", "issue": p.split(': ', 1)[1]} for p in problems]
+    if strict:
+        require_approved(flags)
     return gen, flags

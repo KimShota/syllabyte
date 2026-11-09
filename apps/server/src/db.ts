@@ -189,10 +189,11 @@ CREATE TABLE IF NOT EXISTS ku_links (
 );
 -- Work for the Python worker: kind 'syllabus' (read it, then its topics), 'deck_read' (convert, parse, say what it
 -- teaches), 'placement' (order a student's new decks), 'deck' (KUs), 'question' (one question, V4), 'link_pass' (U7),
--- 'video' (one video for a KU at a level; target "ku_id|level"). The worker claims them over HTTP (src/uploads.ts).
+-- 'video' (one video for a KU at a level; target "ku_id|level"), 'preview' (uploaded pages),
+-- 'question_bank' (three reviewed tiers for a KU). The worker claims them over HTTP (src/uploads.ts).
 CREATE TABLE IF NOT EXISTS jobs (
   id          TEXT PRIMARY KEY,
-  kind        TEXT NOT NULL CHECK (kind IN ('syllabus', 'deck_read', 'placement', 'deck', 'question', 'link_pass', 'video', 'preview')),
+  kind        TEXT NOT NULL CHECK (kind IN ('syllabus', 'deck_read', 'placement', 'deck', 'question', 'link_pass', 'video', 'preview', 'question_bank')),
   -- the syllabus upload, deck upload or deck it works on; a placement's student; a question's "ku_id|tier"
   target_id   TEXT NOT NULL,
   course_id   TEXT,
@@ -271,7 +272,7 @@ function migrate(db: Db): void {
   if (tables.has("courses") && !columns(db, "courses").includes("topics_json")) db.exec("ALTER TABLE courses ADD COLUMN topics_json TEXT NOT NULL DEFAULT '[]'");
   if (tables.has("decks") && !columns(db, "decks").includes("suggestion_json")) db.exec("ALTER TABLE decks ADD COLUMN suggestion_json TEXT");
   const jobs = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'jobs'").get() as { sql: string } | undefined;
-  if (jobs && !jobs.sql.includes("'preview'")) {
+  if (jobs && (!jobs.sql.includes("'preview'") || !jobs.sql.includes("'question_bank'"))) {
     // a CHECK constraint can't be altered: rebuild the table with the new kinds
     db.exec("SAVEPOINT preview_jobs");
     try {

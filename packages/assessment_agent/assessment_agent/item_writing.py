@@ -80,17 +80,27 @@ def mcq_text(id_: str, m: MCQ) -> str:
 
 def generate_with_critic(
     *, make, describe, ids_of, material: tuple[str, list[dict]], stage: str, model: str, manifest: RunManifest,
-    log: Callable[[str], None] = print, critic_checks: str = "",
+    log: Callable[[str], None] = print, critic_checks: str = "", require_all_verdicts: bool = False,
 ):
     """make(extra) -> generated; describe(gen) -> text for the critic; ids_of(gen) -> ids; critic_checks: see
     `critic_pass`. Returns (gen, remaining_flags)."""
+    def review(gen, suffix):
+        ids = ids_of(gen)
+        verdicts = critic_pass(describe(gen), material[0], material[1], ids, stage=f"{stage}_{suffix}", model=model, manifest=manifest, checks=critic_checks)
+        bad = [v for v in verdicts if not v.ok]
+        if require_all_verdicts:
+            for id_ in ids:
+                if sum(v.id == id_ for v in verdicts) != 1:
+                    bad.append(Verdict(id=id_, ok=False, issue="The reviewer must return exactly one verdict for this question."))
+            if any(v.id not in ids for v in verdicts):
+                bad.append(Verdict(id=ids[0], ok=False, issue="The review contains an unknown question ID."))
+        return bad
+
     gen = make("")
-    verdicts = critic_pass(describe(gen), material[0], material[1], ids_of(gen), stage=f"{stage}_critic", model=model, manifest=manifest, checks=critic_checks)
-    bad = [v for v in verdicts if not v.ok]
+    bad = review(gen, "critic")
     if bad:
         log(f"  {stage}: critic objected to {[v.id for v in bad]} — regenerating once")
         feedback = "\n\nA reviewer found problems in your previous attempt. Fix them:\n" + "\n".join(f"- {v.id}: {v.issue}" for v in bad)
         gen = make(feedback)
-        verdicts = critic_pass(describe(gen), material[0], material[1], ids_of(gen), stage=f"{stage}_critic2", model=model, manifest=manifest, checks=critic_checks)
-        bad = [v for v in verdicts if not v.ok]
+        bad = review(gen, "critic2")
     return gen, [{"id": v.id, "issue": v.issue} for v in bad]

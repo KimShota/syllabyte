@@ -15,7 +15,10 @@ checks moving:
 
 `--concurrency N` runs N jobs at once in one worker (threads; the work is waiting on the model). Deck jobs still go one
 after another: the server hands out a deck only once every earlier lecture's deck is done, so each sees their KUs.
-Reading files, placing them and writing questions run side by side.
+Reading files, placing them and writing questions run side by side. General workers and workers that include
+`question_bank` default to three concurrent jobs. `--kinds question_bank,question` prepares and serves pre-check
+banks without generating videos. Every bank writes basic, applied and advanced questions together and reviews
+them as a group. Failed reviews count toward `--budget-usd` too.
 
 Video jobs (a student's check set their levels, so the KU's video is needed; participant-ready-plan.md S2) run the whole
 video pipeline: a minute or two and about $0.25 each, with Manim, LaTeX and the voice engine on this machine. They go
@@ -38,14 +41,14 @@ from syllabyte_common.llm import DEFAULT_MODEL, PRICE_PER_MTOK
 from syllabyte_common.models import RunManifest
 
 from ingestion_agent.upload_jobs import (
-    run_deck_job, run_deck_read_job, run_link_pass_job, run_placement_job, run_question_job, run_syllabus_job,
+    run_deck_job, run_deck_read_job, run_link_pass_job, run_placement_job, run_question_job, run_question_bank_job, run_syllabus_job,
 )
 from ingestion_agent.uploads import UploadError, read_deck
 from ingestion_agent.video_job import run_video_job
 from ingestion_agent.material_previews import render_material
 from syllabyte_common.models import SlideDeck
 
-KINDS = ("syllabus", "deck_read", "placement", "deck", "question", "link_pass", "video", "preview")
+KINDS = ("syllabus", "deck_read", "placement", "deck", "question", "link_pass", "video", "preview", "question_bank")
 
 
 def log(msg: str) -> None:
@@ -87,23 +90,20 @@ class Worker:
         log(f"{kind} {job_id}")
         work = self.work_dir / job_id
         work.mkdir(parents=True, exist_ok=True)
+        manifest = RunManifest(run_id=f"{kind}-{job_id}")
+        succeeded = False
         try:
             path = None
-            if job.get("file_name") and not (kind in ("question", "video") and payload["deck_id"] in self.decks):
+            if job.get("file_name") and not (kind in ("question", "question_bank", "video") and payload["deck_id"] in self.decks):
                 r = self.client.get(f"/api/worker/jobs/{job_id}/file")
                 r.raise_for_status()
                 path = work / Path(job["file_name"]).name
                 path.write_bytes(r.content)
-            manifest = RunManifest(run_id=f"{kind}-{job_id}")
             result = self._run(job_id, kind, payload, path, work, manifest)
             if result is not None:
                 endpoint = "preview" if kind == "preview" else "result"
                 self._post(f"/api/worker/jobs/{job_id}/{endpoint}", {"result": result})
-            cost = manifest.total_cost_usd(PRICE_PER_MTOK)
-            with self._lock:
-                self.spent_usd += cost
-                total = self.spent_usd
-            log(f"{kind} {job_id}: done ({len(manifest.llm_calls)} LLM calls, ${cost:.3f}; ${total:.2f} this session)")
+            succeeded = True
         except UploadError as e:
             log(f"{kind} {job_id}: the file can't be used: {e}")
             self._post(f"/api/worker/jobs/{job_id}/fail", {"error": str(e), "user_message": str(e)})
@@ -111,6 +111,11 @@ class Worker:
             log(f"{kind} {job_id}: failed: {e!r}")
             self._post(f"/api/worker/jobs/{job_id}/fail", {"error": "".join(traceback.format_exception(e))[-2000:]})
         finally:
+            cost = manifest.total_cost_usd(PRICE_PER_MTOK)
+            with self._lock:
+                self.spent_usd += cost
+                total = self.spent_usd
+            log(f"{kind} {job_id}: {'done' if succeeded else 'failed'} ({len(manifest.llm_calls)} LLM calls, ${cost:.3f}; ${total:.2f} this session)")
             shutil.rmtree(work, ignore_errors=True)
         return True
 
@@ -137,6 +142,8 @@ class Worker:
             return run_placement_job(payload, manifest=manifest)
         if kind == "question":
             return run_question_job(payload, self._deck(payload["deck_id"], path), model=self.model, critic_model=self.critic_model, manifest=manifest, log=log)
+        if kind == "question_bank":
+            return run_question_bank_job(payload, self._deck(payload["deck_id"], path), model=self.model, critic_model=self.critic_model, manifest=manifest, log=log)
         if kind == "deck":
             return run_deck_job(payload, path, work, model=self.model, critic_model=self.critic_model, manifest=manifest, log=log)
         if kind == "link_pass":
@@ -210,7 +217,7 @@ def main() -> None:
     parser.add_argument("--poll", type=float, default=5.0, help="seconds between checks when there is nothing to do")
     parser.add_argument("--once", action="store_true", help="run the queued jobs, then stop")
     parser.add_argument("--kinds", default=None, help=f"only these job kinds, comma-separated ({', '.join(KINDS)})")
-    parser.add_argument("--concurrency", type=int, default=None, help="jobs at once (default: 3 for --kinds video, otherwise 1)")
+    parser.add_argument("--concurrency", type=int, default=None, help="jobs at once (default: 3 for general/bank/video workers, otherwise 1)")
     parser.add_argument("--max-jobs", type=int, default=None, help="stop after starting this many jobs")
     parser.add_argument("--budget-usd", type=float, default=None, help="stop claiming jobs once this much was spent this session")
     args = parser.parse_args()
@@ -221,7 +228,7 @@ def main() -> None:
         kinds = [k.strip() for k in args.kinds.split(",")] if args.kinds else None
         if kinds and set(kinds) - set(KINDS):
             parser.error(f"unknown kinds: {', '.join(sorted(set(kinds) - set(KINDS)))}")
-        concurrency = args.concurrency if args.concurrency is not None else (3 if kinds == ["video"] else 1)
+        concurrency = args.concurrency if args.concurrency is not None else (3 if kinds is None or "question_bank" in kinds or kinds == ["video"] else 1)
         if concurrency < 1:
             parser.error("--concurrency must be at least 1")
         worker = Worker(client, args.work_dir, model=args.model, critic_model=args.critic_model, kinds=kinds)

@@ -83,6 +83,14 @@ describe("an uploaded course through the API", () => {
   });
   afterEach(() => fxMod.setFixtures(fxMod.FIX));
 
+  it("prepares the due lecture and an explicitly opened check even before its first answer", () => {
+    fxMod.setFixtures(course({ decks: [{ lecture_n: 1, result: deck("a", 2) }, { lecture_n: 2, result: deck("b", 2) }] }));
+    expect(mock.questionBankLectures()).toEqual([1]);
+    expect(mock.questionBankLectures("lecture-2").sort()).toEqual([1, 2]);
+    expect(mock.questionNeedsNow("lecture-2").map((need) => need.ku_id).sort()).toEqual(["ku-a-0", "ku-b-0"]);
+    expect(store.getState().sittings).toEqual({}); // viewing the check does not record an answer or start it
+  });
+
   /** Writes whatever the student's checks need, as the server's worker would, and returns what was written. */
   function writeNeeds(input: Parameters<typeof course>[0], saved: Item[]): Item[] {
     for (const need of mock.questionNeedsNow()) saved.push(question(need));

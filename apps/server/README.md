@@ -77,8 +77,8 @@ on a laptop, from the repository root:
 SYLLABYTE_WORKER_TOKEN=... uv run python -m ingestion_agent.worker --server http://localhost:8788   # add --once to stop when the queue is empty
 ```
 
-For videos, add `--kinds video`: this runs up to three videos at once. Use `--concurrency N` to choose another
-limit, including `--concurrency 1` for sequential generation. Other worker kinds default to one job at a time.
+General workers, question-bank workers, and `--kinds video` run up to three jobs at once. Use `--concurrency N` to
+choose another limit, including `--concurrency 1` for sequential generation. Other specialized workers default to one.
 Restart an existing worker to apply a new concurrency setting. Paused jobs must be retried separately.
 
 The mobile analyzer uses `GET courses/materials` to list the student's original syllabus and slide files, including
@@ -90,6 +90,25 @@ Office files are rendered through LibreOffice when available; otherwise the anal
 slide text or DOCX sections, labeled accordingly. Page cycling is a preview; status reports document-level processing.
 Restart both backend and worker after upgrading. Older workers continue processing materials but do not claim
 preview jobs. A worker with explicit `--kinds` must include `preview` (or use a separate `--kinds preview` worker).
+
+The first teachable lecture starts preparing pre-check questions as soon as its KUs arrive. Opening a later check
+prepares that lecture's bank too; the server does not automatically generate the whole semester. Each
+`question_bank` job writes three independent questions for one KU (basic, applied, advanced) in one call, followed by
+a joint critic review. A waiting student's KU is prioritized. Once saved, the adaptive selector chooses among those
+questions without a model call between answers, and classmates reuse the same bank. Queued single-question jobs
+covered by a bank are completed without duplicate generation. A missing/unseen question still has the on-demand
+fallback. Old workers continue receiving only job kinds they support.
+
+Pre-check questions have no hints. The writer and reviewer check for answer giveaways, mismatched tiers and
+slide-specific trivia. Every question must have an explicit review verdict; unresolved flags prevent publication of
+the entire bank, and flagged legacy questions are excluded. Retries remain bounded and failed attempts count toward
+the worker's spending limit. A cold or failed bank can still require waiting; no latency benchmark is implied.
+
+Restart the backend and worker to use the new jobs. To prepare banks without starting videos, run from the root:
+
+```bash
+SYLLABYTE_WORKER_TOKEN=... .venv/bin/python -m ingestion_agent.worker --server http://localhost:8788 --kinds question_bank,question
+```
 
 For uploaded courses, answering a new KU's precheck question settles its level and immediately requests its video.
 The worker can generate it while the student answers the remaining questions. That KU is not asked again in the same
