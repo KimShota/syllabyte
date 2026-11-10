@@ -44,7 +44,7 @@ def fake_pipeline(calls: list):
     """Writes what make_ku_video leaves in a KU's folder: final.mp4, script.json and the audio files build_ui_manifest reads."""
 
     def make_video(ku, corpus, ku_dir, **kw):
-        calls.append({"ku": ku.id, "deck": [d.name for d in corpus.decks], **{k: v for k, v in kw.items() if k != "manifest"}})
+        calls.append({"ku": ku.id, "deck": [d.name for d in corpus.decks], **{k: v for k, v in kw.items() if k not in ("manifest", "on_script")}})
         (ku_dir / "audio").mkdir(parents=True, exist_ok=True)
         subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=black:s=64x64:r=2:d=60", "-pix_fmt", "yuv420p", str(ku_dir / "final.mp4")], check=True)
         segments = [
@@ -53,6 +53,8 @@ def fake_pipeline(calls: list):
             for i, p in enumerate(PHASES)
         ]
         (ku_dir / "script.json").write_text(json.dumps({"ku_id": ku.id, "title": ku.title, "segments": segments, "style": "dialogue", "visuals": "templates"}))
+        if kw.get("on_script"):
+            kw["on_script"](ku_dir / "script.json")  # as make_ku_video does once the script exists
         audio = [{"segment_index": i, "srt_start": 10.0 * i, "srt_end": 10.0 * (i + 1), "beat_durations": [5.0, 5.0]} for i in range(len(PHASES))]
         (ku_dir / "audio" / "segment_audio.json").write_text(json.dumps({"items": audio}))
         (ku_dir / "audio" / "captions.srt").write_text("1\n00:00:00,000 --> 00:00:04,000\nLine 0a.\n")
@@ -190,3 +192,30 @@ def test_the_worker_sends_the_files_before_the_result(tmp_path, monkeypatch, job
     assert server.events == [("put", "video.mp4"), ("put", "poster.jpg"), ("put", "captions.vtt"), ("post", "result")]
     assert all(n > 0 for n in server.sent.values())
     assert not (tmp_path / "work" / "j9").exists()  # nothing is kept after the job
+
+
+def test_the_questions_are_written_while_the_video_is_still_being_made(job, monkeypatch):
+    """They need only the script, so they start as soon as it exists, not after the render."""
+    import threading
+
+    started = threading.Event()
+    inner = fake_gen()
+    monkeypatch.setattr(video_job, "generate_video_gen", lambda *a, **kw: (started.set(), inner(*a, **kw))[1])
+    seen = {}
+    pipeline = fake_pipeline([])
+
+    def slow_pipeline(ku, corpus, ku_dir, **kw):
+        # the script is written and announced inside; the "render" then waits for the questions to have started
+        result = pipeline(ku, corpus, ku_dir, **kw)
+        seen["started_before_render_ended"] = started.wait(timeout=5)
+        return result
+
+    job(make_video=slow_pipeline)
+    assert seen["started_before_render_ended"]
+
+
+def test_a_pipeline_that_never_announces_its_script_still_gets_its_questions(job):
+    """A stand-in (or an older pipeline) without on_script: the questions are written after it, as before."""
+    pipeline = fake_pipeline([])
+    result, _, _ = job(make_video=lambda ku, corpus, ku_dir, **kw: pipeline(ku, corpus, ku_dir, **{k: v for k, v in kw.items() if k != "on_script"}))
+    assert result["video"] and result["items"]

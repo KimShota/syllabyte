@@ -184,6 +184,7 @@ def make_ku_video(
     force_from: int = len(STAGES),
     style: str = "monologue",
     visuals: str = "codegen",
+    on_script=None,
 ) -> Path | None:
     """One KU's video: script (at `level` when given) -> tts -> animate ->
     assemble, under `ku_dir`, reusing whatever each stage already wrote there
@@ -192,7 +193,8 @@ def make_ku_video(
     `allow_fallback` is off. `save_manifest` is called after each stage that
     spent tokens. With style="dialogue" (needs `level`) two characters talk
     the idea through: Manim draws the top 70% and the band with the speaking
-    character and captions goes underneath (dialogue_band.py)."""
+    character and captions goes underneath (dialogue_band.py). `on_script(script_path)` is called once script.json
+    exists, before the voices and the render."""
     # Stage 3: script + critique
     critic_future = None
     script_path = ku_dir / "script.json"
@@ -229,6 +231,8 @@ def make_ku_video(
     else:
         log(f"[3/6] script: reusing existing script for {ku.id}")
         script = load_script(script_path.read_text())
+    if on_script is not None:
+        on_script(script_path)  # lets the caller start work that needs only the script, beside the voices and render
 
     # Stage 4: TTS (usually already done: it starts as soon as the lines pass, while the pictures are drawn)
     if force_from <= stage_index("tts") or not audio_manifest_path.exists():

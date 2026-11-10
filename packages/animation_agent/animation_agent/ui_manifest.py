@@ -135,6 +135,19 @@ def _segment_rows(
     return rows
 
 
+def checkpoint_segment_index(script: dict) -> int:
+    """The segment the checkpoint follows: the last deliver segment. Known from the script alone."""
+    deliver = [i for i, s in enumerate(script["segments"]) if s["phase"] == CHECKPOINT_PHASE]
+    if not deliver:
+        raise ValueError(f"{script.get('ku_id')}: no deliver segment to place the checkpoint after")
+    return deliver[-1]
+
+
+def source_slide_numbers(script: dict) -> list[int]:
+    """The slides the script cites. Known from the script alone."""
+    return sorted({r["slide_number"] for seg in script["segments"] for r in seg["source_refs"]})
+
+
 def build_ui_manifest(ku_dir: Path) -> dict:
     ku_dir = Path(ku_dir)
     video = ku_dir / "final.mp4"
@@ -168,7 +181,7 @@ def build_ui_manifest(ku_dir: Path) -> dict:
     for seg, span, a in zip(segments_raw, spans, audio):
         transcript.extend(_segment_rows(seg, span.start, span.end, a.get("beat_durations") or [], names))
 
-    slides = sorted({r["slide_number"] for seg in segments_raw for r in seg["source_refs"]})
+    slides = source_slide_numbers(script)
 
     ui = ku_dir / "ui"
     ui.mkdir(exist_ok=True)
