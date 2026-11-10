@@ -11,9 +11,9 @@ from collections.abc import Callable
 from syllabyte_common.llm import structured, text_block
 from syllabyte_common.models import KnowledgeUnit, RunManifest
 
-from assessment_agent.bank import MAX_STEM_WORDS, TIER_BLOOM, TIERS, KuBankGen, stem_problems
-from assessment_agent.item_writing import ITEM_SYSTEM, generate_with_critic, mcq_text
-from assessment_agent.precheck_quality import precheck_bank_problems, require_approved
+from assessment_agent.bank import MAX_STEM_WORDS, TIER_BLOOM, TIERS, BankMCQ, KuBankGen, stem_problems
+from assessment_agent.item_writing import ITEM_SYSTEM, critic_pass, generate_with_critic, mcq_text
+from assessment_agent.precheck_quality import precheck_bank_problems, precheck_problems, require_approved
 
 _STEM_RULE = "- The stem is concise and self-contained; include the data and assumptions needed to answer."
 assert _STEM_RULE in ITEM_SYSTEM, "item_writing.ITEM_SYSTEM changed; update the stem rule here"
@@ -147,13 +147,116 @@ def write_ku_bank(
     def describe(g: KuBankGen) -> str:
         return "\n".join(f"Tier: {t} ({TIER_BLOOM[t]})\n" + mcq_text(f"as-{ku.id}-{t}", getattr(g, t)) for t in TIERS)
 
+    if strict:
+        return _write_strict_bank(ku, prereq_titles, material, make=make, model=model, critic_model=critic_model,
+                                  manifest=manifest, log=log, avoid=avoid)
+
     gen, flags = generate_with_critic(
         make=make, describe=describe, ids_of=lambda g: [f"as-{ku.id}-{t}" for t in TIERS], material=material,
         stage=f"bank_{ku.id}", model=critic_model, manifest=manifest, log=log, critic_checks=PRECHECK_CRITIC_CHECKS, require_all_verdicts=strict,
     )
     # anything the retry did not fix stays visible on the review sheet
-    problems = precheck_bank_problems(gen) if strict else stem_problems(gen)
+    problems = stem_problems(gen)
     flags += [{"id": f"as-{ku.id}-{p.split(':')[0]}", "issue": p.split(': ', 1)[1]} for p in problems]
-    if strict:
-        require_approved(flags)
+    return gen, flags
+
+
+# How many times one flagged tier is rewritten on its own before the bank is refused.
+MAX_TIER_REWRITES = 2
+
+
+def tier_prompt(ku: KnowledgeUnit, prereq_titles: list[str], slide_text: str, gen: KuBankGen, tier: str, issues: list[str],
+                previous: str = "") -> str:
+    """Rewrite one tier's question; the bank's other two questions are approved and stay."""
+    prereq = "; ".join(prereq_titles) if prereq_titles else "none"
+    others = "\n".join(f"Tier: {t} ({TIER_BLOOM[t]})\n" + mcq_text(f"as-{ku.id}-{t}", getattr(gen, t)) for t in TIERS if t != tier)
+    problems = "\n".join(f"- {i}" for i in issues)
+    return f"""Knowledge unit: {ku.title}
+Summary: {ku.summary}
+Bloom level the course analysis gave this unit: {ku.bloom_level}
+It builds on: {prereq}
+
+You are rewriting ONE question of a three-tier pre-test of what a student already knows: the {tier} tier ({TIER_BLOOM[tier]}).
+{TIER_TASKS[tier]}
+
+The other two questions are approved and stay as they are. Yours must be independent of them: it must not give away their answers, and must not reuse their wording or options.
+{others}
+
+The {tier} question a reviewer rejected:
+{mcq_text(f"as-{ku.id}-{tier}", getattr(gen, tier))}
+
+Problems to fix:
+{problems}
+
+Write a new {tier} question that has none of these problems. It may test a different case of the same idea.
+
+{STAY_IN_SLIDES}
+
+{WRONG_OPTIONS}
+
+{SAME_LENGTH_OPTIONS}
+
+{EXPLANATION_AND_HINT}
+
+Slides (text and images follow):
+{slide_text}{previous}"""
+
+
+def _write_strict_bank(
+    ku: KnowledgeUnit, prereq_titles: list[str], material: tuple[str, list[dict]], *, make, model: str, critic_model: str,
+    manifest: RunManifest, log: Callable[[str], None], avoid: list[str] | None,
+) -> tuple[KuBankGen, list[dict]]:
+    """A pre-check bank where a flagged question is rewritten on its own: approved questions are kept, never regenerated
+    (regenerating all three gave the good ones a fresh chance to fail). The reviewer sees the whole bank, so it can still
+    catch one question giving another away, but judges only the questions still under review. A question still flagged
+    after MAX_TIER_REWRITES rewrites refuses the bank."""
+    ids = {t: f"as-{ku.id}-{t}" for t in TIERS}
+    tier_of = {v: k for k, v in ids.items()}
+    previous = "\nAlready saved questions; ask independently and avoid repeating their stems:\n" + "\n".join(avoid) if avoid else ""
+
+    def review(gen: KuBankGen, checking: list[str], suffix: str) -> dict[str, list[str]]:
+        text = "\n".join(
+            f"Tier: {t} ({TIER_BLOOM[t]})" + ("" if t in checking else " [already approved; context only, do not judge]")
+            + "\n" + mcq_text(ids[t], getattr(gen, t)) for t in TIERS
+        )
+        checked = [ids[t] for t in checking]
+        verdicts = critic_pass(text, material[0], material[1], checked, stage=f"bank_{ku.id}_{suffix}", model=critic_model,
+                               manifest=manifest, checks=PRECHECK_CRITIC_CHECKS)
+        issues: dict[str, list[str]] = {}
+        for v in verdicts:
+            if v.id not in tier_of:  # not a question of this bank
+                issues.setdefault(checking[0], []).append("The review contains an unknown question ID.")
+            elif v.id in checked and not v.ok:
+                issues.setdefault(tier_of[v.id], []).append(v.issue or "unresolved issue")
+        for t in checking:
+            if sum(v.id == ids[t] for v in verdicts) != 1:
+                issues.setdefault(t, []).append("The reviewer must return exactly one verdict for this question.")
+        for p in precheck_bank_problems(gen):  # rule checks on the whole bank, e.g. a rewritten stem repeating another
+            tier, problem = p.split(": ", 1)
+            issues.setdefault(tier, []).append(problem)
+        return {t: issues[t] for t in TIERS if t in issues}
+
+    def rewrite(gen: KuBankGen, tier: str, issues: list[str]) -> KuBankGen:
+        def ask(extra_issues: list[str]) -> BankMCQ:
+            return structured(
+                schema=BankMCQ, content=[text_block(tier_prompt(ku, prereq_titles, material[0], gen, tier, issues + extra_issues, previous)), *material[1]],
+                system=BANK_SYSTEM, stage="item_bank_rewrite", ku_id=ku.id, model=model, max_tokens=3000, manifest=manifest,
+            )
+
+        q = ask([])
+        if problems := precheck_problems(q):
+            q = ask(problems)
+        return gen.model_copy(update={tier: q})
+
+    gen = make("")
+    flagged = review(gen, list(TIERS), "critic")
+    for n in range(1, MAX_TIER_REWRITES + 1):
+        if not flagged:
+            break
+        log(f"  {ku.id}: rewriting only {list(flagged)} (round {n})")
+        for tier, issues in flagged.items():
+            gen = rewrite(gen, tier, issues)
+        flagged = review(gen, list(flagged), f"critic{n + 1}")
+    flags = [{"id": ids[t], "issue": i} for t, issues in flagged.items() for i in issues]
+    require_approved(flags)
     return gen, flags

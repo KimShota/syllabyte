@@ -25,6 +25,13 @@ def generated():
     )
 
 
+def for_schema(kw, bank):
+    """A fake writer answers what was asked: the whole bank, or (a one-tier rewrite) that tier's question."""
+    if kw["schema"] is BankMCQ:
+        return getattr(bank, next(t for t in TIERS if f"the {t} tier" in kw["content"][0]["text"])).model_copy(deep=True)
+    return bank
+
+
 def payload():
     return {"deck_id": "deck", "ku": KU.model_dump(mode="json"), "prereq_titles": [], "avoid": ["An earlier question?"],
         "questions": [{"item_id": f"as-course-ku-stacks-{tier}-bank", "tier": tier, "beta": beta, "target_index": i}
@@ -40,7 +47,7 @@ def test_writes_three_tiers_in_one_generation_and_one_joint_review(monkeypatch):
 
     def write(**kw):
         calls.append(("write", kw))
-        return generated()
+        return for_schema(kw, generated())
 
     def review(**kw):
         calls.append(("review", kw))
@@ -67,7 +74,7 @@ def test_writes_three_tiers_in_one_generation_and_one_joint_review(monkeypatch):
     item_writing.Verdicts(verdicts=[item_writing.Verdict(id=f"as-ku-stacks-{t}", ok=True) for t in TIERS] + [item_writing.Verdict(id="as-ku-stacks-basic", ok=True)]),
 ])
 def test_incomplete_or_duplicate_reviews_cannot_publish_a_bank(monkeypatch, review):
-    monkeypatch.setattr(bank_writing, "structured", lambda **kw: generated())
+    monkeypatch.setattr(bank_writing, "structured", lambda **kw: for_schema(kw, generated()))
     monkeypatch.setattr(item_writing, "structured", lambda **kw: review)
     with pytest.raises(QuestionQualityError, match="exactly one verdict"):
         run_question_bank_job(payload(), DECK, log=lambda _: None)
@@ -78,7 +85,7 @@ def test_reviewer_can_reject_answer_giveaways_and_demand_a_rewrite(monkeypatch):
 
     def write(**kw):
         prompts.append(kw["content"][0]["text"])
-        return generated()
+        return for_schema(kw, generated())
 
     def review(**kw):
         reviews.append(kw)
@@ -92,6 +99,7 @@ def test_reviewer_can_reject_answer_giveaways_and_demand_a_rewrite(monkeypatch):
     monkeypatch.setattr(item_writing, "structured", review)
     assert run_question_bank_job(payload(), DECK, log=lambda _: None)["flags"] == []
     assert len(prompts) == 2 and "The stem teaches the answer" in prompts[1]
+    assert "rewriting ONE question" in prompts[1] and "the basic tier" in prompts[1]  # only the flagged question
 
 
 def test_unresolved_flags_or_hints_are_never_published(monkeypatch):
@@ -101,20 +109,21 @@ def test_unresolved_flags_or_hints_are_never_published(monkeypatch):
         generated_count.append(1)
         bank = generated()
         bank.basic.hint = "Choose the newest item."
-        return bank
+        return for_schema(kw, bank)
 
     monkeypatch.setattr(bank_writing, "structured", write)
     monkeypatch.setattr(item_writing, "structured", verdicts)
     with pytest.raises(QuestionQualityError, match="hint=null"):
         run_question_bank_job(payload(), DECK, log=lambda _: None)
-    assert len(generated_count) <= 4  # retries remain bounded
+    # retries remain bounded: the bank and its rule-check retry, then each rewrite round and its rule-check retry
+    assert len(generated_count) <= 2 + 2 * bank_writing.MAX_TIER_REWRITES
 
 
 def test_bank_cannot_cite_pages_that_do_not_exist(monkeypatch):
     def write(**kw):
         bank = generated()
         bank.slides = [99]
-        return bank
+        return for_schema(kw, bank)
 
     monkeypatch.setattr(bank_writing, "structured", write)
     monkeypatch.setattr(item_writing, "structured", verdicts)
@@ -126,7 +135,7 @@ def test_three_tiers_cannot_reuse_the_same_question(monkeypatch):
     def write(**kw):
         bank = generated()
         bank.advanced.stem = bank.basic.stem
-        return bank
+        return for_schema(kw, bank)
 
     monkeypatch.setattr(bank_writing, "structured", write)
     monkeypatch.setattr(item_writing, "structured", verdicts)
@@ -148,7 +157,7 @@ def test_case_sensitive_answer_options_survive_review_and_balancing(monkeypatch)
         bank.basic.stem = "In Python 3, which variable is assigned?\n```python\nX = 2\n```\nWhich name was assigned?"
         bank.basic.options = ["X", "x", "y"]
         bank.basic.explanation = "Python variable names are case-sensitive, so X is assigned."
-        return bank
+        return for_schema(kw, bank)
 
     monkeypatch.setattr(bank_writing, "structured", write)
     monkeypatch.setattr(item_writing, "structured", verdicts)
@@ -163,7 +172,7 @@ def test_symbolic_questions_still_require_semantic_review(monkeypatch):
         bank = generated()
         bank.basic.stem = "What is the derivative of x²?"
         bank.basic.options = ["2x", "x + x", "x"]  # two correct answers despite different strings
-        return bank
+        return for_schema(kw, bank)
 
     def reject(**kw):
         result = verdicts()
@@ -175,3 +184,53 @@ def test_symbolic_questions_still_require_semantic_review(monkeypatch):
     monkeypatch.setattr(item_writing, "structured", reject)
     with pytest.raises(QuestionQualityError, match="equivalent"):
         run_question_bank_job(payload(), DECK, log=lambda _: None)
+
+
+def test_a_flagged_question_is_rewritten_alone_and_the_approved_ones_are_kept(monkeypatch):
+    writes, reviews = [], []
+
+    def write(**kw):
+        writes.append(kw["schema"].__name__)
+        if kw["schema"] is BankMCQ:  # the rewrite of the applied question
+            return BankMCQ(stem="Push 1, 2, 3, then pop twice. Which item is on top?", options=["1", "2", "3"], correct_index=0,
+                           explanation="Two pops remove 3 and 2, leaving 1 on top.")
+        return generated()
+
+    def review(**kw):
+        reviews.append(kw["content"][0]["text"])
+        result = verdicts()
+        if len(reviews) == 1:
+            result.verdicts[1].ok = False
+            result.verdicts[1].issue = "The keyed option bundles two claims."
+        return result
+
+    monkeypatch.setattr(bank_writing, "structured", write)
+    monkeypatch.setattr(item_writing, "structured", review)
+    out = run_question_bank_job(payload(), DECK, log=lambda _: None)
+    assert writes == ["KuBankGen", "BankMCQ"]
+    stems = {q["tier"]: q["stem"] for q in out["items"]}
+    assert stems["basic"] == generated().basic.stem and stems["advanced"] == generated().advanced.stem
+    assert stems["applied"].startswith("Push 1, 2, 3")
+    # the second review sees the whole bank but is asked to judge only the rewritten question
+    assert "(ids: as-ku-stacks-applied)" in reviews[1]
+    assert reviews[1].count("[already approved; context only, do not judge]") == 2
+
+
+def test_a_question_still_flagged_after_its_rewrites_refuses_the_bank(monkeypatch):
+    writes = []
+
+    def write(**kw):
+        writes.append(kw["schema"].__name__)
+        return for_schema(kw, generated())
+
+    def review(**kw):
+        result = verdicts()
+        result.verdicts[2].ok = False
+        result.verdicts[2].issue = "The advanced question is a tier mismatch."
+        return result
+
+    monkeypatch.setattr(bank_writing, "structured", write)
+    monkeypatch.setattr(item_writing, "structured", review)
+    with pytest.raises(QuestionQualityError, match="tier mismatch"):
+        run_question_bank_job(payload(), DECK, log=lambda _: None)
+    assert writes == ["KuBankGen"] + ["BankMCQ"] * bank_writing.MAX_TIER_REWRITES
