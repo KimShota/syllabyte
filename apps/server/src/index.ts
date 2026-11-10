@@ -45,7 +45,7 @@ const caps = {
 const uploads = new Uploads(db, courses, process.env.SYLLABYTE_FILES ?? "data/files", caps);
 const runner = new StateRunner(db, { semesterStart, courseFor: (id) => courses.fixturesFor(id), courseIdOf: (id) => courses.courseOf(id),
     after: (id, state) => courses.recordVideoNeeds(id, state),
-    needs: (id, needs) => uploads.requestQuestions(id, needs),
+    needs: (id, needs, lectures) => uploads.requestQuestions(id, needs, lectures),
   });
 const app = createApp({ db, auth, runner, courses, uploads, workerToken: process.env.SYLLABYTE_WORKER_TOKEN, corsOrigin: process.env.SYLLABYTE_CORS_ORIGIN,
   emailLinks: { publicBase, redirectUrls: process.env.SYLLABYTE_AUTH_REDIRECT_URLS?.split(",").map((s) => s.trim()).filter(Boolean), allowExpoGo: !production },

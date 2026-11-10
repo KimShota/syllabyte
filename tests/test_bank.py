@@ -19,7 +19,6 @@ from assessment_agent.bank import (
 
 
 def mcq(correct: int = 1, tag: str = "item") -> BankMCQ:
-    # words, not single letters: a lone letter reads as notation to `mcq_problems`
     return BankMCQ(
         stem=f"Stem {tag}?", options=[f"{tag} zero", f"{tag} one", f"{tag} two"], correct_index=correct,
         explanation=f"Because {tag}.", hint=None,
@@ -146,16 +145,16 @@ class TestPrecheckQuestions:
 
     def test_a_long_stem_is_sent_back(self):
         m = mcq()
-        m.stem = " ".join(["word"] * 31) + "?"
-        assert mcq_problems(m) == ["the stem has 31 words; keep it to 30 or fewer"]
+        m.stem = " ".join(["word"] * 91) + "?"
+        assert mcq_problems(m) == ["the stem has 91 words; keep it to 90 or fewer"]
         m.stem = " ".join(["word"] * 29) + "?"
         assert mcq_problems(m) == []
 
     def test_a_question_about_slides_the_student_has_not_seen_is_sent_back(self):
         for stem in (
-            "The diagram nests boxes inside one another; which sit inside machine learning?",
-            "In the upper panel of the supervised learning figure, what does the symbol mean?",
-            "The house example outputs $340k; what changes if it also outputs rent?",
+            "The slide nests boxes inside one another; which sit inside machine learning?",
+            "In the supervised learning slide, what does the symbol mean?",
+            "These slides show a house example; what changes if it also outputs rent?",
         ):
             m = mcq()
             m.stem = stem
@@ -167,35 +166,25 @@ class TestPrecheckQuestions:
         m.options = ["Hand-code the rules for each profile", "Learn the mapping from the examples", "Cluster the profiles"]
         assert mcq_problems(m) == []
 
-    def test_a_right_option_that_gives_itself_away_by_length_is_sent_back(self):
-        m = mcq(correct=1)
-        m.options = ["Deductive reasoning", "Inductive: not logically forced, but simplicity makes it reasonable", "Unbiased"]
-        assert mcq_problems(m) == ["the right option is clearly the longest; make the three options about the same length and detail"]
-        m.options = ["Deductive: the observations prove it", "Inductive: likely, though not certain", "Unbiased: no assumption at all"]
+    @pytest.mark.parametrize("stem, options", [
+        ("What is the derivative of x²?", ["2x", "x", "0"]),
+        ("What is the eigenvalue λ of the 1×1 matrix [2]?", ["2", "3", "4"]),
+        ("Which formula states that every element satisfies P?", ["∀x P(x)", "∃x P(x)", "¬∃x P(x)"]),
+        ("Which complexity is linear?", ["O(n)", "O(n²)", "O(2ⁿ)"]),
+        ("Which statement characterizes an injective function?", ["Distinct inputs have distinct outputs", "Every output has two inputs", "No output has an input"]),
+        ("Which expression is the polynomial's derivative?", ["3x² + 2x + 1", "0", "x"]),
+        ("Which conclusion follows?", ["Some elements satisfy P", "No elements satisfy P", "Every element satisfies P"]),
+        ("A graph has edges A→B and B→C. Is C reachable from A?", ["Yes", "No", "It depends"]),
+    ])
+    def test_notation_formula_lengths_and_quantifiers_are_left_to_semantic_review(self, stem, options):
+        m = mcq()
+        m.stem, m.options, m.correct_index = stem, options, 0
         assert mcq_problems(m) == []
 
-    def test_wrong_options_marked_out_by_absolute_words_are_sent_back(self):
-        m = mcq(correct=1)
-        m.options = ["Neural networks always need labels", "Clustering done with deep learning", "Deep learning is its own paradigm"]
-        assert mcq_problems(m) == [
-            "the wrong options use absolute words ('always') that the right one avoids; word all three in the same measured way"
-        ]
-        # an absolute word in the right option too is not a giveaway
-        m.options = ["Neural networks always need labels", "It cannot tell the groups apart alone", "Deep learning is its own paradigm"]
+    def test_code_is_not_counted_as_prose(self):
+        m = mcq()
+        m.stem = "In Python 3:\n```python\nvalues = [" + ", ".join(["1"] * 100) + "]\n```\nWhat is len(values)?"
         assert mcq_problems(m) == []
-
-    def test_specialist_notation_is_sent_back(self):
-        for stem, options in (
-            ("Under Mitchell's definition, which part is the experience E?", None),
-            ("What does supervised learning do with input-output pairs?", ["Hand-code the rules f", "Learn the mapping", "Cluster them"]),
-            ("Is the effect Y1 - Y0 observed for one person?", None),
-            ("What happens to θ after a right answer?", None),
-        ):
-            m = mcq()
-            m.stem = stem
-            if options:
-                m.options = options
-            assert any("specialist notation" in p for p in mcq_problems(m)), stem
 
     def test_plain_words_numbers_and_articles_are_not_notation(self):
         m = mcq()

@@ -1,5 +1,7 @@
 "use client";
 
+import { QuestionText } from "@/components/QuestionText";
+
 import { useState } from "react";
 import { api } from "@syllabyte/core/api/client";
 import { useQuery } from "@/lib/api/hooks";
@@ -116,10 +118,10 @@ function ProveItSheet({ entryId, onClose }: { entryId: string; onClose: () => vo
     >
       {step === "ask" && item && (
         <div>
-          <p id="pi-stem" className="mb-3 text-card font-extrabold leading-[1.3]">{item.stem}</p>
+          <p id="pi-stem" className="mb-3 text-card font-extrabold leading-[1.3]"><QuestionText>{item.stem}</QuestionText></p>
           <div role="group" aria-labelledby="pi-stem" className="flex flex-col gap-2.5">
             {item.options.map((o, i) => (
-              <ChoiceCard key={i} selected={choice === i} onClick={() => setChoice(i)}>{o}</ChoiceCard>
+              <ChoiceCard key={i} selected={choice === i} onClick={() => setChoice(i)}><QuestionText>{o}</QuestionText></ChoiceCard>
             ))}
             <ChoiceCard notSure selected={choice === "not_sure"} onClick={() => setChoice("not_sure")}>Not sure yet</ChoiceCard>
           </div>
@@ -135,7 +137,7 @@ function ProveItSheet({ entryId, onClose }: { entryId: string; onClose: () => vo
           Keep it skipped
         </TextLink>
       )}
-      {step === "pass" && item && <p className="text-body text-ink/85">{item.explanation}</p>}
+      {step === "pass" && item && <p className="text-body text-ink/85"><QuestionText>{item.explanation}</QuestionText></p>}
     </Sheet>
   );
 }

@@ -14,7 +14,7 @@ from syllabyte_common.learner import Item, ItemTier
 from syllabyte_common.llm import structured, text_block
 from syllabyte_common.models import KnowledgeUnit, RunManifest, SlideRef
 
-from assessment_agent.bank import TIER_BLOOM, TIERS, BankMCQ, mcq_problems
+from assessment_agent.bank import TIER_BLOOM, TIERS, BankMCQ
 from assessment_agent.bank_writing import (
     BANK_SYSTEM,
     EXPLANATION_AND_HINT,
@@ -25,6 +25,7 @@ from assessment_agent.bank_writing import (
     WRONG_OPTIONS,
 )
 from assessment_agent.item_writing import generate_with_critic, mcq_text
+from assessment_agent.precheck_quality import precheck_problems, require_approved
 
 
 class QuestionGen(BaseModel):
@@ -83,18 +84,19 @@ def write_question(
 
     def make(extra: str) -> QuestionGen:
         g = ask(extra)
-        problems = mcq_problems(g.question)
+        problems = precheck_problems(g.question)
         if problems:
             log(f"  {qid}: {problems} — asking again once")
             g = ask(extra + "\n\nYour previous attempt had problems. Fix them:\n" + "\n".join(f"- {p}" for p in problems))
         return g
 
     gen, flags = generate_with_critic(
-        make=make, describe=lambda g: mcq_text(qid, g.question), ids_of=lambda g: [qid], material=material,
-        stage=f"question_{qid}", model=critic_model, manifest=manifest, log=log, critic_checks=PRECHECK_CRITIC_CHECKS,
+        make=make, describe=lambda g: f"Tier: {tier} ({TIER_BLOOM[tier]})\n" + mcq_text(qid, g.question), ids_of=lambda g: [qid], material=material,
+        stage=f"question_{qid}", model=critic_model, manifest=manifest, log=log, critic_checks=PRECHECK_CRITIC_CHECKS, require_all_verdicts=True,
     )
     # anything the retries did not fix stays visible with the saved question
-    flags += [{"id": qid, "issue": p} for p in mcq_problems(gen.question)]
+    flags += [{"id": qid, "issue": p} for p in precheck_problems(gen.question)]
+    require_approved(flags)
     return gen, flags
 
 

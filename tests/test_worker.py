@@ -200,3 +200,52 @@ def test_a_worker_stops_claiming_at_its_job_limit_or_budget(tmp_path):
     w._run = lambda *a, **kw: w.__dict__.update(spent_usd=w.spent_usd + 1.0) or {}  # every job costs a dollar of "model time"
     w.serve(once=True, budget_usd=3.0)
     assert len(server.posted("/result")) == 3
+
+
+def test_failed_review_costs_count_toward_the_worker_budget(tmp_path):
+    from syllabyte_common.llm import DEFAULT_MODEL
+    from syllabyte_common.models import LLMCallRecord
+
+    jobs = [{"id": f"bank-{i}", "kind": "placement", "payload": {}, "file_name": None} for i in range(3)]
+    server = FakeServer(jobs, {})
+    w = worker(server, tmp_path)
+
+    def fail(job_id, kind, payload, path, work, manifest):
+        manifest.llm_calls.append(LLMCallRecord(stage="review", model=DEFAULT_MODEL, input_tokens=1_000_000, output_tokens=0))
+        raise RuntimeError("Review rejected the questions")
+
+    w._run = fail
+    w.serve(once=True, budget_usd=1.0)
+    assert len(server.posted("/fail")) == 1
+    assert w.spent_usd == 2.0 and len(server.jobs) == 2
+
+
+def test_question_bank_workers_run_three_jobs_by_default_and_accept_an_override(monkeypatch):
+    import sys
+    from ingestion_agent import worker as worker_mod
+
+    for args, expected in [([], 3), (["--kinds", "question_bank,question"], 3), (["--kinds", "syllabus"], 1), (["--kinds", "question_bank", "--concurrency", "1"], 1)]:
+        calls = []
+        monkeypatch.setattr(sys, "argv", ["worker", "--token", "test-token", "--once", *args])
+        monkeypatch.setattr(worker_mod.Worker, "serve", lambda self, **kw: calls.append(kw))
+        worker_mod.main()
+        assert calls[0]["concurrency"] == expected
+
+
+def test_question_bank_job_uses_the_shared_rendered_deck_and_posts_its_three_items(tmp_path, monkeypatch):
+    from ingestion_agent import worker as worker_mod
+
+    jobs = [{"id": "bank-1", "kind": "question_bank", "payload": {"deck_id": "d1"}, "file_name": "lecture.pdf"}]
+    server = FakeServer(jobs, {"bank-1": pdf_bytes(["Stack LIFO behavior", "Queue FIFO behavior"])})
+    seen = []
+
+    def generate(payload, deck, **kw):
+        seen.append(deck)
+        return {"items": [{"tier": t} for t in ("basic", "applied", "advanced")], "flags": []}
+
+    monkeypatch.setattr(worker_mod, "run_question_bank_job", generate)
+    w = worker(server, tmp_path)
+    assert w.run_once()
+    assert seen[0] is w.decks["d1"] and len(seen[0].slides) == 2
+    assert server.posted("/result")[0]["result"]["items"] == [{"tier": t} for t in ("basic", "applied", "advanced")]
+    assert "question_bank" in server.posted("/claim")[0]["kinds"]

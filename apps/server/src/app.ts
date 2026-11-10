@@ -202,7 +202,7 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
         // the core's download covers the course the request runs on; the student's data is all their courses'
         if (method !== "exportMyData" || !isObject(out)) return out;
         return { ...out, courses: runner.courseExports(user.id, courses.coursesOf(user.id), (id) => courses.get(id)) };
-      });
+      }, method === "getSitting" && Array.isArray(args) && typeof args[0] === "string" ? args[0] : undefined);
       return c.json({ result: result ?? null });
     } catch (e) {
       // the rules throw plain Errors for things like an unknown id or a locked question

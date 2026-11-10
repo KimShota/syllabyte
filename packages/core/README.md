@@ -32,6 +32,11 @@ Each app depends on it as `"@syllabyte/core": "file:../../packages/core"` and im
 
 ## Fixtures
 
+Question strings remain plain strings in the API. `questionContent` recognizes inline backticks and fenced code/data
+blocks (opening and closing fences on their own lines). Both front ends preserve code indentation and let wide blocks
+scroll. Standard math uses Unicode or unambiguous text such as `x²`, `∀x`, and `(a + b)/c`; LaTeX and HTML are not
+interpreted. Old unformatted questions continue to display as before. Code is displayed, never executed.
+
 `fixtures/{course,items,bank,videos,slides}.json` come from the course's own slides, so they are gitignored. From the
 repo root:
 

@@ -1,5 +1,7 @@
 "use client";
 
+import { QuestionText } from "@/components/QuestionText";
+
 import { useState } from "react";
 import { api } from "@syllabyte/core/api/client";
 import { useQuery } from "@/lib/api/hooks";
@@ -26,8 +28,8 @@ export function NextSessionCard() {
     return (
       <InfoCard eyebrow="Next-day check" tone={result.correct ? "teal" : "plain"} className={result.correct ? "" : "border-2 !border-amber-line"}>
         <p className="font-bold">{result.correct ? "Right." : "Not quite."}{jol && ` You said ${JOL_WORD[jol]}.`}</p>
-        <p className="mt-1">{result.item.options[result.item.correct_index]}</p>
-        <p className="mt-2 text-ink/85">{result.item.explanation}</p>
+        <p className="mt-1"><QuestionText>{result.item.options[result.item.correct_index]}</QuestionText></p>
+        <p className="mt-2 text-ink/85"><QuestionText>{result.item.explanation}</QuestionText></p>
         <div className="mt-3">
           <Button
             variant="secondary"
@@ -56,10 +58,10 @@ export function NextSessionCard() {
         </div>
       ) : (
         <div className="mt-4">
-          <p className="mb-3 text-card font-extrabold leading-[1.3]" id="ns-stem">{card!.item.stem}</p>
+          <p className="mb-3 text-card font-extrabold leading-[1.3]" id="ns-stem"><QuestionText>{card!.item.stem}</QuestionText></p>
           <div role="group" aria-labelledby="ns-stem" className="flex flex-col gap-2.5">
             {card!.item.options.map((o, i) => (
-              <ChoiceCard key={i} selected={choice === i} onClick={() => setChoice(i)}>{o}</ChoiceCard>
+              <ChoiceCard key={i} selected={choice === i} onClick={() => setChoice(i)}><QuestionText>{o}</QuestionText></ChoiceCard>
             ))}
           </div>
           <div className="mt-3">

@@ -1,4 +1,4 @@
-import { mockApi, questionNeedsNow, syncPlaylistWithVideos } from "@syllabyte/core/api/mock";
+import { mockApi, questionBankLectures, questionNeedsNow, syncPlaylistWithVideos } from "@syllabyte/core/api/mock";
 import { FIX, currentCourseId, setFixtures } from "@syllabyte/core/fixtures";
 import { setEventEnv, track } from "@syllabyte/core/events";
 import { freshState, getEventVersion, getState, getVersion, mutate, replaceState } from "@syllabyte/core/store";
@@ -33,7 +33,7 @@ export class StateRunner {
       /** after each request of a student with a course that changed their state, e.g. to record the videos they need */
       after?: (userId: string, state: DemoState) => void;
       /** after every request of a student with a course: the questions their checks need written (V4) */
-      needs?: (userId: string, needs: QuestionNeed[]) => void;
+      needs?: (userId: string, needs: QuestionNeed[], lectures: number[]) => void;
     } = {},
   ) {
     this.store = new StateStore(db);
@@ -41,13 +41,13 @@ export class StateRunner {
 
   private store: StateStore;
 
-  run<T>(user: User, visit: string | null, fn: () => Promise<T> | T): Promise<T> {
-    const job = this.tail.then(() => this.exec(user, visit, fn));
+  run<T>(user: User, visit: string | null, fn: () => Promise<T> | T, openedSitting?: string): Promise<T> {
+    const job = this.tail.then(() => this.exec(user, visit, fn, openedSitting));
     this.tail = job.catch(() => undefined);
     return job;
   }
 
-  private async exec<T>(user: User, visit: string | null, fn: () => Promise<T> | T): Promise<T> {
+  private async exec<T>(user: User, visit: string | null, fn: () => Promise<T> | T, openedSitting?: string): Promise<T> {
     const course = this.opts.courseFor?.(user.id) ?? null;
     // a student's state is kept per course (src/state.ts): this request runs on the one they are in now
     const courseId = course?.course.id ?? NO_COURSE;
@@ -67,7 +67,7 @@ export class StateRunner {
     try {
       const out = await fn();
       if (course && this.opts.after && getVersion() !== v) this.opts.after(user.id, getState());
-      if (course && this.opts.needs) this.opts.needs(user.id, questionNeedsNow());
+      if (course && this.opts.needs) this.opts.needs(user.id, questionNeedsNow(openedSitting), questionBankLectures(openedSitting));
       return out;
     } finally {
       if (getVersion() !== v || getEventVersion() !== e) this.save(user.id, courseId);

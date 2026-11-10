@@ -9,7 +9,7 @@ type Server = ReturnType<typeof makeServer>;
 
 export interface Job {
   id: string;
-  kind: "syllabus" | "deck_read" | "placement" | "deck" | "question" | "link_pass" | "video";
+  kind: "syllabus" | "deck_read" | "placement" | "deck" | "question" | "link_pass" | "video" | "question_bank";
   payload: Record<string, any>;
   file_name: string | null;
 }
@@ -80,6 +80,14 @@ function questionOf(p: Record<string, any>): { item: Item; flags: [] } {
   };
 }
 
+export function questionBankOf(p: Record<string, any>) {
+  return { items: p.questions.map((q: Record<string, any>) => ({
+    ...questionOf({ ...p, ...q }).item,
+    explanation: "A reviewed explanation.", hint: null,
+    source_refs: [{ deck_name: p.deck_id, slide_number: 1 }],
+  })) as Item[], flags: [] };
+}
+
 /** The video job: a Video and the three items it asks, as ingestion_agent's video job returns them (no urls: the server adds them). */
 export function videoOf(p: Record<string, any>) {
   const ku: string = p.ku.id;
@@ -127,6 +135,8 @@ export async function work(
       result = deckResultOf(text.split("\n")[0], job.payload) as unknown as Record<string, unknown>;
     } else if (job.kind === "question") {
       result = questionOf(job.payload);
+    } else if (job.kind === "question_bank") {
+      result = questionBankOf(job.payload);
     } else if (job.kind === "video") {
       for (const name of ["video.mp4", "poster.jpg", "captions.vtt"]) {
         expect((await s.worker.put(`/api/worker/jobs/${job.id}/files/${name}`, new TextEncoder().encode(`${job.id}:${name}`))).status).toBe(200);

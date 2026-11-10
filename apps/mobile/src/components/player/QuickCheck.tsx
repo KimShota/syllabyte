@@ -1,3 +1,5 @@
+import { QuestionText } from "../QuestionText";
+import { questionLabel } from "@syllabyte/core/questionContent";
 import { useEffect, useRef, useState } from "react";
 import { AccessibilityInfo, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { api } from "@syllabyte/core/api/client";
@@ -69,9 +71,7 @@ export function QuickCheck({
               Video paused · Quick check
             </T>
           </View>
-          <T variant="cardTitle" color="#fff" style={{ fontFamily: fonts.bold, lineHeight: 28 }} accessibilityRole="header">
-            {item.stem}
-          </T>
+          <QuestionText variant="cardTitle" accessibilityRole="header" color="#fff" textStyle={{ fontFamily: fonts.bold, lineHeight: 28 }}>{item.stem}</QuestionText>
 
           <View style={styles.options} accessibilityRole="radiogroup">
             {item.options.map((o, i) => {
@@ -81,7 +81,7 @@ export function QuickCheck({
                   key={i}
                   accessibilityRole="radio"
                   accessibilityState={{ selected: choice === i, disabled: revealed }}
-                  accessibilityLabel={`${LETTERS[i]}. ${o}${state === "correct" ? ", right answer" : state === "wrong" ? ", your answer, not right" : ""}`}
+                  accessibilityLabel={`${LETTERS[i]}. ${questionLabel(o)}${state === "correct" ? ", right answer" : state === "wrong" ? ", your answer, not right" : ""}`}
                   disabled={revealed}
                   onPress={() => setChoice(i)}
                   style={({ pressed }) => [styles.option, styles[state], pressed && { opacity: 0.85 }]}
@@ -97,9 +97,7 @@ export function QuickCheck({
                       </T>
                     )}
                   </View>
-                  <T variant="body" color={state === "dim" ? "rgba(255,255,255,0.5)" : "#fff"} style={{ flex: 1, fontSize: 15, lineHeight: 21 }}>
-                    {o}
-                  </T>
+                  <QuestionText color={state === "dim" ? "rgba(255,255,255,0.5)" : "#fff"} style={{ flex: 1 }} textStyle={{ fontSize: 15, lineHeight: 21 }}>{o}</QuestionText>
                 </Pressable>
               );
             })}
@@ -139,16 +137,12 @@ export function QuickCheck({
                 </T>
               ) : null}
               {!result.correct ? (
-                <T variant="body" color="#e2e8f0" style={{ fontSize: 15 }}>
-                  <T variant="body" color={P.textMuted} style={{ fontSize: 15 }}>
-                    Right answer:{" "}
-                  </T>
-                  {item.options[item.correct_index]}
-                </T>
+                <View style={{ gap: 4 }}>
+                  <T color={P.textMuted}>Right answer:</T>
+                  <QuestionText color="#e2e8f0">{item.options[item.correct_index]}</QuestionText>
+                </View>
               ) : null}
-              <T variant="body" color="#e2e8f0" style={{ fontSize: 15, lineHeight: 22 }}>
-                {item.explanation}
-              </T>
+              <QuestionText color="#e2e8f0">{item.explanation}</QuestionText>
               {result.queued ? (
                 <View style={styles.queued}>
                   <T variant="caption" color={colors.onSecondaryContainer} style={{ fontSize: 14, lineHeight: 20 }}>

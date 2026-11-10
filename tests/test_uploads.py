@@ -285,7 +285,7 @@ def test_a_question_job_writes_one_checked_question_at_the_tier(tmp_path, monkey
         return question_writing.QuestionGen(question=BankMCQ(stem="Which is right?", options=["yes", "no", "maybe"], correct_index=0, explanation="Because."), slides=[2])
 
     monkeypatch.setattr(question_writing, "structured", write)
-    monkeypatch.setattr(item_writing, "structured", lambda **kw: item_writing.Verdicts(verdicts=[]))
+    monkeypatch.setattr(item_writing, "structured", lambda **kw: item_writing.Verdicts(verdicts=[item_writing.Verdict(id="ku-a-applied", ok=True)]))
     _, deck = read_deck(make_pdf(tmp_path / "d.pdf", ["Alpha page", "Beta page"]), tmp_path / "w", "d7")
     payload = {
         "item_id": "as-ku-a-applied-2", "ku": uku("ku-a", slides=[1, 2]).model_dump(mode="json"), "prereq_titles": [],
@@ -304,7 +304,7 @@ def test_a_question_job_sends_back_a_question_a_student_could_not_take_before_th
     from assessment_agent import question_writing
 
     prompts, critic_systems = [], []
-    bad = BankMCQ(stem="The diagram nests boxes; which sit inside machine learning?", options=["one", "two", "three"], correct_index=0, explanation="E.")
+    bad = BankMCQ(stem="The slide nests boxes; which sit inside machine learning?", options=["one", "two", "three"], correct_index=0, explanation="E.")
     good = BankMCQ(stem="Which three paradigms make up machine learning?", options=["one", "two", "three"], correct_index=0, explanation="E.")
 
     def write(**kw):
@@ -313,14 +313,14 @@ def test_a_question_job_sends_back_a_question_a_student_could_not_take_before_th
 
     def critic(**kw):
         critic_systems.append(kw["system"])
-        return item_writing.Verdicts(verdicts=[])
+        return item_writing.Verdicts(verdicts=[item_writing.Verdict(id="ku-a-basic", ok=True)])
 
     monkeypatch.setattr(question_writing, "structured", write)
     monkeypatch.setattr(item_writing, "structured", critic)
     _, deck = read_deck(make_pdf(tmp_path / "d.pdf", ["Alpha page"]), tmp_path / "w", "d8")
     payload = {"item_id": "as-ku-a-basic-1", "ku": uku("ku-a", slides=[1]).model_dump(mode="json"), "prereq_titles": [], "tier": "basic", "beta": -1.0}
     out = upload_jobs.run_question_job(payload, deck, log=lambda m: None)
-    assert len(prompts) == 2 and "material the student has not seen ('The diagram')" in prompts[1]
+    assert len(prompts) == 2 and "material the student has not seen ('The slide')" in prompts[1]
     assert "has never seen these slides" in prompts[0]
     assert out["item"]["stem"] == good.stem and out["flags"] == []
     assert all("pre-lecture questions" in s for s in critic_systems)

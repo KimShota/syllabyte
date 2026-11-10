@@ -1,5 +1,7 @@
 "use client";
 
+import { QuestionText } from "@/components/QuestionText";
+
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "@syllabyte/core/api/client";
 import { useQuery } from "@/lib/api/hooks";
@@ -76,11 +78,11 @@ export function AdaptiveQuiz({
 
           <section aria-labelledby="q-stem" className="mt-4 rounded-card border border-line bg-surface p-5">
             <p className="eyebrow !text-primary">{cur.lecture_title}</p>
-            <h2 id="q-stem" className="mb-4 mt-2 text-card font-extrabold leading-[1.3]">{cur.item.stem}</h2>
+            <h2 id="q-stem" className="mb-4 mt-2 text-card font-extrabold leading-[1.3]"><QuestionText>{cur.item.stem}</QuestionText></h2>
             <div role="group" aria-labelledby="q-stem" className="flex flex-col gap-2.5">
               {cur.item.options.map((o, i) => (
                 <ChoiceCard key={i} selected={picked === i} onClick={() => setSel({ itemId: cur.item.id, choice: i })}>
-                  {o}
+                  <QuestionText>{o}</QuestionText>
                 </ChoiceCard>
               ))}
               {cur.item.allows_not_sure && (

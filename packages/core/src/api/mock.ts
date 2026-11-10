@@ -299,9 +299,10 @@ const failed = (need: QuestionNeed) => (fixtures().question_failures ?? []).some
  * The questions to write now for this student (V4): for the check that is due and any check they are in the middle
  * of, the one it waits for and nothing ahead of it. The server queues them after each of the student's requests.
  */
-export function questionNeedsNow(): QuestionNeed[] {
+export function questionNeedsNow(openedSitting?: string): QuestionNeed[] {
   if (!cfg().questions_on_demand) return [];
   const ids = new Set(Object.values(S().sittings).filter((st) => !st.finished_at && !st.skipped).map((st) => st.id));
+  if (openedSitting) ids.add(openedSitting);
   const due = precheck();
   if (due) ids.add(due.sitting_id);
   const out: QuestionNeed[] = [];
@@ -312,6 +313,16 @@ export function questionNeedsNow(): QuestionNeed[] {
     }
   }
   return out;
+}
+
+/** Lectures whose checks are due or open: warm their tier banks before an answer needs the next question. */
+export function questionBankLectures(openedSitting?: string): number[] {
+  if (!cfg().questions_on_demand) return [];
+  const ids = new Set(Object.values(S().sittings).filter((st) => !st.finished_at && !st.skipped).map((st) => st.id));
+  if (openedSitting) ids.add(openedSitting);
+  const due = precheck();
+  if (due) ids.add(due.sitting_id);
+  return [...new Set([...ids].flatMap((id) => planOf(id).slots.flatMap((slot) => slot.role === "new" && slot.lecture_n !== null ? [slot.lecture_n] : [])))];
 }
 
 /** The check before the upcoming lecture's videos, when one is due. */

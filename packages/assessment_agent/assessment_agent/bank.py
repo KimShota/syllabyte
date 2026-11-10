@@ -86,23 +86,11 @@ def tier_difficulties(ku_difficulty: float) -> dict[ItemTier, float]:
     return order_tiers({t: tier_beta(t, ku_difficulty) for t in TIERS})
 
 
-MAX_STEM_WORDS = 30
-# the keyed option is a giveaway when it is this much longer than the longest wrong one
-MAX_KEY_LENGTH_RATIO = 1.2
-# "the diagram", "this figure", "the house example": material a student who has not had the lecture never saw ("the
-# examples" is left alone: it is how a stem refers back to the data it describes)
-_UNSEEN_MATERIAL = re.compile(
-    r"\b(the|this|that|these)\s+(?:[\w-]+\s+){0,2}?(slides?|diagrams?|figures?|panels?|charts?|plots?|graphs?|tables?|images?|pictures?|illustrations?|example)\b",
-    re.IGNORECASE,
-)
+MAX_STEM_WORDS = 90
+# Slide-dependent wording is never self-contained. Whether a graph/table/example is
+# fully described in the question is checked by the reviewer, not a keyword blacklist.
+_UNSEEN_MATERIAL = re.compile(r"\b(?:the|this|that|these)\s+(?:[\w-]+\s+){0,2}?slides?\b", re.IGNORECASE)
 
-
-# specialist notation a general reader cannot follow: Greek letters, maths symbols, subscripts, "Y1 - Y0", and a lone
-# letter standing for something ("the experience E", "the mapping f"); "A" and "I" are words, and a letter in quotes
-# or after "Plan"/"vitamin" is rare enough in a pre-check to send back anyway
-_NOTATION = re.compile(r"[\u0370-\u03ff=^_∑√≤≥≈∈∀∃→←|]|\b[A-Za-z]\d\b|(?<![\w'’-])(?![AaI]\b)[A-Za-z](?![\w'’-])")
-# words that mark an option as wrong to a student who knows how tests work, whatever the idea
-_ABSOLUTE = re.compile(r"\b(always|never|only|guaranteed?|guarantees|nothing|none|cannot|impossible|entirely|completely)\b", re.IGNORECASE)
 # a sentence that ends cleanly: one full stop, question mark or exclamation mark, then at most a closing quote or bracket
 _CLEAN_END = re.compile(r"[^.?!][.?!][\"'”’)\]]?$")
 
@@ -115,30 +103,17 @@ def mcq_problems(m: BankMCQ) -> list[str]:
     if not m.stem.strip().endswith("?"):
         # the model likes to end an advanced stem on a claim with no question, so the student has to guess the task
         out.append("the stem must end with a question that tells the student what to do")
-    if len(m.stem.split()) > MAX_STEM_WORDS:
-        out.append(f"the stem has {len(m.stem.split())} words; keep it to {MAX_STEM_WORDS} or fewer")
-    refs = sorted({hit.group(0) for text in (m.stem, *m.options) for hit in _UNSEEN_MATERIAL.finditer(text)})
+    prose = re.sub(r"```[^\n]*\n[\s\S]*?```", "", m.stem)
+    if len(prose.split()) > MAX_STEM_WORDS:
+        out.append(f"the stem has {len(prose.split())} words; keep it to {MAX_STEM_WORDS} or fewer")
+    refs = sorted({hit.group(0) for text in (prose, *m.options) for hit in _UNSEEN_MATERIAL.finditer(text)})
     if refs:
         out.append(
             f"the question points at material the student has not seen ({', '.join(repr(r) for r in refs)}); "
             "describe the case in the stem instead"
         )
-    key = len(m.options[m.correct_index])
-    longest_wrong = max(len(o) for i, o in enumerate(m.options) if i != m.correct_index)
-    if key > MAX_KEY_LENGTH_RATIO * longest_wrong:
-        out.append("the right option is clearly the longest; make the three options about the same length and detail")
-    notation = sorted({hit.group(0) for text in (m.stem, *m.options) for hit in _NOTATION.finditer(text)})
-    if notation:
-        out.append(
-            f"the question uses specialist notation ({', '.join(repr(n) for n in notation)}); say it in plain words a "
-            "general reader would understand"
-        )
-    marked = sorted({w.group(0).lower() for i, o in enumerate(m.options) if i != m.correct_index for w in _ABSOLUTE.finditer(o)})
-    if marked and not _ABSOLUTE.search(m.options[m.correct_index]):
-        out.append(
-            f"the wrong options use absolute words ({', '.join(repr(w) for w in marked)}) that the right one avoids; "
-            "word all three in the same measured way"
-        )
+    # Length balance and absolute words are semantic review concerns. Formula lengths differ
+    # naturally, and quantifiers/negations are often exactly what a logic question tests.
     for name, text in (("explanation", m.explanation), ("hint", m.hint)):
         if text is not None and not _CLEAN_END.search(text.strip()):
             out.append(f"the {name} must be complete sentences ending in one full stop or question mark, with nothing after it")

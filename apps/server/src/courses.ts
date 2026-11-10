@@ -200,9 +200,9 @@ export class Courses {
     this.touched(deck.course_id);
   }
 
-  /** Questions written on demand (V4), oldest first. */
+  /** Approved bank and fallback questions, oldest first. Previously flagged items are not served. */
   questions(courseId: string): { id: string; deck_id: string; ku_id: string; tier: ItemTier; item: Item }[] {
-    const rows = this.db.prepare("SELECT id, deck_id, ku_id, tier, item_json FROM questions WHERE course_id = ? ORDER BY created_at, id").all(courseId) as {
+    const rows = this.db.prepare("SELECT id, deck_id, ku_id, tier, item_json FROM questions WHERE course_id = ? AND json_array_length(flags_json) = 0 ORDER BY created_at, id").all(courseId) as {
       id: string; deck_id: string; ku_id: string; tier: ItemTier; item_json: string;
     }[];
     return rows.map((r) => ({ id: r.id, deck_id: r.deck_id, ku_id: r.ku_id, tier: r.tier, item: JSON.parse(r.item_json) as Item }));
@@ -217,10 +217,11 @@ export class Courses {
 
   /** Questions the worker gave up on: a check waiting for one says so (V4). */
   questionFailures(courseId: string): QuestionNeed[] {
-    const rows = this.db.prepare("SELECT target_id FROM jobs WHERE course_id = ? AND kind = 'question' AND status = 'failed'").all(courseId) as { target_id: string }[];
-    return rows.map((r) => {
+    const rows = this.db.prepare("SELECT kind, target_id FROM jobs WHERE course_id = ? AND kind IN ('question', 'question_bank') AND status = 'failed'").all(courseId) as { kind: string; target_id: string }[];
+    return rows.flatMap((r) => {
+      if (r.kind === "question_bank") return (["basic", "applied", "advanced"] as ItemTier[]).map((tier) => ({ ku_id: r.target_id, tier }));
       const [ku_id, tier] = r.target_id.split("|");
-      return { ku_id, tier: tier as ItemTier };
+      return [{ ku_id, tier: tier as ItemTier }];
     });
   }
 

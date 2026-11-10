@@ -43,7 +43,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const UPDATED_VERSION_SHARE = 0.5;
 const TIERS: ItemTier[] = ["basic", "applied", "advanced"];
 /** a student's check is waiting for these */
-const PRIORITY = { question: -10, preview: -5, deck_read: 1, placement: 2, syllabus: 0, deck: 10, video: 20, link_pass: 50 } as const;
+const PRIORITY = { question: -10, question_bank: -8, preview: -5, deck_read: 1, placement: 2, syllabus: 0, deck: 10, video: 20, link_pass: 50 } as const;
 /** the files a video job uploads before its result (the worker's PUT /api/worker/jobs/:id/files/:name) */
 export const VIDEO_FILES = ["video.mp4", "poster.jpg", "captions.vtt"] as const;
 export type VideoFileName = (typeof VIDEO_FILES)[number];
@@ -57,7 +57,7 @@ export class UploadError extends Error {
   }
 }
 
-export type JobKind = "syllabus" | "deck_read" | "placement" | "deck" | "question" | "link_pass" | "video" | "preview";
+export type JobKind = "syllabus" | "deck_read" | "placement" | "deck" | "question" | "link_pass" | "video" | "preview" | "question_bank";
 interface JobRow {
   id: string;
   kind: JobKind;
@@ -722,10 +722,15 @@ export class Uploads {
   // ------------------------------------------------------------------ questions written on demand (V4)
 
   /** After a student's request: queue the questions their checks need that nobody is writing yet. */
-  requestQuestions(userId: string, needs: QuestionNeed[]): void {
+  requestQuestions(userId: string, needs: QuestionNeed[], lectures: number[] = []): void {
     const courseId = this.courses.courseOf(userId);
-    if (!courseId || !needs.length) return;
+    if (!courseId) return;
+    const fx = this.courses.fixtures(courseId);
+    const wanted = new Set([...lectures, ...needs.flatMap((n) => fx.course.kus.filter((k) => k.id === n.ku_id).map((k) => k.lecture_n))]);
+    for (const lecture of wanted) this.prepareQuestionBanks(courseId, lecture);
     for (const need of needs) {
+      // A bank covers all possible next tiers. Give a waiting student's KU first priority.
+      this.db.prepare("UPDATE jobs SET priority = -12 WHERE course_id = ? AND kind = 'question_bank' AND target_id = ? AND status = 'queued'").run(courseId, need.ku_id);
       const busy = this.db
         .prepare("SELECT 1 FROM jobs WHERE course_id = ? AND kind = 'question' AND target_id = ? AND status IN ('queued', 'claimed', 'failed')")
         .get(courseId, questionKey(need));
@@ -733,10 +738,21 @@ export class Uploads {
     }
   }
 
+  /** One reviewed bank per KU of the upcoming/open lecture, shared by all its students. */
+  private prepareQuestionBanks(courseId: string, lecture: number): void {
+    const fx = this.courses.fixtures(courseId);
+    for (const ku of fx.course.kus.filter((k) => k.lecture_n === lecture)) {
+      if (TIERS.every((tier) => fx.items.some((i) => i.context === "assessment" && i.ku_id === ku.id && i.tier === tier))) continue;
+      const job = this.db.prepare("SELECT 1 FROM jobs WHERE course_id = ? AND kind = 'question_bank' AND target_id = ? AND status IN ('queued', 'claimed', 'failed')").get(courseId, ku.id);
+      if (!job) this.enqueue("question_bank", ku.id, courseId);
+    }
+  }
+
   /** "Try again" on a check stuck on a question the worker gave up on. */
   retryQuestion(userId: string, need: QuestionNeed): void {
     const courseId = this.courses.courseOf(userId);
     if (!courseId) throw new UploadError("You have no course yet.", 404);
+    this.db.prepare("UPDATE jobs SET status = 'queued', priority = -12, attempts = 0, error = NULL, finished_at = NULL WHERE course_id = ? AND kind = 'question_bank' AND target_id = ? AND status = 'failed'").run(courseId, need.ku_id);
     this.db
       .prepare("UPDATE jobs SET status = 'queued', attempts = 0, error = NULL, finished_at = NULL WHERE course_id = ? AND kind = 'question' AND target_id = ? AND status = 'failed'")
       .run(courseId, questionKey(need));
@@ -761,7 +777,7 @@ export class Uploads {
     const entry = fx.course.kus.find((k) => k.id === kuId)!;
     const own = fx.items.filter((i) => i.ku_id === kuId && i.context === "assessment");
     const sameTier = own.filter((i) => i.tier === tier).length;
-    const ids = new Set(fx.items.map((i) => i.id));
+    const ids = new Set((this.db.prepare("SELECT id FROM questions").all() as { id: string }[]).map((i) => i.id));
     let k = sameTier + 1;
     while (ids.has(`as-${kuId}-${tier}-${k}`)) k += 1;
     const rank = [...fx.course.kus.map((x) => x.id)].sort().indexOf(kuId);
@@ -780,6 +796,7 @@ export class Uploads {
   }
 
   private questionResult(j: JobRow, r: { item?: Item; flags?: unknown[] }): void {
+    if (!Array.isArray(r.flags) || r.flags.length) throw new UploadError("Questions must pass review before publication.");
     const [kuId, tier] = j.target_id.split("|");
     const item = r.item;
     if (!item || item.ku_id !== kuId || item.tier !== tier || item.context !== "assessment" || !Array.isArray(item.options) || item.options.length < 3) {
@@ -789,7 +806,60 @@ export class Uploads {
     const found = this.kuOf(j.course_id!, kuId);
     if (!found) return;
     if (this.db.prepare("SELECT 1 FROM questions WHERE id = ?").get(item.id)) return;
-    this.courses.addQuestion(j.course_id!, found.deck.id, item, Array.isArray(r.flags) ? r.flags : []);
+    this.courses.addQuestion(j.course_id!, found.deck.id, { ...item, hint: null }, []);
+  }
+
+  private questionBankPayload(j: JobRow): Record<string, unknown> {
+    const found = this.kuOf(j.course_id!, j.target_id);
+    if (!found) throw new UploadError("No such knowledge unit.", 404);
+    const fx = this.courses.fixtures(j.course_id!);
+    const entry = fx.course.kus.find((k) => k.id === j.target_id)!;
+    const rank = fx.course.kus.map((k) => k.id).sort().indexOf(entry.id);
+    const titles = new Map(fx.course.kus.map((k) => [k.id, k.title]));
+    return { deck_id: found.deck.id, ku: found.ku,
+      prereq_titles: entry.prerequisites.map((p) => titles.get(p)).filter(Boolean),
+      avoid: fx.items.filter((i) => i.context === "assessment" && i.ku_id === entry.id).map((i) => i.stem),
+      questions: TIERS.map((tier, i) => ({ item_id: `as-${j.course_id}-${entry.id}-${tier}-bank-${j.id}`, tier,
+        beta: tierDifficulty(entry, fx.items)[tier], target_index: (rank + i) % 3 })),
+    };
+  }
+
+  private questionBankResult(j: JobRow, r: { items?: Item[]; flags?: unknown[] }): void {
+    if (!Array.isArray(r.flags) || r.flags.length) throw new UploadError("Questions must pass review before publication.");
+    if (!Array.isArray(r.items) || r.items.length !== 3 || r.items.some((i) => !i || typeof i !== "object")) throw new UploadError("A bank needs exactly three tier questions.");
+    if (new Set(r.items.map((i) => typeof i.stem === "string" ? i.stem.trim().toLowerCase().replace(/\s+/g, " ") : "")).size !== 3) throw new UploadError("A bank needs three different questions.");
+    const found = this.kuOf(j.course_id!, j.target_id);
+    if (!found) throw new UploadError("No such knowledge unit.", 404);
+    const fx = this.courses.fixtures(j.course_id!);
+    const betas = tierDifficulty(fx.course.kus.find((k) => k.id === j.target_id)!, fx.items);
+    for (const tier of TIERS) {
+      const items = r.items.filter((i) => i.tier === tier);
+      const item = items[0];
+      if (items.length !== 1 || item.id !== `as-${j.course_id}-${j.target_id}-${tier}-bank-${j.id}` || item.ku_id !== j.target_id ||
+        item.context !== "assessment" || !Array.isArray(item.options) || item.options.length !== 3 ||
+        item.options.some((o) => typeof o !== "string" || !o.trim()) || new Set(item.options.map((o) => o.trim())).size !== 3 ||
+        !Number.isInteger(item.correct_index) || item.correct_index < 0 || item.correct_index > 2 ||
+        typeof item.stem !== "string" || !item.stem.trim() || typeof item.explanation !== "string" || !item.explanation.trim() ||
+        !Array.isArray(item.source_refs) || !item.source_refs.length || item.source_refs.some((ref) => !ref || ref.deck_name !== found.deck.id || !Number.isInteger(ref.slide_number) || ref.slide_number < 1 || ref.slide_number > parseOf(found.deck).page_count)) {
+        throw new UploadError("A bank question has invalid content, identity, tier or slide references.");
+      }
+    }
+    this.db.exec("SAVEPOINT publish_question_bank");
+    try {
+      const approved = this.courses.questions(j.course_id!);
+      for (const item of r.items) {
+        if (!approved.some((i) => i.ku_id === item.ku_id && i.tier === item.tier)) {
+          this.courses.addQuestion(j.course_id!, found.deck.id, { ...item, hint: null, difficulty_prior: betas[item.tier!], discrimination: 1 }, []);
+        }
+        // Satisfy queued cold-start requests without running a duplicate model call.
+        this.db.prepare("UPDATE jobs SET status = 'done', finished_at = ?, error = NULL WHERE course_id = ? AND kind = 'question' AND target_id = ? AND status IN ('queued', 'failed')").run(this.now(), j.course_id, questionKey({ ku_id: j.target_id, tier: item.tier! }));
+      }
+      this.db.exec("RELEASE publish_question_bank");
+    } catch (error) {
+      this.db.exec("ROLLBACK TO publish_question_bank; RELEASE publish_question_bank");
+      this.courses.touched(j.course_id!);
+      throw error;
+    }
   }
 
   // ------------------------------------------------------------------ the job queue
@@ -838,8 +908,12 @@ export class Uploads {
     const queued = this.db.prepare("SELECT * FROM jobs WHERE status = 'queued' ORDER BY priority, created_at").all() as unknown as JobRow[];
     for (const j of queued) {
       // Older workers do not know how to render previews. New workers advertise supported kinds explicitly.
-      if (j.kind === "preview" && !kinds?.includes("preview")) continue;
+      if ((j.kind === "preview" || j.kind === "question_bank") && !kinds?.includes(j.kind)) continue;
       if (kinds?.length && !kinds.includes(j.kind)) continue;
+      if (j.kind === "question") {
+        const bank = this.db.prepare("SELECT status FROM jobs WHERE course_id = ? AND kind = 'question_bank' AND target_id = ? AND status IN ('queued', 'claimed')").get(j.course_id, j.target_id.split("|")[0]) as { status: string } | undefined;
+        if (bank && (bank.status === "claimed" || kinds?.includes("question_bank"))) continue;
+      }
       if (!this.claimable(j)) continue;
       let payload: Record<string, unknown>;
       try {
@@ -873,7 +947,7 @@ export class Uploads {
       const d = this.courses.deck(j.target_id)!;
       return { path: d.file_path, name: d.file_name };
     }
-    if (j.kind === "question" || j.kind === "video") {
+    if (j.kind === "question" || j.kind === "question_bank" || j.kind === "video") {
       const found = this.kuOf(j.course_id!, j.target_id.split("|")[0]);
       return found ? { path: found.deck.file_path, name: found.deck.file_name } : null;
     }
@@ -890,6 +964,7 @@ export class Uploads {
     if (j.kind === "syllabus") return { upload_id: j.target_id };
     if (j.kind === "placement") return this.placementPayload(j.target_id);
     if (j.kind === "question") return this.questionPayload(j);
+    if (j.kind === "question_bank") return this.questionBankPayload(j);
     if (j.kind === "video") return this.videoPayload(j);
     const course = this.courses.get(j.course_id!)!;
     if (j.kind === "deck_read") {
@@ -936,6 +1011,7 @@ export class Uploads {
     else if (j.kind === "placement") this.placementResult(j, result as { order: string[]; unsure: string[] });
     else if (j.kind === "deck") this.deckResult(j, result as unknown as DeckResult);
     else if (j.kind === "question") this.questionResult(j, result as { item?: Item; flags?: unknown[] });
+    else if (j.kind === "question_bank") this.questionBankResult(j, result as { items?: Item[]; flags?: unknown[] });
     else if (j.kind === "video") this.videoResult(j, result as unknown as VideoResult);
     else this.courses.addLinks(j.course_id!, ((result.links ?? []) as { ku_id: string; prereq_id: string }[]).filter((l) => l.ku_id && l.prereq_id));
     this.finish(jobId);
@@ -950,6 +1026,9 @@ export class Uploads {
     if (!Array.isArray(r.kus)) throw new UploadError("a deck result needs kus");
     const result: DeckResult = { kus: r.kus, items: Array.isArray(r.items) ? r.items : [] };
     this.courses.setDeckResult(j.target_id, result);
+    const fx = this.courses.fixtures(j.course_id!);
+    const first = fx.course.lectures.find((l) => fx.course.kus.some((k) => k.lecture_n === l.n));
+    if (first) this.prepareQuestionBanks(j.course_id!, first.n);
     const deck = this.courses.deck(j.target_id)!;
     const lectures = this.courses.lectures(deck.course_id);
     const rank = new Map(lectures.map((l, i) => [l.id, i]));
@@ -993,7 +1072,7 @@ export class Uploads {
     } else if (j.kind === "deck") {
       this.db.prepare("UPDATE decks SET status = 'failed', error = ? WHERE id = ?").run(shown, j.target_id);
       this.courses.touched(j.course_id!);
-    } else if (j.kind === "question") this.courses.touched(j.course_id!);
+    } else if (j.kind === "question" || j.kind === "question_bank") this.courses.touched(j.course_id!);
     else if (j.kind === "video") this.setVideoStatus(j, "failed");
   }
 
@@ -1005,7 +1084,7 @@ export class Uploads {
     if (j.kind === "deck") this.db.prepare("UPDATE decks SET status = 'queued', error = NULL WHERE id = ?").run(j.target_id);
     if (j.kind === "syllabus") this.db.prepare("UPDATE syllabus_uploads SET status = 'reading', error = NULL WHERE id = ?").run(j.target_id);
     if (j.kind === "deck_read") this.db.prepare("UPDATE deck_uploads SET status = 'reading', outcome = NULL, error = NULL WHERE id = ?").run(j.target_id);
-    if (j.kind === "question") this.courses.touched(j.course_id!);
+    if (j.kind === "question" || j.kind === "question_bank") this.courses.touched(j.course_id!);
     if (j.kind === "video") this.setVideoStatus(j, "waiting");
   }
 

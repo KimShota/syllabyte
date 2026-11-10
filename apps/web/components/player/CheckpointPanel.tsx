@@ -1,5 +1,7 @@
 "use client";
 
+import { QuestionText } from "@/components/QuestionText";
+
 import { useEffect, useRef, useState } from "react";
 import { api } from "@syllabyte/core/api/client";
 import { track } from "@/lib/events";
@@ -62,12 +64,12 @@ export function CheckpointPanel({
   return (
     <section aria-labelledby="cp-stem" className="slide-in rounded-card border-2 border-primary bg-surface p-5">
       <p className="eyebrow !text-primary">Video paused · quick check</p>
-      <h2 id="cp-stem" ref={headRef} tabIndex={-1} className="mb-4 mt-2 text-card font-extrabold leading-[1.3] outline-none">{item.stem}</h2>
+      <h2 id="cp-stem" ref={headRef} tabIndex={-1} className="mb-4 mt-2 text-card font-extrabold leading-[1.3] outline-none"><QuestionText>{item.stem}</QuestionText></h2>
 
       <div role="group" aria-labelledby="cp-stem" className="flex flex-col gap-2.5">
         {item.options.map((o, i) => (
           <ChoiceCard key={i} selected={choice === i} state={stateOf(i)} disabled={revealed} onClick={() => setChoice(i)}>
-            {o}
+            <QuestionText>{o}</QuestionText>
           </ChoiceCard>
         ))}
       </div>
@@ -83,7 +85,7 @@ export function CheckpointPanel({
       {!revealed && item.hint && variant.level !== 3 && (
         <div className="mt-4">
           {hintOpen ? (
-            <p className="rounded-btn bg-ink/[0.045] px-4 py-3 text-body"><span className="font-bold">Hint: </span>{item.hint}</p>
+            <p className="rounded-btn bg-ink/[0.045] px-4 py-3 text-body"><span className="font-bold">Hint: </span><QuestionText>{item.hint}</QuestionText></p>
           ) : (
             <TextLink onClick={() => { setHintOpen(true); track("hint_used", { type: "item", id: item.id }); }}>Show a hint</TextLink>
           )}
@@ -93,8 +95,8 @@ export function CheckpointPanel({
       {revealed ? (
         <div className="slide-in mt-4" role="status">
           <p className={`text-card font-extrabold ${result.correct ? "text-new-fg" : "text-gap-fg"}`}>{result.correct ? "Right" : "Not quite"}</p>
-          {!result.correct && <p className="mt-1 text-body"><span className="text-muted">Right answer: </span>{item.options[item.correct_index]}</p>}
-          <p className="mt-2 text-body text-ink/85">{item.explanation}</p>
+          {!result.correct && <p className="mt-1 text-body"><span className="text-muted">Right answer: </span><QuestionText>{item.options[item.correct_index]}</QuestionText></p>}
+          <p className="mt-2 text-body text-ink/85"><QuestionText>{item.explanation}</QuestionText></p>
           {result.queued && (
             <p className="mt-3 rounded-btn bg-new-bg px-4 py-3 text-body text-new-fg">
               You got it, but you said you were guessing. We&apos;ll check this again tomorrow.
