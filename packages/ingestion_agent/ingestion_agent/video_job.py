@@ -13,9 +13,10 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
-from animation_agent.ui_manifest import build_ui_manifest
+from animation_agent.ui_manifest import build_ui_manifest, checkpoint_segment_index, source_slide_numbers
 from assessment_agent.video_app_data import (
     balance_positions,
     generate_video_gen,
@@ -68,20 +69,35 @@ def run_video_job(
         if missing := missing_latex_tools():
             raise RuntimeError(f"LaTeX is missing on this machine ({', '.join(missing)}), so formulas can't render")
         make_video = pipeline_make_video()
-    log(f"video {ku.id} at level {level}: making it")
-    final = make_video(
-        ku, corpus, ku_dir, manifest=manifest, level=level, prereq_titles=[p["title"] for p in prereqs], style="dialogue",
-        visuals="templates",
-    )
-    if final is None:
-        raise RuntimeError(f"{ku.id}: a segment fell back to the caption template, so the video was not assembled")
-
-    manifest_ui = build_ui_manifest(ku_dir)
-    script = json.loads((ku_dir / "script.json").read_text())
     by_n = {s.slide_number: s for s in deck.slides}
-    slides = [by_n[n] for n in manifest_ui["source_slides"] if n in by_n]
-    log(f"video {ku.id}: writing its questions and claims")
-    gen, flags = generate_video_gen(ku, script, manifest_ui, slides_material(slides), model=model, critic_model=critic_model, manifest=manifest, log=log)
+
+    def write_gen(script_path: Path) -> tuple:
+        """The questions, frame and claims. They need only the script (its checkpoint segment and the slides it cites),
+        not the voices or the render, so they are written beside them."""
+        script = json.loads(Path(script_path).read_text())
+        slides = [by_n[n] for n in source_slide_numbers(script) if n in by_n]
+        log(f"video {ku.id}: writing its questions and claims")
+        return generate_video_gen(
+            ku, script, {"checkpoint_times": {"segment_idx": checkpoint_segment_index(script)}}, slides_material(slides),
+            model=model, critic_model=critic_model, manifest=manifest, log=log,
+        )
+
+    pool = ThreadPoolExecutor(max_workers=1)
+    early: list[Future] = []
+    log(f"video {ku.id} at level {level}: making it")
+    try:
+        final = make_video(
+            ku, corpus, ku_dir, manifest=manifest, level=level, prereq_titles=[p["title"] for p in prereqs], style="dialogue",
+            visuals="templates", on_script=lambda path: early.append(pool.submit(write_gen, path)),
+        )
+        if final is None:
+            raise RuntimeError(f"{ku.id}: a segment fell back to the caption template, so the video was not assembled")
+        manifest_ui = build_ui_manifest(ku_dir)
+        script = json.loads((ku_dir / "script.json").read_text())
+        # a pipeline that did not call on_script (or reused nothing) writes them now, as before
+        gen, flags = early[0].result() if early else write_gen(ku_dir / "script.json")
+    finally:
+        pool.shutdown(wait=True)
 
     refs = [SlideRef(deck_name=deck.name, slide_number=n) for n in manifest_ui["source_slides"]]
     items = video_items(ku.id, payload["topic_id"], gen, refs)
