@@ -832,6 +832,32 @@ wrong edge or route is ghost_edge."""
 
 
 MODULES: dict[str, Module] = {m.name: m for m in (
+    Module("slope_fields", frozenset({"slope_field"}), "", None,
+           "Use SlopeField for dy/dx=f(x,y). State the equation and initial condition from the materials. "
+           "The direction segments indicate slopes, not velocity vectors. Call solution only on the line that "
+           "reveals it, and call it an approximate numerical solution. A stopped curve is a domain, frame, or "
+           "numerical limit, not proof that the mathematical solution ends. Use the full frame; show formulas separately."),
+    Module("geometry", frozenset({"geometry"}), "", None,
+           "Use GeometryConstruction and its computed midpoint, bisector, perpendicular and intersection actions. "
+           "Never guess intersection coordinates. Name all intersections in x-then-y order; a tangent has one, "
+           "disjoint constructions have none. Circles and segments use equal scales. State which construction "
+           "is added on each line; reveal a requested point only after the learner predicts it. Use the full frame."),
+    Module("spatial_math", frozenset({"vectors_3d"}), "", None,
+           "Use Scene3D with explicit source coordinates, a nonzero plane normal, or z=f(x,y). Choose the smallest extent "
+           "that holds what the lesson discusses (for a region 0<=x,y<=1, about 1.5): a larger extent shrinks the picture. Cross computes "
+           "first cross second; reversing the order reverses its direction. Explain that this is an orthographic "
+           "projection: screen angles and lengths do not generally equal 3D angles and lengths. The wireframe "
+           "is transparent; crossing wires need not intersect in space. Rotate with view to expose depth. "
+           "Approximate coordinate labels use ≈. Use the full frame; no implicit surfaces or hidden-face claims."),
+    Module("references", frozenset({"memory_refs"}), "", None,
+           "Use MemoryRefs with stable object IDs. Aliases point to the same ID; mutation changes its value "
+           "for all aliases. Copy creates a distinct object, then bind explicitly changes a variable's target. "
+           "This is a value copy, not a recursive deep-copy demonstration. Reveal each change on its answering line."),
+    Module("finite_sets", frozenset({"sets_logic"}), "", None,
+           "Use VennDiagram with an explicit finite universe (up to 12 elements; at most 4 in each region and 6 outside "
+           "both) and two subsets. Let shade compute membership. "
+           "Complements are relative to that universe. Circle areas are schematic and do not show counts or "
+           "probabilities. Keep the operation unshaded until its answer is given; three-set diagrams are unsupported."),
     Module("boxes", frozenset({"flowchart", "call_tree", "state_machine"}),
            "Recursion: the calls fib(3) makes, and why fib(1) is worked out twice", BOXES, BOXES_RULES),
     Module("bars", frozenset({"bar_meter", "probability", "series"}),

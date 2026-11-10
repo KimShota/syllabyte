@@ -22,7 +22,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from animation_agent.visuals.families import FAMILIES, is_gap, main_template, templates_for
+from animation_agent.visuals.families import DRAWN_BY, FAMILIES, is_gap, main_template, templates_for
+from animation_agent.visuals.specs import TEMPLATES_VERSION
 from syllabyte_common.llm import DEFAULT_MODEL, structured, text_block
 from syllabyte_common.models import KnowledgeUnit, RunManifest
 
@@ -30,7 +31,8 @@ Family = Literal[tuple(FAMILIES) + ("none",)]  # type: ignore[valid-type]
 
 CACHE = Path(os.environ.get("PICTURE_PLAN_CACHE", "runs/picture-plans.json"))
 # Part of the cache key: a new family list classifies every KU again.
-FAMILIES_VERSION = hashlib.sha256(json.dumps(FAMILIES, sort_keys=True).encode()).hexdigest()[:8]
+# a new template (or family) changes saved picture plans, so they are made again
+FAMILIES_VERSION = hashlib.sha256(json.dumps([FAMILIES, DRAWN_BY, TEMPLATES_VERSION], sort_keys=True).encode()).hexdigest()[:8]
 _LOCK = threading.Lock()
 
 

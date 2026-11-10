@@ -136,7 +136,9 @@ def test_a_dfs_lesson_gets_the_graph_not_the_list():
     assert "main picture is graphs" in system
 
 
-def test_a_missing_template_is_said_and_nothing_is_borrowed():
+def test_a_missing_template_is_said_and_nothing_is_borrowed(monkeypatch):
+    from animation_agent.visuals import families
+    monkeypatch.delitem(families.DRAWN_BY, "vectors_3d")  # every family has a template now; pretend one has none
     assert templates_for("vectors_3d") == ["EquationSteps", "Note"]
     brief = picture_brief("vectors_3d", templates_for("vectors_3d"))
     assert "No template draws" in brief and "wrong picture" in brief

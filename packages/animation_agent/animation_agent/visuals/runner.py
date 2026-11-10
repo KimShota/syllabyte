@@ -36,10 +36,12 @@ from animation_agent.visuals.note import Note
 from animation_agent.visuals.number_line import NumberLine
 from animation_agent.visuals.specs import REGISTRY
 from animation_agent.visuals.table import Table
+from animation_agent.visuals.diagrams import MemoryRefs, VennDiagram
+from animation_agent.visuals.advanced_math import SlopeField, GeometryConstruction, Scene3D
 
 CLASSES: dict[str, type[Template]] = {cls.spec.name: cls for cls in (
     ArrayBars, MergeSort, Graph, BarChart, NumberLine, Table, LinkedList, StackQueue, HashTable, BinaryTree,
-    FunctionPlot, LinearMap2D, EquationSteps, Note)}
+    FunctionPlot, LinearMap2D, EquationSteps, Note, MemoryRefs, VennDiagram, SlopeField, GeometryConstruction, Scene3D)}
 assert set(CLASSES) == set(REGISTRY), "every spec needs a drawing class"
 
 BEAT_FILL = 0.8  # share of a beat's narration the animations may take

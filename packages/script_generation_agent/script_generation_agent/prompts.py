@@ -582,6 +582,7 @@ beat saying what an animator should draw. Otherwise `sketches` is [].
 def picture_brief(family: str | None, templates: list[str]) -> str:
     """What the storyboard is told about its picture: which kind the idea needs, and what draws it."""
     from animation_agent.visuals.families import ALWAYS, FAMILIES, is_gap, main_template
+    from animation_agent.visuals.specs import REGISTRY
 
     if family is None:
         return ""
@@ -591,6 +592,10 @@ def picture_brief(family: str | None, templates: list[str]) -> str:
         line = (f"This idea's main picture is {what}. Draw it with {main}, created early and kept on screen as the "
                 "picture the video keeps coming back to; formulas (EquationSteps) and short notes (Note) can sit "
                 "beside it. Use only the templates below.")
+        if REGISTRY[main].min_rows == 6:
+            line = (f"This idea's main picture is {what}. Draw it with {main}. It needs the whole frame: "
+                    "remove it before showing formulas or notes, then recreate it when returning to the diagram. "
+                    "Never put another template beside it. Use only the templates below.")
     elif family in ("equation_steps", "proof_steps", "matrix_ops"):
         line = (f"This idea's main picture is {what}: draw it with EquationSteps, each step a formula being "
                 "written, rewritten, highlighted or boxed. Use only the templates below.")

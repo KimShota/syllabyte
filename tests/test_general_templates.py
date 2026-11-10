@@ -168,7 +168,9 @@ def test_the_picture_kinds_the_templates_now_draw():
                              "probability": "BarChart", "number_line": "NumberLine", "dp_table": "Table",
                              "bits_logic": "Table", "polar_parametric": "FunctionPlot"}.items():
         assert main_template(family) == template, family
-    assert "vectors_3d" not in DRAWN_BY and "geometry" not in DRAWN_BY  # still drawn with formulas
+    assert main_template("vectors_3d") == "Scene3D"
+    assert main_template("geometry") == "GeometryConstruction"
+    assert main_template("slope_field") == "SlopeField"
 
 
 def test_bars_from_a_formula_and_a_whole_deck():

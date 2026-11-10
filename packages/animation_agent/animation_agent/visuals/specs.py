@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 # Bump when a template draws differently (or the call language changes): it is part of the cache key of every
 # video drawn with templates (syllabyte_common.video_jobs.video_key), so those videos are made again.
-TEMPLATES_VERSION = "9"  # 9: steps spread through their line, ghost_turn and ghost_mark (8: BinaryTree _step actions (one comparison or swap per call), traced data structure examples (7: BarChart, NumberLine, Table, Graph boxes/edge labels/tree+flow/walk/feed, polar and parametric curves (6: MergeSort, Graph, FunctionPlot, computed sorts, picture plans, reveals held (5: overlapping formula pieces, doubled backslashes, a failed action skipped; 4: ghost outlines clear of notes; 3: storyboards)
+TEMPLATES_VERSION = "11"  # SlopeField, GeometryConstruction and projected Scene3D
 
 # --------------------------------------------------------------------------
 # Shared vocabulary
@@ -5323,9 +5323,489 @@ BINARY_TREE = TemplateSpec(
 )
 
 
+# --------------------------------------------------------------------------
+# Memory references and two-set Venn diagrams: state shared by checks and drawing.
+# --------------------------------------------------------------------------
+
+class MemoryParams(_Args):
+    objects: dict[str, str] = Field(description="1-3 object IDs mapped to short displayed values; IDs stay stable during mutation")
+    refs: dict[str, str] = Field(description="1-3 variable names mapped to existing object IDs; shared IDs mean aliasing")
+    area: Area = "full"
+
+    @model_validator(mode="after")
+    def valid(self):
+        if not 1 <= len(self.objects) <= 3 or not 1 <= len(self.refs) <= 3:
+            raise ValueError("use 1-3 objects and 1-3 variables")
+        if any(not x or len(x) > 6 for x in [*self.objects, *self.refs]):
+            raise ValueError("names must have 1-6 characters")
+        if any(not x or len(x) > 10 for x in self.objects.values()):
+            raise ValueError("object values must have 1-10 characters")
+        if any(est_width(x) > 1.05 for x in self.refs) or any(est_width(x) > 1.5 for x in [*self.objects, *self.objects.values()]):
+            raise ValueError("memory labels are too wide to fit on screen; shorten them")
+        if any(x not in self.objects for x in self.refs.values()):
+            raise ValueError("every reference must name an existing object")
+        return self
+
+
+class BindRefArgs(_Args):
+    variable: str = Field(min_length=1, max_length=6)
+    object: str = Field(min_length=1, max_length=6)
+
+
+class MutateRefArgs(_Args):
+    object: str
+    value: str = Field(min_length=1, max_length=10)
+
+
+class CopyRefArgs(_Args):
+    source: str
+    target: str = Field(min_length=1, max_length=6)
+
+
+class UnbindRefArgs(_Args):
+    variable: str
+
+
+def memory_op(op, s, a):
+    if op == "bind":
+        if est_width(a.variable) > 1.05:
+            return "variable name is too wide to fit on screen"
+        if a.object not in s["objects"]:
+            return "reference target is not an existing object"
+        if a.variable not in s["refs"] and len(s["refs"]) == 3:
+            return "at most 3 variables fit on screen"
+        s["refs"][a.variable] = a.object
+    elif op == "mutate":
+        if est_width(a.value) > 1.5:
+            return "object value is too wide to fit on screen"
+        if a.object not in s["objects"]:
+            return "cannot mutate an unknown object"
+        s["objects"][a.object] = a.value
+    elif op == "copy":
+        if est_width(a.target) > 1.5:
+            return "object ID is too wide to fit on screen"
+        if a.source not in s["objects"] or a.target in s["objects"]:
+            return "copy needs an existing source and a new target ID"
+        if len(s["objects"]) == 3:
+            return "at most 3 objects fit on screen"
+        s["objects"][a.target] = s["objects"][a.source]
+    elif op == "unbind":
+        if a.variable not in s["refs"]:
+            return "cannot unbind an unknown variable"
+        del s["refs"][a.variable]
+    return None
+
+
+def memory_words(s):
+    return ("objects " + "; ".join(f"{k} holds {v}" for k, v in s["objects"].items()) + "; references "
+            + (", ".join(f"{k} points to {v}" for k, v in s["refs"].items()) or "none"))
+
+
+MEMORY_REFS = TemplateSpec(
+    name="MemoryRefs", family="memory_refs", noun="memory diagram", min_rows=4,
+    purpose="Variable boxes point to object boxes. Aliasing shares an object ID; mutation changes that object for every alias. Copy makes a distinct object with the same displayed value (not a recursive deep copy).",
+    params=MemoryParams,
+    init_state=lambda p: {"objects": dict(p.objects), "refs": dict(p.refs)},
+    describe=lambda p: "A memory diagram: " + memory_words(p.model_dump()),
+    actions={op: ActionSpec(doc, args, lambda s, a, op=op: memory_op(op, s, a),
+                           lambda s, a: memory_words(s), reveals=True)
+             for op, args, doc in [
+                 ("bind", BindRefArgs, "Point a variable at an existing object; this does not copy its value."),
+                 ("mutate", MutateRefArgs, "Change an object's displayed value; all aliases still point at it."),
+                 ("copy", CopyRefArgs, "Create a new object with the source's displayed value; references do not change."),
+                 ("unbind", UnbindRefArgs, "Remove a variable and its reference; keep the object visible.")
+             ]},
+    example=[['m = MemoryRefs(objects={"o1": "[1,2]"}, refs={"x": "o1", "y": "o1"})'],
+             ['m.mutate(object="o1", value="[1,2,3]")'], ['m.copy(source="o1", target="o2")'],
+             ['m.bind(variable="y", object="o2")'], ['m.mutate(object="o1", value="[9]")']],
+)
+
+
+class VennParams(_Args):
+    universe: list[str] = Field(description="1-12 distinct element labels, each 1-3 characters; at most 4 in each region (A only, both, B only) and 6 outside both")
+    a: list[str] = Field(description="elements in set A")
+    b: list[str] = Field(description="elements in set B")
+    area: Area = "full"
+
+    @model_validator(mode="after")
+    def valid(self):
+        if not 1 <= len(self.universe) <= 12 or len(set(self.universe)) != len(self.universe):
+            raise ValueError("use 1-12 distinct universe elements")
+        if any(not x or len(x) > 3 or est_width(x) > 0.65 for x in self.universe):
+            raise ValueError("element labels must have 1-3 characters")
+        if any(len(set(xs)) != len(xs) or not set(xs) <= set(self.universe) for xs in (self.a, self.b)):
+            raise ValueError("sets must contain distinct elements from the universe")
+        groups = venn_regions(self.model_dump())
+        if any(len(xs) > 4 for xs in groups[:3]) or len(groups[3]) > 6:
+            raise ValueError("at most 4 elements fit in each Venn region (A only, both, B only) and 6 outside both")
+        return self
+
+
+def venn_regions(s):
+    a, b = set(s["a"]), set(s["b"])
+    return [[x for x in s["universe"] if (x in a, x in b) == region]
+            for region in ((True, False), (True, True), (False, True), (False, False))]
+
+
+SetOperation = Literal["a", "b", "union", "intersection", "a_minus_b", "b_minus_a", "symmetric_difference", "complement_a", "complement_b"]
+
+
+class VennShadeArgs(_Args):
+    operation: SetOperation
+    colour: Colour = "TEAL"
+
+
+def venn_result(s, operation):
+    a, b, u = set(s["a"]), set(s["b"]), set(s["universe"])
+    result = {"a": a, "b": b, "union": a | b, "intersection": a & b, "a_minus_b": a - b,
+              "b_minus_a": b - a, "symmetric_difference": a ^ b, "complement_a": u - a, "complement_b": u - b}[operation]
+    return [x for x in s["universe"] if x in result]
+
+
+def _venn_shade(s, a):
+    s["operation"] = a.operation
+    s["result"] = venn_result(s, a.operation)
+
+
+VENN_DIAGRAM = TemplateSpec(
+    name="VennDiagram", family="sets_logic", noun="Venn diagram", min_rows=4,
+    purpose="Two sets A and B inside a finite universe U, with elements placed by membership. Shade union, intersection, differences or complements. Circle areas are schematic, not proportional to counts. Not a three-set diagram or proof engine.",
+    params=VennParams, init_state=lambda p: p.model_dump(),
+    describe=lambda p: f"Two sets inside U = {p.universe}: A = {p.a}, B = {p.b}; elements placed by membership",
+    actions={"shade": ActionSpec("Shade the operation's region; its membership is computed from the sets.", VennShadeArgs,
+                                  _venn_shade, lambda s, a: f"{a.operation.replace('_', ' ')} is shaded {a.colour.lower()}; elements: {s['result'] or 'empty set'}", reveals=True),
+             "clear": ActionSpec("Remove shading, keeping sets and elements.", check=lambda s, a: s.update(operation=None, result=[]), says=lambda s, a: "the shading clears")},
+    example=[['v = VennDiagram(universe=["1", "2", "3", "4"], a=["1", "2"], b=["2", "3"])'],
+             ['v.shade(operation="intersection")'], ['v.shade(operation="union")'],
+             ['v.shade(operation="complement_a")'], ['v.clear()']],
+)
+
+
+# --------------------------------------------------------------------------
+# Bounded advanced mathematics: numerical ODEs, Euclidean constructions, 3D
+# --------------------------------------------------------------------------
+from typing import Annotated
+from pydantic import FiniteFloat
+from animation_agent.visuals.math_support import (
+    slope_samples, solution_curve, line_intersections, plane_polygon, surface_mesh, vector_label,
+)
+
+MathCoord = Annotated[FiniteFloat, Field(ge=-100, le=100)]
+Point2 = tuple[MathCoord, MathCoord]
+Point3 = tuple[MathCoord, MathCoord, MathCoord]
+DiagramName = Annotated[str, Field(pattern=r"^[A-Za-z]$")]
+
+
+class SlopeFieldParams(_Args):
+    fn: str = Field(description="dy/dx=f(x,y); arithmetic + - * / **, sin cos tan exp log ln sqrt abs, pi e; max 96 characters")
+    x_range: Point2 = (-2, 2)
+    y_range: Point2 = (-2, 2)
+    density: int = Field(9, ge=5, le=13, description="samples per axis")
+    area: Area = "full"
+
+    @model_validator(mode="after")
+    def valid(self):
+        if any(not 0.1 <= r[1] - r[0] <= 40 for r in (self.x_range, self.y_range)):
+            raise ValueError("axis ranges must increase with span 0.1-40")
+        if any(est_width(str(float(v)).removesuffix(".0")) > 1.15 for v in (*self.x_range, *self.y_range)):
+            raise ValueError("axis endpoint labels are too long to fit on screen; use shorter values")
+        if not slope_samples(self.fn, self.x_range, self.y_range, self.density):
+            raise ValueError("the slope must be finite somewhere on the sampling grid")
+        return self
+
+
+class SolutionArgs(_Args):
+    initial: Point2 = Field(description="initial [x,y] inside the axes where f is defined")
+    colour: Colour = "GOLD"
+
+
+def slope_solution(s, a):
+    if len(s["solutions"]) >= 3:
+        return "at most 3 solution curves fit on screen; clear before adding another"
+    try:
+        pts = solution_curve(s["fn"], a.initial, s["x_range"], s["y_range"])
+    except ValueError as e:
+        return str(e)
+    if len(pts) < 2:
+        return "no visible numerical solution from this initial condition"
+    s["solutions"].append({"initial": list(a.initial), "colour": a.colour, "points": pts})
+
+
+SLOPE_FIELD = TemplateSpec(
+    name="SlopeField", family="slope_field", noun="slope field", min_rows=6,
+    purpose="Requires the whole frame; show formulas/notes before or after, never beside. First-order scalar ODE dy/dx=f(x,y), 5-13 slopes per axis, up to 3 approximate numerical solution curves. Finite arithmetic formulas only; no ODE systems, implicit equations, or exact symbolic solutions. Undefined samples are omitted; curves stop at detected singularities or frame boundaries.",
+    params=SlopeFieldParams, init_state=lambda p: {**p.model_dump(), "solutions": []},
+    describe=lambda p: f"Slope field dy/dx = {p.fn} on x={p.x_range}, y={p.y_range}; undefined samples omitted",
+    actions={
+        "solution": ActionSpec("Trace an approximate numerical solution through initial [x,y], in both x directions.", SolutionArgs,
+                               slope_solution, lambda s, a: f"An approximate numerical solution through {a.initial}; stops at the axes boundary or numerical/domain limit", reveals=True),
+        "clear": ActionSpec("Remove solution curves, retaining the slope field.", check=lambda s, a: s.update(solutions=[]), says=lambda s, a: "solution curves clear; the slope field stays"),
+    },
+    example=[['f = SlopeField(fn="x-y", x_range=[-2,2], y_range=[-2,2])'],
+             ['f.solution(initial=[0,1])'], ['f.solution(initial=[0,-1], colour="PINK")'], ['f.clear()']],
+)
+
+
+class GeometryParams(_Args):
+    points: dict[DiagramName, Point2] = Field(description="1-8 named points; one letter per name")
+    extent: Annotated[FiniteFloat, Field(ge=1, le=20)] = 4
+    area: Area = "full"
+
+    @model_validator(mode="after")
+    def valid(self):
+        if not 1 <= len(self.points) <= 8:
+            raise ValueError("use 1-8 points")
+        problem = geometry_points(self.points, self.extent)
+        if problem:
+            raise ValueError(problem)
+        return self
+
+
+def geometry_points(points, extent):
+    import math
+    vals = list(points.values())
+    if any(max(abs(v) for v in p) > extent * 0.85 for p in vals):
+        return "points must lie within 85% of extent to leave room for labels"
+    if any(math.dist(p, q) < extent * 0.18 for i, p in enumerate(vals) for q in vals[i+1:]):
+        return "points are too close for distinct labels; enlarge the construction or use fewer points"
+    return None
+
+
+class GeoLineArgs(_Args):
+    name: DiagramName
+    a: DiagramName
+    b: DiagramName
+
+
+class GeoCircleArgs(_Args):
+    name: DiagramName
+    center: DiagramName
+    radius: Annotated[FiniteFloat, Field(gt=0, le=40)]
+
+
+class GeoIntersectionArgs(_Args):
+    first: DiagramName
+    second: DiagramName
+    names: list[DiagramName] = Field(max_length=2, description="name ALL intersections, sorted by x then y: [] for none, one for tangent, two for crossing circles; reuse an existing point name only at its exact position")
+
+
+class GeoPerpendicularArgs(_Args):
+    name: DiagramName
+    line: DiagramName
+    through: DiagramName
+
+
+class GeoAngleArgs(_Args):
+    name: DiagramName
+    a: DiagramName
+    vertex: DiagramName
+    b: DiagramName
+
+
+class GeoTriangleArgs(_Args):
+    a: DiagramName
+    b: DiagramName
+    c: DiagramName
+
+
+def geometry_op(op, s, a):
+    import numpy as np
+    points, shapes = s["points"], s["shapes"]
+    next_points, next_shapes = copy.deepcopy(points), copy.deepcopy(shapes)
+    try:
+        if hasattr(a, "name") and (a.name in points or a.name in shapes):
+            return "construction names must be new and unique"
+        def pt(name):
+            if name not in points:
+                raise ValueError(f"unknown point {name}")
+            return np.array(points[name], float)
+        def shape(name):
+            if name not in shapes:
+                raise ValueError(f"unknown construction {name}")
+            return shapes[name]
+        if op in ("line", "segment", "midpoint", "bisector"):
+            p, q = pt(a.a), pt(a.b)
+            if np.linalg.norm(q-p) < 1e-9:
+                return "a construction needs two distinct points"
+            if op == "midpoint":
+                next_points[a.name] = ((p+q)/2).tolist()
+            else:
+                if op == "bisector":
+                    d, p = q-p, (p+q)/2
+                    q = p + [-d[1], d[0]]
+                next_shapes[a.name] = {"kind": "segment" if op == "segment" else "line", "p": p.tolist(), "q": q.tolist()}
+        elif op == "circle":
+            p = pt(a.center)
+            if a.radius < s["extent"] * 0.1:
+                return "circle is too small at this extent to read on screen"
+            if max(abs(p)) + a.radius > s["extent"]:
+                return "circle must fit inside the viewing square"
+            next_shapes[a.name] = {"kind": "circle", "center": p.tolist(), "radius": a.radius}
+        elif op == "intersect":
+            intersections = line_intersections(shape(a.first), shape(a.second))
+            if len(a.names) != len(intersections):
+                return f"this construction has {len(intersections)} intersections; supply exactly that many names"
+            if len(set(a.names)) != len(a.names) or any(n in shapes for n in a.names):
+                return "intersection names must be distinct point names"
+            if any(n in points and not np.allclose(points[n], p, rtol=0, atol=1e-9)
+                   for n, p in zip(a.names, intersections)):
+                return "an existing point name can only be reused at its original position"
+            next_points.update(zip(a.names, intersections))
+        elif op == "perpendicular":
+            line = shape(a.line)
+            if line["kind"] == "circle":
+                return "perpendicular needs a line or segment"
+            p, d = pt(a.through), np.array(line["q"]) - line["p"]
+            next_shapes[a.name] = {"kind": "line", "p": p.tolist(), "q": (p + [-d[1], d[0]]).tolist()}
+        elif op == "angle_bisector":
+            p = pt(a.vertex)
+            u, v = pt(a.a)-p, pt(a.b)-p
+            if min(np.linalg.norm(u), np.linalg.norm(v)) < 1e-9:
+                return "angle needs distinct arm points and vertex"
+            u, v = u / np.linalg.norm(u), v / np.linalg.norm(v)
+            d = u + v
+            if abs(u[0]*v[1]-u[1]*v[0]) < 1e-9:
+                return "angle bisector needs a nondegenerate angle between 0 and 180 degrees"
+            next_shapes[a.name] = {"kind": "line", "p": p.tolist(), "q": (p+d).tolist()}
+        elif op == "triangle":
+            p, q, r = pt(a.a), pt(a.b), pt(a.c)
+            u, v = q-p, r-p
+            if abs(u[0]*v[1]-u[1]*v[0]) < 1e-9:
+                return "triangle vertices must not be collinear"
+            for i, (start, end) in enumerate(((p,q),(q,r),(r,p))):
+                next_shapes[f"triangle{len(shapes)}_{i}"] = {"kind": "segment", "p": start.tolist(), "q": end.tolist()}
+        if len(next_points) > 8 or len(next_shapes) > 8:
+            return "at most 8 points and 8 constructions fit on screen"
+        problem = geometry_points(next_points, s["extent"])
+        if problem:
+            return problem
+    except ValueError as e:
+        return str(e)
+    s.update(points=next_points, shapes=next_shapes)
+    s["result"] = ("No intersection" if op == "intersect" and not a.names else
+                   f"{op.replace('_', ' ')} constructed")
+    return None
+
+
+GEOMETRY_CONSTRUCTION = TemplateSpec(
+    name="GeometryConstruction", family="geometry", noun="geometric construction", min_rows=6,
+    purpose="Requires the whole frame; show formulas/notes before or after, never beside. Euclidean 2D points, lines, segments, circles, triangles, midpoint, perpendicular, perpendicular bisector, internal angle bisector, and all line/circle intersections (including none/tangent). Equal scales. Up to 8 labeled points and 8 constructions. No arbitrary transformations, conics, 3D geometry, or proof engine.",
+    params=GeometryParams, init_state=lambda p: {**p.model_dump(), "shapes": {}, "result": ""},
+    describe=lambda p: f"Euclidean construction with points {p.points}, equal scale on both axes",
+    actions={op: ActionSpec(doc, args, lambda s, a, op=op: geometry_op(op, s, a),
+                           lambda s, a: f"{s['result']}; points {s['points']}", reveals=True)
+             for op, args, doc in [
+                 ("line", GeoLineArgs, "Infinite line through a,b, clipped to the frame."),
+                 ("segment", GeoLineArgs, "Segment joining a,b."),
+                 ("circle", GeoCircleArgs, "Circle with given center point and positive radius."),
+                 ("triangle", GeoTriangleArgs, "Join three noncollinear vertices."),
+                 ("midpoint", GeoLineArgs, "Compute and label midpoint of a,b with name."),
+                 ("bisector", GeoLineArgs, "Construct perpendicular bisector of segment a,b."),
+                 ("perpendicular", GeoPerpendicularArgs, "Line perpendicular to line through the named point."),
+                 ("angle_bisector", GeoAngleArgs, "Line along the internal bisector of angle a,vertex,b."),
+                 ("intersect", GeoIntersectionArgs, "Compute and label ALL intersections of two named constructions; [] displays No intersection.")
+             ]},
+    example=[['g = GeometryConstruction(points={"A":[-2,0],"B":[2,0]}, extent=4)'],
+             ['g.segment(name="s", a="A", b="B")'], ['g.midpoint(name="M", a="A", b="B")'],
+             ['g.bisector(name="p", a="A", b="B")']],
+)
+
+
+class Scene3DParams(_Args):
+    extent: Annotated[FiniteFloat, Field(ge=1, le=20, description="half-width of the viewing cube: the smallest that holds the vectors or the part of the surface the lesson discusses (a region 0<=x,y<=1 needs about 1.5); a larger extent shrinks the picture")] = 3
+    azimuth: Annotated[FiniteFloat, Field(ge=-180, le=180)] = 35
+    elevation: Annotated[FiniteFloat, Field(ge=15, le=75)] = 25
+    area: Area = "full"
+
+
+class Vector3DArgs(_Args):
+    name: DiagramName
+    value: Point3
+    colour: Colour = "BLUE"
+
+
+class Plane3DArgs(_Args):
+    normal: Point3 = Field(description="nonzero [a,b,c] for ax+by+cz=offset; includes vertical planes")
+    offset: MathCoord = 0
+    colour: Colour = "TEAL"
+
+
+class Surface3DArgs(_Args):
+    fn: str = Field(description="z=f(x,y), same restricted arithmetic as SlopeField; wireframe clipped to cube")
+    colour: Colour = "TEAL"
+
+
+class View3DArgs(_Args):
+    azimuth: Annotated[FiniteFloat, Field(ge=-180, le=180)]
+    elevation: Annotated[FiniteFloat, Field(ge=15, le=75)] = 25
+
+
+class Cross3DArgs(_Args):
+    name: DiagramName
+    first: DiagramName
+    second: DiagramName
+    colour: Colour = "GOLD"
+
+
+def scene3d_op(op, s, a):
+    import numpy as np
+    if op in ("vector", "cross"):
+        if a.name in s["vectors"] or len(s["vectors"]) >= 3:
+            return "use a new vector name; at most 3 vectors fit on screen"
+        if op == "cross":
+            if a.first not in s["vectors"] or a.second not in s["vectors"]:
+                return "cross product needs two existing vectors"
+            v = np.cross(s["vectors"][a.first]["value"], s["vectors"][a.second]["value"])
+        else:
+            v = np.array(a.value)
+        if max(abs(v)) > s["extent"]:
+            return "vector is outside the viewing cube; increase extent"
+        if est_width(vector_label(a.name, v)) > 3.6:
+            return "vector coordinates are too long to fit on screen; use shorter values"
+        s["vectors"][a.name] = {"value": v.tolist(), "colour": a.colour}
+        s["result"] = f"vector {a.name} = {v.tolist()}"
+    elif op in ("plane", "surface"):
+        if s["sheet"] is not None:
+            return "one plane or surface at a time; clear before replacing it"
+        try:
+            visible = plane_polygon(a.normal, a.offset, s["extent"]) if op == "plane" else surface_mesh(a.fn, s["extent"])
+        except ValueError as e:
+            return str(e)
+        if not visible:
+            return "surface has no visible finite wire segments inside the viewing cube"
+        s["sheet"] = {"kind": op, **a.model_dump()}
+        s["result"] = (f"plane {a.normal} dot (x,y,z) = {a.offset}" if op == "plane" else f"wireframe z = {a.fn}, undefined and clipped regions omitted")
+    elif op == "view":
+        s.update(azimuth=a.azimuth, elevation=a.elevation)
+        s["result"] = f"orthographic view at azimuth {a.azimuth}, elevation {a.elevation} degrees"
+    return None
+
+
+SCENE_3D = TemplateSpec(
+    name="Scene3D", family="vectors_3d", noun="3D coordinate scene", min_rows=6,
+    purpose="Requires the whole frame; show formulas/notes before or after, never beside. Equal-unit orthographic 3D view: up to 3 named origin vectors (zero shown as a labeled dot), computed cross product, one bounded plane ax+by+cz=d OR sampled wireframe z=f(x,y), and rotating viewpoint. Cube extent 1-20; transparent wireframe with no hidden-surface removal. No implicit/parametric surfaces, solid rendering, or arbitrary 3D objects.",
+    params=Scene3DParams, init_state=lambda p: {**p.model_dump(), "vectors": {}, "sheet": None, "result": ""},
+    describe=lambda p: f"Labeled x,y,z axes in an orthographic 3D view, cube bounds {-p.extent} to {p.extent}",
+    actions={**{op: ActionSpec(doc, args, lambda s, a, op=op: scene3d_op(op, s, a),
+                              lambda s, a: s["result"], reveals=op != "view")
+                for op, args, doc in [
+                    ("vector", Vector3DArgs, "Draw a named origin vector with three coordinates."),
+                    ("cross", Cross3DArgs, "Compute first cross second and add the resulting vector."),
+                    ("plane", Plane3DArgs, "Draw plane normal dot (x,y,z)=offset clipped to the viewing cube."),
+                    ("surface", Surface3DArgs, "Draw a sampled wireframe z=f(x,y); gaps at detected singularities."),
+                    ("view", View3DArgs, "Rotate the orthographic viewpoint, preserving coordinates and scale.")
+                ]},
+             "clear": ActionSpec("Remove vectors and plane/surface, retaining axes and viewpoint.",
+                                 check=lambda s, a: s.update(vectors={}, sheet=None), says=lambda s, a: "vectors and surfaces clear; the axes stay")},
+    example=[['s = Scene3D(extent=3)'], ['s.vector(name="u", value=[2,0,0])', 's.vector(name="v", value=[0,1,0], colour="PINK")'],
+             ['s.cross(name="w", first="u", second="v")'], ['s.plane(normal=[0,0,1], offset=0)'],
+             ['s.view(azimuth=110, elevation=35)'], ['s.clear()', 's.surface(fn="(x*x-y*y)/3")']],
+)
+
+
 REGISTRY: dict[str, TemplateSpec] = {s.name: s for s in (
     ARRAY_BARS, MERGE_SORT, GRAPH, BAR_CHART, NUMBER_LINE, TABLE, LINKED_LIST, STACK_QUEUE, HASH_TABLE,
-    BINARY_TREE, FUNCTION_PLOT, LINEAR_MAP_2D, EQUATION_STEPS, NOTE)}
+    BINARY_TREE, FUNCTION_PLOT, LINEAR_MAP_2D, EQUATION_STEPS, NOTE, MEMORY_REFS, VENN_DIAGRAM, SLOPE_FIELD, GEOMETRY_CONSTRUCTION, SCENE_3D)}
 
 # Extra checks a template's parameters need beyond its model (the vectors fit the grid, the curves fit the axes).
 INIT_CHECKS: dict[str, Callable[[BaseModel], str | None]] = {"LinearMap2D": _init_map_check,
