@@ -104,7 +104,9 @@ class VennDiagram(Template):
                 if region == 3:
                     pos = [box.center[0] + (i - (len(values) - 1) / 2) * 0.65, box.bottom + 0.3, 0]
                 else:
-                    pos = center + [(region - 1) * r, ((len(values) - 1) / 2 - i) * 0.34, 0]
+                    # four rows sit a little closer so the column stays inside the lens between the circles
+                    gap = 0.34 if len(values) <= 3 else 0.3
+                    pos = center + [(region - 1) * r, ((len(values) - 1) / 2 - i) * gap, 0]
                 out.add(text(value, 30).move_to(pos))
         return out
 

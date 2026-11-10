@@ -71,7 +71,7 @@ def test_limits_reject_unreadable_labels_and_too_many_elements():
     with pytest.raises(ValidationError, match="too wide"):
         MemoryParams(objects={"o": "WWWWWWWWWW"}, refs={"x": "o"})
     with pytest.raises(ValidationError, match="each Venn region"):
-        VennParams(universe=["1", "2", "3", "4"], a=["1", "2", "3", "4"], b=[])
+        VennParams(universe=["1", "2", "3", "4", "5"], a=["1", "2", "3", "4", "5"], b=[])
     assert check_segment([['m = MemoryRefs(objects={"o": "[1]"}, refs={"x": "o"})'],
                           ['m.bind(variable="WWWWWW", object="o")']])
 
@@ -82,6 +82,9 @@ def test_limits_reject_unreadable_labels_and_too_many_elements():
      ['m.move(area="bottom_two_thirds")', 'm.unbind(variable="y")']],
     [['v = VennDiagram(universe=["1", "2", "3", "4", "5", "6", "7", "8"], a=["1", "2", "3", "4", "5", "6"], b=["4", "5", "6", "7"], area="top_two_thirds")'],
      ['v.shade(operation="symmetric_difference")'], ['v.move(area="bottom_two_thirds")'], ['v.clear()']],
+    # the slides' own gcd example: divisors of 18 and 24, four in common
+    [['v = VennDiagram(universe=["1", "2", "3", "4", "6", "8", "9", "12", "18", "24"], a=["1", "2", "3", "6", "9", "18"], b=["1", "2", "3", "4", "6", "8", "12", "24"], area="top_two_thirds")'],
+     ['v.shade(operation="intersection")'], ['v.move(area="bottom_two_thirds")']],
 ])
 def test_dense_diagrams_render_in_the_smallest_supported_area(beats, tmp_path):
     import json

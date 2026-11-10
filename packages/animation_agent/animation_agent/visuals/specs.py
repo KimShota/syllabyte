@@ -5422,22 +5422,22 @@ MEMORY_REFS = TemplateSpec(
 
 
 class VennParams(_Args):
-    universe: list[str] = Field(description="1-8 distinct element labels, each 1-3 characters")
+    universe: list[str] = Field(description="1-12 distinct element labels, each 1-3 characters; at most 4 in each region (A only, both, B only) and 6 outside both")
     a: list[str] = Field(description="elements in set A")
     b: list[str] = Field(description="elements in set B")
     area: Area = "full"
 
     @model_validator(mode="after")
     def valid(self):
-        if not 1 <= len(self.universe) <= 8 or len(set(self.universe)) != len(self.universe):
-            raise ValueError("use 1-8 distinct universe elements")
+        if not 1 <= len(self.universe) <= 12 or len(set(self.universe)) != len(self.universe):
+            raise ValueError("use 1-12 distinct universe elements")
         if any(not x or len(x) > 3 or est_width(x) > 0.65 for x in self.universe):
             raise ValueError("element labels must have 1-3 characters")
         if any(len(set(xs)) != len(xs) or not set(xs) <= set(self.universe) for xs in (self.a, self.b)):
             raise ValueError("sets must contain distinct elements from the universe")
         groups = venn_regions(self.model_dump())
-        if any(len(xs) > 3 for xs in groups):
-            raise ValueError("at most 3 elements fit in each Venn region")
+        if any(len(xs) > 4 for xs in groups[:3]) or len(groups[3]) > 6:
+            raise ValueError("at most 4 elements fit in each Venn region (A only, both, B only) and 6 outside both")
         return self
 
 
@@ -5712,7 +5712,7 @@ GEOMETRY_CONSTRUCTION = TemplateSpec(
 
 
 class Scene3DParams(_Args):
-    extent: Annotated[FiniteFloat, Field(ge=1, le=20)] = 3
+    extent: Annotated[FiniteFloat, Field(ge=1, le=20, description="half-width of the viewing cube: the smallest that holds the vectors or the part of the surface the lesson discusses (a region 0<=x,y<=1 needs about 1.5); a larger extent shrinks the picture")] = 3
     azimuth: Annotated[FiniteFloat, Field(ge=-180, le=180)] = 35
     elevation: Annotated[FiniteFloat, Field(ge=15, le=75)] = 25
     area: Area = "full"

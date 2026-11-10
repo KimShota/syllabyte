@@ -165,14 +165,17 @@ class Scene3D(ComputedDiagram):
 
     def _picture(self):
         box, extent = self.bounds, self.st["extent"]
-        # A sphere enclosing the cube keeps every projection inside the same frame at every angle.
-        radius = min(box.width-0.65,box.height-2.3)/2
-        center = box.center + [0,0.35,0]
-        scale = radius/(np.sqrt(3)*extent)
+        # Room below for one label per vector; no other text, so the picture gets the rest of the frame.
+        below = 0.35*len(self.st["vectors"]) + 0.2 if self.st["vectors"] else 0.0
+        # A sphere around everything drawn keeps every projection inside the same frame at every angle (0.9: axis
+        # labels). Fitting it to what is drawn, not to the whole cube, makes the picture larger.
+        radius = min(box.width-0.65, box.height-below-0.9)/2
+        center = box.center + [0, below/2, 0]
+        scale = radius/self._reach()
         def pos(points):
             xy = project_3d(points,self.st["azimuth"],self.st["elevation"])*scale
             return np.concatenate([xy,np.zeros((*xy.shape[:-1],1))],axis=-1)+center
-        out = VGroup(text("3D · orthographic",30).move_to([box.center[0],box.top-0.2,0]))
+        out = VGroup()
         label_positions = []
         for i, label in enumerate("xyz"):
             lo,hi = np.zeros(3),np.zeros(3)
@@ -196,9 +199,7 @@ class Scene3D(ComputedDiagram):
                 for vertex in vertices:
                     out.add(wire(pos([vertex,mid]),sheet["colour"],1))
             else:
-                key = (sheet["fn"],extent)
-                if key != self._mesh_key:
-                    self._mesh_key, self._mesh = key,surface_mesh(*key)
+                self._surface()
                 # One VMobject with separate subpaths: avoid thousands of scene objects per frame.
                 mesh = VMobject(stroke_color=colour(sheet["colour"]),stroke_width=1.2)
                 for start,end in self._mesh:
@@ -212,10 +213,25 @@ class Scene3D(ComputedDiagram):
             else:
                 out.add(mark_background(Dot(center,radius=0.05,color=colour(v["colour"]))))
             out.add(text(vector_label(name, v["value"]),30,colour(v["colour"]))
-                    .move_to([box.center[0],box.bottom+1.35-i*0.35,0]))
-        out.add(text(f"Axes: ±{extent:g}",30).move_to([box.center[0],box.top-0.6,0]),
-                text("Transparent wireframe",30).move_to([box.center[0],box.bottom+0.15,0]))
+                    .move_to([box.center[0],box.bottom+0.2+(len(self.st["vectors"])-1-i)*0.35,0]))
         return out
+
+    def _surface(self):
+        key = (self.st["sheet"]["fn"], self.st["extent"])
+        if key != self._mesh_key:
+            self._mesh_key, self._mesh = key, surface_mesh(*key)
+        return self._mesh
+
+    def _reach(self) -> float:
+        """The farthest drawn point from the origin: the axes reach the extent; a surface, plane or vector may reach
+        farther (at most the cube's corner)."""
+        extent, sheet = self.st["extent"], self.st["sheet"]
+        points = [np.asarray(v["value"], dtype=float) for v in self.st["vectors"].values()]
+        if sheet and sheet["kind"] == "plane":
+            points += [np.asarray(p, dtype=float) for p in plane_polygon(sheet["normal"], sheet["offset"], extent)]
+        elif sheet:
+            points += [np.asarray(p, dtype=float) for edge in self._surface() for p in edge]
+        return max([float(extent), *(float(np.linalg.norm(p)) for p in points)])
 
     def vector(self, a):
         yield from self._change("vector", a)

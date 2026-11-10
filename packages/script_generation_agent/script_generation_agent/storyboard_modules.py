@@ -843,7 +843,8 @@ MODULES: dict[str, Module] = {m.name: m for m in (
            "disjoint constructions have none. Circles and segments use equal scales. State which construction "
            "is added on each line; reveal a requested point only after the learner predicts it. Use the full frame."),
     Module("spatial_math", frozenset({"vectors_3d"}), "", None,
-           "Use Scene3D with explicit source coordinates, a nonzero plane normal, or z=f(x,y). Cross computes "
+           "Use Scene3D with explicit source coordinates, a nonzero plane normal, or z=f(x,y). Choose the smallest extent "
+           "that holds what the lesson discusses (for a region 0<=x,y<=1, about 1.5): a larger extent shrinks the picture. Cross computes "
            "first cross second; reversing the order reverses its direction. Explain that this is an orthographic "
            "projection: screen angles and lengths do not generally equal 3D angles and lengths. The wireframe "
            "is transparent; crossing wires need not intersect in space. Rotate with view to expose depth. "
@@ -853,7 +854,8 @@ MODULES: dict[str, Module] = {m.name: m for m in (
            "for all aliases. Copy creates a distinct object, then bind explicitly changes a variable's target. "
            "This is a value copy, not a recursive deep-copy demonstration. Reveal each change on its answering line."),
     Module("finite_sets", frozenset({"sets_logic"}), "", None,
-           "Use VennDiagram with an explicit finite universe and two subsets. Let shade compute membership. "
+           "Use VennDiagram with an explicit finite universe (up to 12 elements; at most 4 in each region and 6 outside "
+           "both) and two subsets. Let shade compute membership. "
            "Complements are relative to that universe. Circle areas are schematic and do not show counts or "
            "probabilities. Keep the operation unshaded until its answer is given; three-set diagrams are unsupported."),
     Module("boxes", frozenset({"flowchart", "call_tree", "state_machine"}),
