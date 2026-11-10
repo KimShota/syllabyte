@@ -686,8 +686,8 @@ def match_lines(script: TemplatedDialogueScript, *, ku_id: str, model: str = DEF
 # example (ten two-digit numbers) didn't fit MergeSort; the fix call swapped in smaller numbers, and every line
 # still said the slide's. So a first draft with a line naming numbers that aren't on screen, a line comparing a
 # merge's values the picture doesn't, or a rejected creation call (the fix call would change what it draws) is
-# written once more, with those problems.
-_REDO_KINDS = ("unshown_number", "wrong_front")
+# written once more, with those problems. A false formula is too: its line most likely says the same wrong value.
+_REDO_KINDS = ("unshown_number", "wrong_front", "false_formula")
 _CREATES = re.compile(r"\s*\w+\s*=\s*[A-Z]\w*\(")
 
 

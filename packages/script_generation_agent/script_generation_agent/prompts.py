@@ -565,7 +565,8 @@ use them for other meanings: a green highlight on cells the steps haven't sorted
 and code drops it; a ghost is only for the wrong idea, and code turns any other into a plain highlight.
   - The "wrong idea" beat draws the wrong idea with your template's ghost (ghost, ghost_edge, ghost_vector: a \
 wrong value, edge, bar, curve or vector) or a wrong formula step (EquationSteps.then); the feedback line clears it, or crosses the step out (EquationSteps.cross_out) \
-and writes the right one.
+and writes the right one. Code checks the arithmetic of every formula, number-line label and formula-headed table \
+column: a false formula is accepted only as a wrong step crossed out by the next beat.
   - A question or predict line points at what is asked about without giving the answer away (highlight the \
 candidates, never the one that answers, or EquationSteps.cover); the line that answers shows the answer. A result shown during a question or predict line \
 (a step of a sort, merge or search, a match found, a transform, an uncovered piece) is moved by code to the next \

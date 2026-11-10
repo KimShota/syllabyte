@@ -19,6 +19,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from animation_agent.visuals import arith
+from animation_agent.visuals.arith import false_relation
+
 # Bump when a template draws differently (or the call language changes): it is part of the cache key of every
 # video drawn with templates (syllabyte_common.video_jobs.video_key), so those videos are made again.
 TEMPLATES_VERSION = "11"  # SlopeField, GeometryConstruction and projected Scene3D
@@ -2770,7 +2773,21 @@ def _describe_equation(p: EquationParams) -> str:
 
 
 def _eq_state(p: EquationParams) -> dict:
-    return {"last": p.tex, "covered": False}
+    st = {"last": p.tex, "covered": False, "false": []}
+    _note_false(st, p.tex)
+    return st
+
+
+# A formula line whose arithmetic is false (\gcd(18, 24) = 4, 2^{10} = 1000). It may be a deliberate wrong step, so
+# it is only noted here; calls.simulate_script reports it unless it is crossed out or rewritten by the end of the
+# next beat (false_formula_problems).
+def _note_false(st: dict, tex: str) -> None:
+    if why := false_relation(tex):
+        st["false"].append({"tex": tex, "why": why})
+
+
+def _settle_false(st: dict, tex: str) -> None:
+    st["false"] = [f for f in st["false"] if f["tex"] != tex]
 
 
 def _check_part(state: dict, a) -> str | None:
@@ -2784,6 +2801,17 @@ def _check_part(state: dict, a) -> str | None:
 def _check_new_line(state: dict, a: TexArgs) -> str | None:
     state["last"] = a.tex
     state["covered"] = False
+    _note_false(state, a.tex)
+    return None
+
+
+def _check_rewrite(state: dict, a: TexArgs) -> str | None:
+    _settle_false(state, state["last"])  # the line morphs away: a wrong step corrected on screen
+    return _check_new_line(state, a)
+
+
+def _check_cross_out(state: dict, a) -> str | None:
+    _settle_false(state, state["last"])
     return None
 
 
@@ -2811,7 +2839,7 @@ EQUATION_STEPS = TemplateSpec(
     describe=_describe_equation,
     actions={
         "rewrite": ActionSpec("Morph the current line into a new formula (matching pieces move into place).",
-                              TexArgs, _check_new_line, lambda s, a: f"the formula morphs into {a.tex}"),
+                              TexArgs, _check_rewrite, lambda s, a: f"the formula morphs into {a.tex}"),
         "then": ActionSpec("Write the next formula on a new line below.", TexArgs, _check_new_line,
                            lambda s, a: f"a new line below: {a.tex}"),
         "highlight": ActionSpec("Colour a piece of the current line and underline it.", PartArgs, _check_part,
@@ -2825,7 +2853,7 @@ EQUATION_STEPS = TemplateSpec(
         "box": ActionSpec("Box the current line: the result.", BoxArgs,
                           says=lambda s, a: f"the line {s['last']} is boxed in {a.colour.lower()}", reveals=True),
         "cross_out": ActionSpec("A wrong step: dim the current line and put a dashed red box around it.",
-                                says=lambda s, a: f"the line {s['last']} dims inside a red dashed box: wrong"),
+                                check=_check_cross_out, says=lambda s, a: f"the line {s['last']} dims inside a red dashed box: wrong"),
         "note": ActionSpec("A short line of words above the formulas.", EqNoteArgs,
                            says=lambda s, a: f'note above the formulas: "{a.text}"'),
         "clear": ActionSpec("Remove highlights, boxes and the note.",
@@ -2950,7 +2978,24 @@ class BarParams(_Args):
             raise ValueError("bar heights are 0 or more")
         if self.y_max is not None and self.y_max < max(self.values):
             raise ValueError(f"y_max {self.y_max:g} is below the tallest bar ({max(self.values):g})")
+        kind = bar_probabilities(self.y_label)
+        if kind and max(self.values) > 1:
+            raise ValueError(f"the bars are probabilities ({self.y_label}), so each is at most 1, not "
+                             f"{max(self.values):g}")
+        if kind == "distribution" and sum(self.values) > 1.01:
+            raise ValueError(f"the bars are one variable's probabilities ({self.y_label}) but add up to "
+                             f"{sum(self.values):g}; the outcomes' probabilities add up to 1 at most")
         return self
+
+
+def bar_probabilities(y_label: str | None) -> str | None:
+    """Whether the heights are probabilities: "distribution" for one variable's ("P(x)", "P(X = k)": its
+    outcomes add up to 1 at most), "probability" for any other ("probability", "P(A)", "P(X ≤ k)"), else None."""
+    if not y_label:
+        return None
+    if re.fullmatch(r"\s*P\s*\(\s*[A-Za-z]\s*(?:=\s*\w+\s*)?\)\s*", y_label) and not re.search(r"[A-H]\)", y_label):
+        return "distribution"
+    return "probability" if re.match(r"\s*(?:P\s*\(|Pr\b|prob)", y_label, re.IGNORECASE) else None
 
 
 class BarArgs(_Args):
@@ -3216,6 +3261,9 @@ class NumberLineParams(_Args):
         out = [p.name for p in self.points if not lo <= p.x <= hi]
         if out:
             raise ValueError(f"point {out[0]} is off the line ({_num(lo)} to {_num(hi)})")
+        for p in self.points:
+            if problem := nl_label_problem(p.name, p.x):
+                raise ValueError(problem)
         return self
 
 
@@ -3295,8 +3343,40 @@ def _on_line(st: dict, *xs: float | None) -> str | None:
     return f"{_num(bad[0])} is off the line ({_num(lo)} to {_num(hi)})" if bad else None
 
 
+def nl_label_problem(name: str, x: float) -> str | None:
+    """A point named by a number ("3", "1/2", "√2", "-π") sits at that number: the name is what a viewer reads."""
+    try:
+        value = arith.evaluate(name)
+    except (arith.NotNumeric, ZeroDivisionError, OverflowError, TypeError):
+        return None
+    if arith.matches(x, name, value) or abs(x - float(value)) <= 0.01:
+        return None
+    return f'point "{name}" is at {_num(x)}, but {name} is {arith.show(value)}: put it at {_num(float(value))}'
+
+
+_JUMP_LABEL = re.compile(r"^\s*([-+−x×*/÷])\s*(\d+(?:\.\d+)?)\s*$")
+
+
+def jump_label_problem(from_x: float, to_x: float, label: str | None) -> str | None:
+    """A jump marked "+3", "-2", "x2" or "/2" lands where that step takes it."""
+    m = _JUMP_LABEL.match(label or "")
+    if not m:
+        return None
+    op, k = m.group(1), float(m.group(2))
+    lands = {"+": from_x + k, "-": from_x - k, "−": from_x - k, "x": from_x * k, "×": from_x * k, "*": from_x * k,
+             "/": from_x / k if k else None, "÷": from_x / k if k else None}[op]
+    if lands is None or abs(lands - to_x) <= 1e-6:
+        return None
+    return (f'the jump marked "{label}" from {_num(from_x)} lands on {_num(lands)}, not {_num(to_x)}: '
+            "fix to_x or the label")
+
+
+def _check_jump(st: dict, a: JumpArgs) -> str | None:
+    return _on_line(st, a.from_x, a.to_x) or jump_label_problem(a.from_x, a.to_x, a.label)
+
+
 def _check_nl_point(st: dict, a: NLPointArgs) -> str | None:
-    if problem := _on_line(st, a.x):
+    if problem := _on_line(st, a.x) or nl_label_problem(a.name, a.x):
         return problem
     if a.name not in st["points"] and len(st["points"]) >= MAX_NL_POINTS:
         return f"at most {MAX_NL_POINTS} points"
@@ -3308,7 +3388,7 @@ def _check_nl_point(st: dict, a: NLPointArgs) -> str | None:
 def _check_nl_move(st: dict, a: NLMoveArgs) -> str | None:
     if a.name not in st["points"]:
         return f"there is no point {a.name!r} (points: {', '.join(st['points']) or 'none'})"
-    if problem := _on_line(st, a.x):
+    if problem := _on_line(st, a.x) or nl_label_problem(a.name, a.x):
         return problem
     st["last"] = st["points"][a.name]
     st["points"][a.name] = a.x
@@ -3414,7 +3494,7 @@ NUMBER_LINE = TemplateSpec(
                            _check_nl_move, lambda s, a: f"point {a.name} slides from {_num(s['last'])} to {_num(a.x)}",
                            reveals=True),
         "jump": ActionSpec("An arc arrow from one number to another, with an optional label (+3, x2, /2).",
-                           JumpArgs, lambda s, a: _on_line(s, a.from_x, a.to_x),
+                           JumpArgs, _check_jump,
                            lambda s, a: f"an arrow jumps from {_num(a.from_x)} to {_num(a.to_x)}"
                                         + (f', marked "{a.label}"' if a.label else ""), reveals=True),
         "interval": ActionSpec("Shade an interval on the line: an inequality's solutions.", IntervalArgs,
@@ -3547,7 +3627,62 @@ class TableParams(_Args):
             raise ValueError(f"{long[0]!r} doesn't fit a cell: with {total_cols} columns, about "
                              f"{table_cells(total_cols)} characters (fewer columns, no row_labels, or rounder "
                              "numbers)")
+        if self.rule is None and (problem := table_column_problem(self.columns, table_shape(self)[2])):
+            raise ValueError(problem)
         return self
+
+
+_VAR = re.compile(r"[A-Za-z]\w{0,2}")
+
+
+def _cell_number(text: str):
+    try:
+        return arith.evaluate(text) if text.strip() else None
+    except (arith.NotNumeric, ZeroDivisionError, OverflowError, TypeError):
+        return None
+
+
+def table_column_problem(columns: list[str] | None, rows: list[list[str]], row_ids=None) -> str | None:
+    """A column headed by a formula of another column ("n^2", "n log n", "2^n", "n(n+1)/2" beside "n") holds that
+    formula's values. A log without a base may be base 2, e or 10, whichever fits the whole column; a whole number
+    may round a value that isn't whole (n log n = 33 for n = 10)."""
+    if not columns:
+        return None
+    variables = {h.strip(): c for c, h in enumerate(columns) if _VAR.fullmatch(h.strip())}
+    for c, header in enumerate(columns):
+        used = arith.names_in(header)
+        if header.strip() in variables or not used or not used <= variables.keys():
+            continue
+        best = None
+        for base in (2, 2.718281828459045, 10) if "log" in header else (None,):
+            bad = []
+            for r, row in zip(row_ids or range(len(rows)), rows, strict=False):
+                cell = row[c].strip() if c < len(row) else ""
+                names = {v: _cell_number(row[variables[v]]) for v in used}
+                written = _cell_number(cell)
+                if written is None or any(x is None for x in names.values()):
+                    continue
+                try:
+                    expected = arith.evaluate(header, names, base)
+                except (arith.NotNumeric, ZeroDivisionError, OverflowError, TypeError):
+                    bad = None
+                    break
+                rounded = (isinstance(expected, float) and re.fullmatch(r"-?\d+", cell)
+                           and abs(float(expected) - float(written)) < 1)
+                if not (rounded or arith.matches(expected, cell, written)):
+                    bad.append((r, cell, expected, names))
+            if bad is None:
+                break
+            if not bad:
+                best = None
+                break
+            best = best if best is not None and len(best) <= len(bad) else bad
+        if best:
+            r, cell, expected, names = best[0]
+            where = ", ".join(f"{v} = {arith.show(x)}" for v, x in names.items())
+            return (f'column "{header}" in row {r} should be {arith.show(expected)} ({where}), not {cell}: '
+                    "work it out again, or leave the cell empty to fill on screen")
+    return None
 
 
 def table_shape(p: TableParams) -> tuple[int, int, list[list[str]], list[str] | None]:
@@ -3755,6 +3890,10 @@ def _check_fill(st: dict, a: TableCellArgs) -> str | None:
     if st["rule"] is not None:
         return f"this table's cells are computed: call fill_next (its rule is {st['rule']})"
     if problem := _cell_fits(st, a.value):
+        return problem
+    row = list(st["cells"][a.row])
+    row[a.col] = _fmt(a.value)
+    if problem := table_column_problem(st["columns"], [row], [a.row]):
         return problem
     st["last"] = st["cells"][a.row][a.col]
     st["cells"][a.row][a.col] = _fmt(a.value)

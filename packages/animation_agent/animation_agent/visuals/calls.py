@@ -158,7 +158,7 @@ _KINDS = [
     ("only Notes", "notes_only"), ("the line says", "count"), ("names none of the", "unmentioned"),
     ("doesn't draw this idea", "wrong_template"), ("isn't on screen", "unshown_number"),
     ("the line compares", "wrong_front"), ("but the line doesn't say so", "unsaid_change"),
-    ("but the set on screen", "wrong_set"),
+    ("but the set on screen", "wrong_set"), ("the formula on screen", "false_formula"),
 ]
 
 
@@ -346,6 +346,8 @@ def simulate_script(segments: list[list[list[str]] | None], lines: list[list[str
                     flag(b, c, f"beat {b}, `{text}`: {problem}")
                 elif what:
                     words.append(what)
+            for at, message in _false_formula_problems(b, live, end=b == len(draws)):
+                flag(at, None, message)
             sentence = "; ".join(words) + "."
             seg_said.append(sentence[0].upper() + sentence[1:] if words else "The picture stays as it is.")
             if seg_lines is not None and b <= len(seg_lines) and report:
@@ -663,6 +665,28 @@ def _named_sets(line: str, universe: list[str]) -> list[tuple[str, set[str]]]:
     if _PRIMES.search(line):
         out.append(("primes", set(set_rule_members("primes", universe))))
     return list(dict(out).items())  # a set named twice (in the beat's line and elsewhere) counts once
+
+
+def _false_formula_problems(b: int, live: dict[str, _Live], end: bool) -> list[tuple[int, str]]:
+    """After beat b: each EquationSteps line with false arithmetic (specs._note_false) that is still on screen a beat
+    after it was written, or at the end of the segment, without being crossed out or rewritten. A wrong step shown
+    on purpose is crossed out; anything else on screen is taken as true, and the critic didn't catch these."""
+    out = []
+    for o in live.values():
+        if o.template != "EquationSteps":
+            continue
+        pending = []
+        for f in o.state.get("false", []):
+            f.setdefault("beat", b)
+            if end or b > f["beat"]:
+                message = (f"beat {f['beat']}: the formula on screen is wrong ({f['why']}); write the true "
+                           "formula (and the line with it), or, for a deliberate wrong step, cross_out() that line "
+                           "in this beat or the next")
+                out.append((f["beat"], message))
+            else:
+                pending.append(f)
+        o.state["false"] = pending
+    return out
 
 
 def _created(calls: list[str], template: str) -> set[str]:
