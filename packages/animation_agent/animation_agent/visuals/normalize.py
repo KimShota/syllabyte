@@ -51,7 +51,7 @@ def _literal(value) -> str:
         return repr(value)
     if isinstance(value, int | float):
         return repr(value)
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         return "[" + ", ".join(_literal(v) for v in value) + "]"
     if isinstance(value, dict):
         return "{" + ", ".join(f"{_literal(k)}: {_literal(v)}" for k, v in value.items()) + "}"
