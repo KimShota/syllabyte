@@ -158,6 +158,7 @@ _KINDS = [
     ("only Notes", "notes_only"), ("the line says", "count"), ("names none of the", "unmentioned"),
     ("doesn't draw this idea", "wrong_template"), ("isn't on screen", "unshown_number"),
     ("the line compares", "wrong_front"), ("but the line doesn't say so", "unsaid_change"),
+    ("but the set on screen", "wrong_set"),
 ]
 
 
@@ -297,6 +298,8 @@ def simulate_script(segments: list[list[list[str]] | None], lines: list[list[str
     said: list[list[str]] = []
     live: dict[str, _Live] = {}
     seen_numbers: set[float] = set()  # every number a call has written (values, notes, formulas)
+    # every line of the script: a set one line names by its rule is that set wherever it is drawn
+    script_text = " ".join(line for seg in lines or [] for line in seg or [])
     for s, draws in enumerate(segments):
         if draws is None:
             said.append([])
@@ -349,7 +352,9 @@ def simulate_script(segments: list[list[list[str]] | None], lines: list[list[str
                 for message, c in (_count_problems(b, seg_lines[b - 1], live)
                                    + _echo_problems(b, seg_lines[b - 1], calls)
                                    + _number_problems(b, seg_lines[b - 1], live, seen_numbers)
-                                   + _front_problems(b, seg_lines[b - 1], live, fronts_before, seg_pairs)):
+                                   + _front_problems(b, seg_lines[b - 1], live, fronts_before, seg_pairs)
+                                   + _set_rule_problems(b, seg_lines[b - 1] + " " + script_text, live,
+                                                        _created(calls, "VennDiagram"))):
                     flag(b, c, message)
                 if calls and all(_only_text(text) for text in calls):
                     flag(b, None, f"beat {b}: its calls only put text on screen (a note, a cleared highlight); the "
@@ -628,6 +633,66 @@ def _count_problems(b: int, line: str, live: dict[str, _Live]) -> list[tuple[str
             shown = " and ".join(str(k) for k in lists)
             out.append((f'beat {b}: the line says "{phrase}" but the list on screen has {shown} cells; draw '
                         f"{n} values so the picture matches the words", None))
+    return out
+
+
+# --------------------------------------------------------------------------
+# A set the line names by its rule is that set
+# --------------------------------------------------------------------------
+# A gcd video's line said "some numbers divide 18, some divide 24" over a Venn diagram whose B, listed by hand, left
+# out 12 and 24; the critic passed it. A set the line names ("divisors of 24", "numbers that divide 24", "multiples of
+# 3", "primes") and a listed set close to it but not equal is a wrong picture: ask for the rule, which computes it.
+_DIVIDE = re.compile(r"\b(?:divisors|factors) of (\d+)|\bdivides? (?:both )?(\d+)(?:\s*(?:,|and)\s*(\d+))?", re.IGNORECASE)
+_MULTIPLES = re.compile(r"\bmultiples of (\d+)", re.IGNORECASE)
+_PRIMES = re.compile(r"\bprimes\b|\bprime numbers\b", re.IGNORECASE)
+
+
+def _named_sets(line: str, universe: list[str]) -> list[tuple[str, set[str]]]:
+    """The sets a line names by a rule, with their members: all of a number's divisors (inside the universe or not,
+    so a universe that leaves one out is caught too), multiples and primes within the universe."""
+    from animation_agent.visuals.specs import set_rule_members
+
+    out = []
+    for m in _DIVIDE.finditer(line):
+        for g in m.groups():
+            if g and 0 < int(g) <= 10000:
+                n = int(g)
+                out.append((f"divisors of {n}", {str(d) for d in range(1, n + 1) if n % d == 0}))
+    for m in _MULTIPLES.finditer(line):
+        out.append((f"multiples of {m.group(1)}", set(set_rule_members(f"multiples of {m.group(1)}", universe))))
+    if _PRIMES.search(line):
+        out.append(("primes", set(set_rule_members("primes", universe))))
+    return list(dict(out).items())  # a set named twice (in the beat's line and elsewhere) counts once
+
+
+def _created(calls: list[str], template: str) -> set[str]:
+    """The names this beat's calls create with `template`."""
+    return {m.group(1) for text in calls if (m := re.match(rf"\s*(\w+)\s*=\s*{template}\(", text))}
+
+
+def _set_rule_problems(b: int, text: str, live: dict[str, _Live], created: set[str]) -> list[tuple[str, int | None]]:
+    """`text`: the beat's line and the rest of the script's lines. Checked once, on the beat that creates the diagram."""
+    out = []
+    for name, o in live.items():
+        st = o.state
+        if (name not in created or o.template != "VennDiagram"
+                or not all(re.fullmatch(r"-?\d+", x) for x in st["universe"])):
+            continue
+        listed = {k: set(st[k]) for k in ("a", "b") if not st.get(f"{k}_rule")}
+        for rule, members in _named_sets(text, st["universe"]):
+            if any(xs == members for xs in listed.values()) or not members:
+                continue
+            for k, xs in listed.items():
+                overlap = len(xs & members) / len(xs | members) if xs | members else 1
+                # close but not equal (the gcd case overlapped 6 of 8); an unrelated set the line doesn't describe is left
+                if xs and overlap > 0.6:
+                    missing = sorted(members - xs, key=int)
+                    extra = sorted(xs - members, key=int)
+                    why = "; ".join(p for p in (f"missing {', '.join(missing)}" if missing else "",
+                                                f"has {', '.join(extra)} too" if extra else "") if p)
+                    out.append((f'beat {b}: the line names the {rule}, but the set on screen, {name}.{k} = '
+                                f'{sorted(xs, key=int)}, is not that set ({why}); give {k}_rule="{rule}" (and every '
+                                f"element in the universe) instead of listing it", None))
     return out
 
 

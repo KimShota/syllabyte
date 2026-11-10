@@ -100,3 +100,99 @@ def test_dense_diagrams_render_in_the_smallest_supported_area(beats, tmp_path):
                                        check_formulas=False, frame="dialogue")
     assert ok, error
     assert layout.findings == [], layout.findings
+
+
+def test_a_rule_defined_set_is_computed_from_the_universe():
+    from animation_agent.visuals.specs import set_rule_members
+    universe = ["1", "2", "3", "4", "6", "8", "9", "12", "18", "24"]
+    v = VennParams(universe=universe, a_rule="divisors of 18", b_rule="Factors of 24")
+    assert v.a == ["1", "2", "3", "6", "9", "18"] and v.b == ["1", "2", "3", "4", "6", "8", "12", "24"]
+    assert set_rule_members("primes", universe) == ["2", "3"]
+    assert set_rule_members("multiples of 3", universe) == ["3", "6", "9", "12", "18", "24"]
+    assert set_rule_members("at most 4", universe) == ["1", "2", "3", "4"]
+    assert set_rule_members("odd numbers", universe) == ["1", "3", "9"]
+
+
+def test_listed_members_that_contradict_their_rule_are_rejected_with_the_right_ones():
+    """The gcd video drew 'divisors of 24' without 12 and 24; with the rule beside them, that can't render."""
+    universe = ["1", "2", "3", "4", "6", "8", "9", "12", "18", "24"]
+    with pytest.raises(ValidationError, match=r"B should be the divisors of 24 in the universe, \['1', '2', '3', '4', '6', '8', '12', '24'\]"):
+        VennParams(universe=universe, a_rule="divisors of 18", b=["1", "2", "3", "4", "6", "8"], b_rule="divisors of 24")
+    # agreeing lists are fine
+    assert VennParams(universe=["1", "2", "3", "6", "9", "18"], a=["1", "2", "3", "6", "9", "18"], a_rule="divisors of 18",
+                      b=["2", "3"]).a_rule
+
+
+def test_a_divisor_rule_needs_every_divisor_in_the_universe():
+    with pytest.raises(ValidationError, match="universe is missing 12, 24, which are divisors of 24"):
+        VennParams(universe=["1", "2", "3", "4", "6", "8"], a_rule="divisors of 24", b=["2"])
+
+
+@pytest.mark.parametrize("kw, message", [
+    ({"a_rule": "nice numbers", "b": ["1"]}, "unknown set rule"),
+    ({"b": ["1"]}, "give a .its elements. or a_rule"),
+])
+def test_a_set_needs_members_or_a_known_rule(kw, message):
+    with pytest.raises(ValidationError, match=message):
+        VennParams(universe=["1", "2", "3"], **kw)
+
+
+def test_rules_need_whole_number_elements():
+    with pytest.raises(ValidationError, match="whole-number elements"):
+        VennParams(universe=["a", "b", "c"], a_rule="even", b=["a"])
+
+
+def test_the_rule_reaches_the_picture_description_and_the_writer():
+    from animation_agent.visuals.specs import VENN_DIAGRAM, template_card
+    v = VennParams(universe=["1", "2", "3", "4", "6", "8"], a_rule="divisors of 6", b_rule="even")
+    assert "divisors of 6 = ['1', '2', '3', '6']" in VENN_DIAGRAM.describe(v)
+    card = template_card(VENN_DIAGRAM)
+    assert "a_rule" in card and 'a_rule="divisors of 6"' in card
+    assert check_segment(VENN_DIAGRAM.example) == []
+
+
+def test_a_listed_set_that_is_not_the_set_its_line_names_is_flagged():
+    """The real gcd storyboard: the line says 'divide 24', B was listed without 12 and 24."""
+    from animation_agent.visuals.calls import check_script
+    venn = ('v = VennDiagram(universe=["1", "2", "3", "4", "6", "8", "9", "12", "18", "24"], '
+            'a=["1", "2", "3", "6", "9", "18"], b=["1", "2", "3", "4", "6", "8"], area="bottom_two_thirds")')
+    problems = check_script([[[venn]]], [["Lowkey, some numbers divide 18, some divide 24. So what does common mean here?"]])
+    wrong = [p for p in problems if p.kind == "wrong_set"]
+    assert len(wrong) == 1 and "v.b" in wrong[0].message and "missing 12, 24" in wrong[0].message
+    assert 'b_rule="divisors of 24"' in wrong[0].message
+
+
+def test_a_universe_that_leaves_a_divisor_out_is_caught_too():
+    from animation_agent.visuals.calls import check_script
+    venn = 'v = VennDiagram(universe=["1", "2", "3", "4", "6", "8", "9"], a=["1", "2", "3", "6", "9"], b=["1", "2", "3", "4", "6", "8"])'
+    problems = check_script([[[venn]]], [["These are the divisors of 24 and of 18."]])
+    assert {p.kind for p in problems} >= {"wrong_set"}
+
+
+@pytest.mark.parametrize("venn, line", [
+    # correct listed sets
+    ('v = VennDiagram(universe=["1", "2", "3", "4", "6", "8", "9", "12", "18", "24"], a=["1", "2", "3", "6", "9", "18"], '
+     'b=["1", "2", "3", "4", "6", "8", "12", "24"])', "Some numbers divide 18, some divide 24."),
+    # rule-defined sets are computed, so never flagged
+    ('v = VennDiagram(universe=["1", "2", "3", "4", "6", "8", "9", "12", "18", "24"], a_rule="divisors of 18", '
+     'b_rule="divisors of 24")', "Some numbers divide 18, some divide 24."),
+    # a line naming a different, unrelated set
+    ('v = VennDiagram(universe=["1", "2", "3", "4", "5", "6"], a=["2", "4", "6"], b=["1", "2", "3"])', "The primes are 2, 3 and 5."),
+])
+def test_matching_or_rule_defined_sets_are_not_flagged(venn, line):
+    from animation_agent.visuals.calls import check_script
+    assert not [p for p in check_script([[[venn]]], [[line]]) if p.kind == "wrong_set"]
+
+
+def test_a_later_venn_is_checked_against_sets_named_anywhere_in_the_script():
+    """The gcd video redrew the wrong set in its recap, whose line ('divides both, like 6 for 18 and 24') names no set."""
+    from animation_agent.visuals.calls import check_script
+    good = ('v = VennDiagram(universe=["1", "2", "3", "4", "6", "8", "9", "12", "18", "24"], a_rule="divisors of 18", '
+            'b_rule="divisors of 24")')
+    bad = ('v2 = VennDiagram(universe=["1", "2", "3", "4", "6", "8", "9", "12", "18", "24"], a=["1", "2", "3", "6", "9", "18"], '
+           'b=["1", "2", "3", "4", "6", "8"])')
+    problems = check_script([[[good], []], [["v.remove()", bad]]],
+                            [["Some numbers divide 18, some divide 24.", "Which sit in both?"],
+                             ["So the gcd is the greatest number that divides both, like 6 for 18 and 24."]])
+    wrong = [p for p in problems if p.kind == "wrong_set"]
+    assert [(p.segment, p.beat) for p in wrong] == [(1, 1)] and "v2.b" in wrong[0].message

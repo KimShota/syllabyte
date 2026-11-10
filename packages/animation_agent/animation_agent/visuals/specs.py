@@ -5421,10 +5421,49 @@ MEMORY_REFS = TemplateSpec(
 )
 
 
+_INT = re.compile(r"-?\d+")
+_SET_RULES = (
+    (re.compile(r"(?:divisors|factors) of (\d+)"), lambda n: lambda x: x > 0 and n % x == 0),
+    (re.compile(r"multiples of (\d+)"), lambda k: lambda x: k != 0 and x % k == 0),
+    (re.compile(r"primes?|prime numbers"), lambda: lambda x: x > 1 and all(x % d for d in range(2, int(x ** 0.5) + 1))),
+    (re.compile(r"even(?: numbers)?"), lambda: lambda x: x % 2 == 0),
+    (re.compile(r"odd(?: numbers)?"), lambda: lambda x: x % 2 == 1),
+    (re.compile(r"(?:perfect )?squares"), lambda: lambda x: x >= 0 and round(x ** 0.5) ** 2 == x),
+    (re.compile(r"(?:numbers )?greater than (-?\d+)"), lambda n: lambda x: x > n),
+    (re.compile(r"(?:numbers )?less than (-?\d+)"), lambda n: lambda x: x < n),
+    (re.compile(r"(?:numbers )?at least (-?\d+)"), lambda n: lambda x: x >= n),
+    (re.compile(r"(?:numbers )?at most (-?\d+)"), lambda n: lambda x: x <= n),
+)
+SET_RULE_HELP = ('"divisors of N" (or "factors of N"), "multiples of K", "primes", "even", "odd", "squares", '
+                 '"greater than N", "less than N", "at least N", "at most N"')
+
+
+def set_rule_members(rule: str, universe: list[str]) -> list[str]:
+    """The universe's elements that satisfy a set rule, in universe order. A divisor rule also needs every divisor in
+    the universe, so the picture can't leave one out."""
+    text = " ".join(rule.lower().split())
+    for pattern, make in _SET_RULES:
+        if m := pattern.fullmatch(text):
+            break
+    else:
+        raise ValueError(f"unknown set rule {rule!r}; use one of {SET_RULE_HELP}")
+    if not all(_INT.fullmatch(x) for x in universe):
+        raise ValueError("a set rule needs whole-number elements in the universe")
+    test = make(*(int(g) for g in m.groups()))
+    if text.startswith(("divisors", "factors")):
+        n = int(m.group(1))
+        missing = [d for d in range(1, n + 1) if n % d == 0 and str(d) not in universe]
+        if missing:
+            raise ValueError(f"the universe is missing {', '.join(map(str, missing))}, which are {text}; add them")
+    return [x for x in universe if test(int(x))]
+
+
 class VennParams(_Args):
     universe: list[str] = Field(description="1-12 distinct element labels, each 1-3 characters; at most 4 in each region (A only, both, B only) and 6 outside both")
-    a: list[str] = Field(description="elements in set A")
-    b: list[str] = Field(description="elements in set B")
+    a: list[str] | None = Field(None, description="elements in set A; for a set defined by a rule, give a_rule instead")
+    b: list[str] | None = Field(None, description="elements in set B; for a set defined by a rule, give b_rule instead")
+    a_rule: str | None = Field(None, description=f"the rule that defines A, for whole numbers: {SET_RULE_HELP}. The template computes A from the universe, so its members can't be wrong; prefer it to listing them")
+    b_rule: str | None = Field(None, description="the rule that defines B, as for a_rule")
     area: Area = "full"
 
     @model_validator(mode="after")
@@ -5433,6 +5472,16 @@ class VennParams(_Args):
             raise ValueError("use 1-12 distinct universe elements")
         if any(not x or len(x) > 3 or est_width(x) > 0.65 for x in self.universe):
             raise ValueError("element labels must have 1-3 characters")
+        for name in ("a", "b"):
+            given, rule = getattr(self, name), getattr(self, f"{name}_rule")
+            if rule is not None:
+                members = set_rule_members(rule, self.universe)
+                if given is not None and set(given) != set(members):
+                    raise ValueError(f"{name.upper()} should be the {rule} in the universe, {members}, not {given}: "
+                                     f"give {name}_rule alone and let the template compute the members")
+                setattr(self, name, members)
+            elif given is None:
+                raise ValueError(f"give {name} (its elements) or {name}_rule (the rule that defines it)")
         if any(len(set(xs)) != len(xs) or not set(xs) <= set(self.universe) for xs in (self.a, self.b)):
             raise ValueError("sets must contain distinct elements from the universe")
         groups = venn_regions(self.model_dump())
@@ -5471,11 +5520,12 @@ VENN_DIAGRAM = TemplateSpec(
     name="VennDiagram", family="sets_logic", noun="Venn diagram", min_rows=4,
     purpose="Two sets A and B inside a finite universe U, with elements placed by membership. Shade union, intersection, differences or complements. Circle areas are schematic, not proportional to counts. Not a three-set diagram or proof engine.",
     params=VennParams, init_state=lambda p: p.model_dump(),
-    describe=lambda p: f"Two sets inside U = {p.universe}: A = {p.a}, B = {p.b}; elements placed by membership",
+    describe=lambda p: (f"Two sets inside U = {p.universe}: A = {p.a_rule + ' = ' if p.a_rule else ''}{p.a}, "
+                        f"B = {p.b_rule + ' = ' if p.b_rule else ''}{p.b}; elements placed by membership"),
     actions={"shade": ActionSpec("Shade the operation's region; its membership is computed from the sets.", VennShadeArgs,
                                   _venn_shade, lambda s, a: f"{a.operation.replace('_', ' ')} is shaded {a.colour.lower()}; elements: {s['result'] or 'empty set'}", reveals=True),
              "clear": ActionSpec("Remove shading, keeping sets and elements.", check=lambda s, a: s.update(operation=None, result=[]), says=lambda s, a: "the shading clears")},
-    example=[['v = VennDiagram(universe=["1", "2", "3", "4"], a=["1", "2"], b=["2", "3"])'],
+    example=[['v = VennDiagram(universe=["1", "2", "3", "4", "6", "8"], a_rule="divisors of 6", b_rule="even")'],
              ['v.shade(operation="intersection")'], ['v.shade(operation="union")'],
              ['v.shade(operation="complement_a")'], ['v.clear()']],
 )

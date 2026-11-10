@@ -855,7 +855,9 @@ MODULES: dict[str, Module] = {m.name: m for m in (
            "This is a value copy, not a recursive deep-copy demonstration. Reveal each change on its answering line."),
     Module("finite_sets", frozenset({"sets_logic"}), "", None,
            "Use VennDiagram with an explicit finite universe (up to 12 elements; at most 4 in each region and 6 outside "
-           "both) and two subsets. Let shade compute membership. "
+           "both) and two subsets. When a set has a rule (divisors of 24, multiples of 3, primes, even, odd), give "
+           "a_rule/b_rule instead of listing its members: the template computes them, so none is left out. Let "
+           "shade compute membership. "
            "Complements are relative to that universe. Circle areas are schematic and do not show counts or "
            "probabilities. Keep the operation unshaded until its answer is given; three-set diagrams are unsupported."),
     Module("boxes", frozenset({"flowchart", "call_tree", "state_machine"}),
