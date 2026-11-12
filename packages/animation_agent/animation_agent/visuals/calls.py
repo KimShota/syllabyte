@@ -343,7 +343,7 @@ def simulate_script(segments: list[list[list[str]] | None], lines: list[list[str
                 except CallError as e:
                     problem, what = str(e), None
                 if problem:
-                    flag(b, c, f"beat {b}, `{text}`: {problem}")
+                    flag(b, c, f"beat {b}, `{_short_call(text)}`: {problem}")
                 elif what:
                     words.append(what)
             for at, message in _false_formula_problems(b, live, end=b == len(draws)):
@@ -770,6 +770,12 @@ def _echo_problems(b: int, line: str, calls: list[str]) -> list[tuple[str, int |
             out.append((f'beat {b}, `{text}`: the note repeats the line\'s own words; show something the voice '
                         "doesn't say (a value, a label, a formula), or highlight the thing itself instead", c))
     return out
+
+
+def _short_call(text: str, limit: int = 160) -> str:
+    """A call as a problem quotes it: a long one (a Picture's program) cut in the middle, so the reason after it
+    stays in view."""
+    return text if len(text) <= limit else f"{text[:100]} ... {text[-40:]}"
 
 
 def _check(call: Call, live: dict[str, _Live]) -> tuple[str | None, str | None]:

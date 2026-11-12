@@ -122,8 +122,10 @@ def test_a_point_off_the_axes_is_rejected():
 
 
 def test_every_template_draws_a_family_and_every_drawn_family_has_a_template():
+    from animation_agent.visuals.families import GRAMMAR
+
     drawn = {t for names in DRAWN_BY.values() for t in names}
-    assert drawn == set(REGISTRY)
+    assert drawn | set(GRAMMAR) == set(REGISTRY)
     assert set(DRAWN_BY) <= set(FAMILIES)
 
 

@@ -77,6 +77,8 @@ class _Object:
     end: int  # last global beat it is on screen
     where: tuple[int, int, int]  # (segment, beat, call) of its creation
     area: str | None = None
+    target: str = ""
+    args: dict | None = None  # its creation call's arguments
 
     @property
     def is_diagram(self) -> bool:
@@ -106,7 +108,7 @@ def _objects(segments: list[list[list[str]] | None]) -> list[_Object]:
                 if call.action is None:
                     if call.target in live:
                         live.pop(call.target).end = g
-                    obj = _Object(call.template, g, -1, (s, b, c))
+                    obj = _Object(call.template, g, -1, (s, b, c), target=call.target, args=call.args)
                     objects.append(obj)
                     live[call.target] = obj
                     templates[call.target] = call.template
@@ -136,6 +138,63 @@ def _lay_out(objects: list[_Object]) -> None:
             if last - first + 1 >= spec.min_rows and not any(areas_overlap(area, t) for t in taken):
                 obj.area = area
                 break
+
+
+def _needs_whole_frame(args: dict) -> bool:
+    """A Picture whose program fits the whole frame but no area a diagram gets beside a formula or note."""
+    from animation_agent.visuals.specs import PictureParams, _picture_problem, picture_source
+
+    try:
+        source = picture_source(PictureParams(**{k: v for k, v in args.items() if k != "area"}).program)
+    except ValueError:
+        return False
+    return (_picture_problem(source, "full") is None
+            and all(_picture_problem(source, area) is not None for area in _DIAGRAM_SHARED))
+
+
+def make_room(segments: list[list[list[str]] | None]) -> tuple[list[list[list[str]] | None], list[str]]:
+    """The picture wins over formulas and notes: when a Picture fits the whole frame but not the part of it left
+    beside a formula or note, every formula and note on screen with it is dropped (creation and later calls), so
+    the lines say them instead. In runs/picture-p1 every Bellman-Ford plan put formulas beside the slide's 8-node,
+    16-edge graph although the brief said not to; refused in two thirds of the frame, the fix pass cut the graph
+    to 6 nodes with weights of its own while the lines kept the slide's."""
+    objects = _objects(segments)
+    drop: list[_Object] = []
+    for pic in objects:
+        if pic.template != "Picture" or not pic.args:
+            continue
+        beside = [o for o in objects if not o.is_diagram and o not in drop
+                  and o.start <= pic.end and pic.start <= o.end]
+        if beside and _needs_whole_frame(pic.args):
+            drop += beside
+    if not drop:
+        return segments, []
+    out: list[list[list[str]] | None] = []
+    templates: dict[str, str] = {}
+    g = 0
+    for s, draws in enumerate(segments):
+        if draws is None:
+            out.append(None)
+            continue
+        seg = []
+        for b, calls in enumerate(draws):
+            beat = []
+            for c, text in enumerate(calls):
+                try:
+                    call = parse_call(text, templates)
+                except CallError:
+                    beat.append(text)
+                    continue
+                if call.action is None:
+                    templates[call.target] = call.template
+                if not any(o.target == call.target and o.start <= g <= o.end and (call.action is not None
+                           or o.where == (s, b, c)) for o in drop):
+                    beat.append(text)
+            seg.append(beat)
+            g += 1
+        out.append(seg)
+    names = ", ".join(sorted({f"{o.template} {o.target}" for o in drop}))
+    return out, [f"dropped {names}: the picture needs the whole frame, so the lines say it"]
 
 
 def lay_out(segments: list[list[list[str]] | None]) -> list[list[list[str]] | None]:
@@ -244,8 +303,7 @@ def normalize_script(segments: list[list[list[str]] | None], lines: list[list[st
     A text-only beat in `keep_text` ((segment, 1-based beat)) is left for the fix call to draw, not cleared. With
     `keep_echo` a note isn't dropped for repeating its line: the lines are only the planner's points
     (storyboard_plan), and the real lines are checked for echoes once written."""
-    segs = segments
-    log: list[str] = []
+    segs, log = make_room(segments)
     for _ in range(MAX_PASSES):
         segs = lay_out(segs)  # again after every fix: a dropped note frees room
         problems = simulate_script(segs, lines, allowed=allowed).problems

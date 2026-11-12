@@ -12,6 +12,7 @@ checker and the drawing compute the same thing.
 from __future__ import annotations
 
 import copy
+import functools
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -2904,6 +2905,148 @@ NOTE = TemplateSpec(
     example=[
         ['q = Note(text="Why does halving win?", big=True, area="top_third")'],
         ['q.say(text="n, n/2, n/4 ... 1", colour="TEAL")'],
+    ],
+)
+
+
+# --------------------------------------------------------------------------
+# Picture: a picture program (the scene grammar, plan/scene-grammar-plan.md, P1)
+# --------------------------------------------------------------------------
+# The writer writes a short program that runs the algorithm on its views and calls snap() after each step
+# (animation_agent/scene/api.py). The program runs in the sandbox when the calls are checked; its snapshots are the
+# picture's states, and each step() call shows the next one. What a step shows, in words, is the snapshot's caption,
+# so the lines are written to what the program computed.
+
+MAX_PROGRAM_LINES = 80
+
+
+def picture_source(program: list[str]) -> str:
+    return "\n".join(program)
+
+
+def _dialogue_area(area: str) -> tuple[float, float, float]:
+    """An area's (width, height, top) in the dialogue frame, as base.area_box computes it inside a render."""
+    from animation_agent.frame import DIALOGUE
+
+    safe_w, safe_h = DIALOGUE.safe_width, DIALOGUE.safe_height
+    first, last = AREAS[area]
+    row_h = safe_h / 6
+    return safe_w - 0.1, (last - first + 1) * row_h - 0.1, safe_h / 2 - first * row_h - 0.05
+
+
+def picture_snapshots(program: list[str]) -> list[dict]:
+    from animation_agent.scene.sandbox import run_cached
+
+    result = run_cached(picture_source(program))
+    return result.snapshots if result.ok else []
+
+
+def _init_picture_check(p: PictureParams) -> str | None:
+    return _picture_problem(picture_source(p.program), p.area)
+
+
+@functools.lru_cache(maxsize=128)
+def _picture_problem(source: str, area: str) -> str | None:
+    """Why the program can't be drawn in the area, or None. Cached: the checker asks again on every pass."""
+    from animation_agent.scene.api import PictureError
+    from animation_agent.scene.layout import plan
+    from animation_agent.scene.sandbox import run_cached
+
+    result = run_cached(source)
+    if not result.ok:
+        return f"the program failed: {result.error}"
+    try:
+        plan(result.snapshots, *_dialogue_area(area))
+    except PictureError as e:
+        return f"the picture doesn't fit the frame: {e}"
+    return None
+
+
+class PictureParams(_Args):
+    program: list[str] = Field(description="the program, one string per line, indentation kept; inside it write "
+                                           "strings in single quotes")
+    area: Area = "full"
+
+    @field_validator("program")
+    @classmethod
+    def _runnable(cls, program: list[str]) -> list[str]:
+        from animation_agent.scene.sandbox import check_source
+
+        if not 1 <= len(program) <= MAX_PROGRAM_LINES:
+            raise ValueError(f"the program has {len(program)} lines; use 1-{MAX_PROGRAM_LINES}")
+        # Calls are read with raw strings (for TeX), so a quote the writer escaped for the line's own literal
+        # ('g = nodes(\'g\')') would reach the program with its backslash (runs/picture-p1 round 2, Bellman-Ford:
+        # a SyntaxError on a correct program). A program line never needs a backslash before a quote.
+        program = [line.replace("\\'", "'").replace('\\"', '"') for line in program]
+        if any('"' in line and "'" in line for line in program):
+            raise ValueError("a program line has both kinds of quote; write the program's strings in single quotes")
+        if problem := check_source(picture_source(program)):
+            raise ValueError(problem)
+        return program
+
+
+def _picture_state(p: PictureParams) -> dict:
+    return {"snaps": picture_snapshots(p.program), "at": 0}
+
+
+def _check_step(state: dict, a: NoArgs) -> str | None:
+    n = len(state["snaps"])
+    if state["at"] + 1 >= n:
+        return (f"the program records {n} snapshots and all are shown by now; add a snap() for this line to the "
+                "program, or keep the picture as it is ([])")
+    state["at"] += 1
+    return None
+
+
+class ShowArgs(_Args):
+    snap: str = Field(description="the name the program gave the snapshot (snap('caption', name='...'))")
+
+
+def snapshot_index(snaps: list[dict], name: str) -> int | None:
+    return next((i for i, s in enumerate(snaps) if s.get("name") == name), None)
+
+
+def _check_show(state: dict, a: ShowArgs) -> str | None:
+    i = snapshot_index(state["snaps"], a.snap)
+    if i is None:
+        names = ", ".join(repr(s.get("name")) for s in state["snaps"])
+        return f"the program has no snapshot named {a.snap!r}; its snapshots are {names}"
+    if i == state["at"]:
+        return f"snapshot {a.snap!r} is already on screen; keep the picture as it is ([]) instead"
+    state["at"] = i
+    return None
+
+
+def _caption(snap: dict) -> str:
+    return snap["caption"].strip().rstrip(".") or "the next state"
+
+
+PICTURE = TemplateSpec(
+    name="Picture",
+    family="picture",
+    purpose="Any diagram, drawn from a short program you write: it runs the real algorithm on cells, nodes, code "
+            "and containers and calls snap('caption') after each step worth seeing; code lays everything out and "
+            "animates the change from one snapshot to the next. Create it with the whole program, then show each "
+            "snapshot by its name on the line that talks about it.",
+    params=PictureParams,
+    noun="picture",
+    min_rows=3,
+    init_state=_picture_state,
+    describe=lambda p: (f"a picture showing {_caption(s[0])}" if (s := picture_snapshots(p.program))
+                        else "a picture"),
+    actions={
+        "show": ActionSpec("Show the snapshot with this name (the change from what is on screen animates). Two or "
+                           "three show calls in one beat play one after another.", ShowArgs,
+                           check=_check_show, reveals=True,
+                           says=lambda s, a: f"the picture moves on: {_caption(s['snaps'][s['at']])}"),
+        "step": ActionSpec("Show the next snapshot in the program's order.", NoArgs,
+                           check=_check_step, reveals=True,
+                           says=lambda s, a: f"the picture moves on: {_caption(s['snaps'][s['at']])}"),
+    },
+    example=[
+        ["""p = Picture(program=["a = cells('a', [5, 2, 7])", "snap('three numbers', name='start')", """
+         """"a.mark(1, 'found')", "snap('2 is the smallest', name='min')"])"""],
+        ["p.show(snap='min')"],
     ],
 )
 
@@ -5994,11 +6137,13 @@ SCENE_3D = TemplateSpec(
 
 REGISTRY: dict[str, TemplateSpec] = {s.name: s for s in (
     ARRAY_BARS, MERGE_SORT, GRAPH, BAR_CHART, NUMBER_LINE, TABLE, LINKED_LIST, STACK_QUEUE, HASH_TABLE,
-    BINARY_TREE, FUNCTION_PLOT, LINEAR_MAP_2D, EQUATION_STEPS, NOTE, MEMORY_REFS, VENN_DIAGRAM, SLOPE_FIELD, GEOMETRY_CONSTRUCTION, SCENE_3D)}
+    BINARY_TREE, FUNCTION_PLOT, LINEAR_MAP_2D, EQUATION_STEPS, NOTE, MEMORY_REFS, VENN_DIAGRAM, SLOPE_FIELD, GEOMETRY_CONSTRUCTION, SCENE_3D,
+    PICTURE)}
 
 # Extra checks a template's parameters need beyond its model (the vectors fit the grid, the curves fit the axes).
 INIT_CHECKS: dict[str, Callable[[BaseModel], str | None]] = {"LinearMap2D": _init_map_check,
-                                                             "FunctionPlot": _init_plot_check}
+                                                             "FunctionPlot": _init_plot_check,
+                                                             "Picture": _init_picture_check}
 
 
 # --------------------------------------------------------------------------

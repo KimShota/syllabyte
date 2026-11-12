@@ -17,6 +17,7 @@ import json
 import os
 import sys
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -55,6 +56,21 @@ class PicturePlan(BaseModel):
     @property
     def gap(self) -> bool:
         return is_gap(self.family)
+
+
+@dataclass(frozen=True)
+class GrammarPlan:
+    """The picture plan when a program draws the picture (the scene grammar, plan/scene-grammar-plan.md, P1;
+    SYLLABYTE_PICTURES=grammar): Picture, with formulas and notes beside it, and no traced example."""
+
+    templates: tuple[str, ...] = ("Picture", "EquationSteps", "Note")
+    main: str = "Picture"
+    family: None = None
+    also: tuple = ()
+    gap: bool = False
+
+
+GRAMMAR_PLAN = GrammarPlan()
 
 
 SYSTEM = """\
@@ -194,4 +210,4 @@ def plan_example(ku: KnowledgeUnit, plan: PicturePlan, slides: str, *, model: st
     return trace
 
 
-__all__ = ["PicturePlan", "TRACED_FAMILIES", "plan_example", "plan_picture"]
+__all__ = ["GRAMMAR_PLAN", "GrammarPlan", "PicturePlan", "TRACED_FAMILIES", "plan_example", "plan_picture"]

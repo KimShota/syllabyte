@@ -64,11 +64,20 @@ def _text(s: str, colour=WHITE, mono: bool = False) -> Text:
 
 
 class PictureRunner:
-    def __init__(self, scene, snaps: list[dict]):
+    """Draws `snaps` in an area of the frame (width, height, top; centred), or the whole safe frame. With `group`
+    (a template's VGroup), parts on screen are kept in it, so the template can fade or move the whole picture."""
+
+    def __init__(self, scene, snaps: list[dict], area: tuple[float, float, float] | None = None,
+                 group: VGroup | None = None):
         self.scene = scene
         self.snaps = snaps
-        w, h = scene_safe_size()
-        self.layout = L.plan(snaps, w, h, h / 2)
+        if area is None:
+            w, h = scene_safe_size()
+            area = (w, h, h / 2)
+        self.layout = L.plan(snaps, *area)
+        if self.layout.untitled:  # left out to give the picture room
+            self.snaps = snaps = L.without_titles(snaps, self.layout.untitled)
+        self.group = group
         self.on_screen: dict[str, VMobject] = {}
         # containers are drawn to one scale, so a 3-litre jug is shorter than a 5-litre one
         self.max_capacity = max((v["capacity"] for s in snaps for v in s["views"].values() if v["kind"] == "container"),
@@ -93,30 +102,46 @@ class PictureRunner:
         r = scale.r
         font = min(42, round(FONT * r / L.NODE_R))
         pos = L.layout_nodes(view, region, self.layout.graph_pos.get(name), scale)
+        graph = view["layout"] == "graph"
+        spots = self.layout.labels.get(name, {}) if graph else (L.tree_labels(view, region, scale) or {})
+        label_font = self.layout.label_font.get(name, FONT)
+        present = {(a, b) for a, b, *_ in view["links"]}
         for a, b, style, label, _slot in view["links"]:
             if a not in pos or b not in pos:
                 continue
-            p, q = pos[a], pos[b]
-            d = (q - p) / max(np.linalg.norm(q - p), 1e-6)
-            start, end = p + d * r, q - d * r
+            start, end = L.link_segment(pos, a, b, r, bool(view["directed"]) and (b, a) in present)
             colour = STYLE_COLOUR.get(style, WHITE) if style else GREY_B
             width = 7 if style == "red" else 3
-            if view["directed"]:
-                line = Arrow(start, end, buff=0, stroke_width=width, color=colour, tip_length=0.14,
-                             max_tip_length_to_length_ratio=0.35)
-            else:
-                line = Line(start, end, stroke_width=width, color=colour)
-            out[f"{name}:link:{a}>{b}"] = _bg(line)
+            spot = spots.get(f"{a}>{b}") if label else None
+            d = (end - start) / max(np.linalg.norm(end - start), 1e-6)
+            pieces = [(start, end)]
+            if spot is not None and L._seg_dist(start, end, spot) < 1e-3:  # set into the link: a gap around it
+                k = label_font / L.LABEL_FONT
+                half = np.array([L.LABEL_CHAR_W * k * len(str(label)) / 2, L.LABEL_H * k / 2]) + L.LABEL_ROOM
+                gap = L.label_gap(d, half)
+                pieces = [(start, spot - d * gap), (spot + d * gap, end)]
+            parts = []
+            for j, (p0, p1) in enumerate(pieces):
+                if view["directed"] and j == len(pieces) - 1:
+                    parts.append(Arrow(p0, p1, buff=0, stroke_width=width, color=colour, tip_length=0.16,
+                                       max_tip_length_to_length_ratio=0.5))
+                else:
+                    parts.append(Line(p0, p1, stroke_width=width, color=colour))
+            out[f"{name}:link:{a}>{b}"] = parts[0] if len(parts) == 1 else VGroup(*parts)
             if label:
-                t = _text(label, GREY_B)
-                normal = np.array([-d[1], d[0], 0.0])
-                t.move_to((p + q) / 2 + normal * 0.22)
-                out[f"{name}:linklabel:{a}>{b}"] = t
+                # beside its link or set into it, clear of every node, link and label (layout.place_labels), so
+                # the layout audit checks it like any other text
+                t = Text(str(label), font_size=label_font, color=GREY_B)
+                out[f"{name}:linklabel:{a}>{b}"] = t.move_to(spot if spot is not None else (pos[a] + pos[b]) / 2)
         for k, node in view["nodes"].items():
             colour = STYLE_COLOUR[node["style"]]
             circle = Circle(radius=r, stroke_color=colour, stroke_width=6 if node["style"] else 3,
                             fill_color=BLACK, fill_opacity=1)
-            label = Text(node["label"], font_size=font, color=colour)
+            size = font
+            label = Text(node["label"], font_size=size, color=colour)
+            while np.hypot(label.width / 2, label.height / 2) > r - 0.03 and size > FONT:  # inside the circle
+                size -= 2
+                label = Text(node["label"], font_size=size, color=colour)
             out[f"{name}:node:{k}"] = VGroup(circle, label).move_to(pos[k])
 
     def _cells(self, name, view, region, out):
@@ -133,16 +158,24 @@ class PictureRunner:
             x = left + size * (i + 0.5)
             group = VGroup(box)
             if v != "":
-                group.add(_text(v, colour))
+                font = max(FONT, min(44, round(FONT * size / L.CELL)))
+                label = Text(v, font_size=font, color=colour)
+                while label.width > 0.74 * size and font > FONT:  # a margin inside the box
+                    font -= 2
+                    label = Text(v, font_size=font, color=colour)
+                group.add(label)
             out[f"{name}:cell:{i}"] = group.move_to([x, y, 0])
             if view["index"]:
                 idx = _text(str(i), GREY_B)
                 idx.move_to([x, y - size / 2 - L.INDEX_H / 2, 0])
                 out[f"{name}:index:{i}"] = idx
         below = y - size / 2 - (L.INDEX_H if view["index"] else 0.0)
-        for label, i in view["pointers"].items():
+        stacked: dict[int, int] = {}
+        for label, i in sorted(view["pointers"].items()):  # pointers under one cell stack, a row each
+            row = stacked.get(i, 0)
+            stacked[i] = row + 1
             t = _text(label, YELLOW)
-            t.move_to([left + size * (i + 0.5), below - L.POINTER_H / 2, 0])
+            t.move_to([left + size * (i + 0.5), below - L.POINTER_H * (row + 0.5), 0])
             out[f"{name}:pointer:{label}"] = t
 
     def _code(self, name, view, region, out):
@@ -194,21 +227,39 @@ class PictureRunner:
 
     # ---- showing ---------------------------------------------------------------------------------------
 
-    def show(self, i: int, seconds: float) -> None:
+    def changes(self, i: int) -> list:
+        """The animations from what is on screen to snapshot i (each part by its key: a part in both becomes its
+        new self in place, a new one fades in, a gone one fades out)."""
         target = self.parts(i)
         anims = []
         for key, new in target.items():
             old = self.on_screen.get(key)
             if old is None:
                 anims.append(FadeIn(new))
+                self._keep(new)
                 self.on_screen[key] = new
             elif _same_parts(old, new):
                 anims.append(old.animate.become(new))
             else:
                 anims += [FadeOut(old), FadeIn(new)]
+                self._drop(old)
+                self._keep(new)
                 self.on_screen[key] = new
         for key in [k for k in self.on_screen if k not in target]:
-            anims.append(FadeOut(self.on_screen.pop(key)))
-        if anims:
-            self.scene.play(*anims, run_time=max(seconds, 0.1))
+            old = self.on_screen.pop(key)
+            self._drop(old)
+            anims.append(FadeOut(old))
         self.shown = i
+        return anims
+
+    def _keep(self, m: VMobject) -> None:
+        if self.group is not None:
+            self.group.add(m)
+
+    def _drop(self, m: VMobject) -> None:
+        if self.group is not None:
+            self.group.remove(m)
+
+    def show(self, i: int, seconds: float) -> None:
+        if anims := self.changes(i):
+            self.scene.play(*anims, run_time=max(seconds, 0.1))

@@ -585,6 +585,10 @@ def picture_brief(family: str | None, templates: list[str]) -> str:
     from animation_agent.visuals.families import ALWAYS, FAMILIES, is_gap, main_template
     from animation_agent.visuals.specs import REGISTRY
 
+    if "Picture" in templates:  # the scene grammar (plan/scene-grammar-plan.md): a program draws the picture
+        from animation_agent.scene.brief import brief
+
+        return brief()
     if family is None:
         return ""
     what = FAMILIES.get(family, "")

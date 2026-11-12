@@ -98,6 +98,10 @@ DRAWN_BY: dict[str, tuple[str, ...]] = {
 # Beside any picture: a formula, and a short note.
 ALWAYS = ("EquationSteps", "Note")
 
+# Drawn for any family when a program draws the picture (SYLLABYTE_PICTURES=grammar; plan/scene-grammar-plan.md),
+# never picked by family.
+GRAMMAR = ("Picture",)
+
 
 def templates_for(family: str, also: list[str] | tuple[str, ...] = ()) -> list[str]:
     """The templates a storyboard on this family may use: the main family's first, then those of `also`, then

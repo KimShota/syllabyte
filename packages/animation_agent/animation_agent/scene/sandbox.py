@@ -13,6 +13,7 @@ It prints the snapshots as JSON; anything else (an exception, a timeout, too muc
 from __future__ import annotations
 
 import ast
+import functools
 import json
 import subprocess
 import sys
@@ -103,3 +104,10 @@ def run_program(source: str) -> Result:
         where = f" (line {data['line']})" if data.get("line") else ""
         return Result(error=data["error"] + where)
     return Result(snapshots=data["snapshots"])
+
+
+@functools.lru_cache(maxsize=64)
+def run_cached(source: str) -> Result:
+    """run_program, once per program per process: the checker, the describer and the renderer all ask for the
+    same program's snapshots, and it is deterministic. Callers must not change the result."""
+    return run_program(source)

@@ -27,8 +27,10 @@ better (visual alignment 4.14 -> 5.00, five up and none down; Dijkstra's lines n
 
 from __future__ import annotations
 
+import os
 import sys
 from collections.abc import Callable
+from pathlib import Path
 
 from pydantic import BaseModel, Field, create_model
 
@@ -310,6 +312,29 @@ def write_example(level: int, family: str | None, *, explainer: str, peer: str) 
 # --------------------------------------------------------------------------
 
 
+def script_segments_of(script):
+    from animation_agent.visuals.calls import script_segments
+
+    return script_segments(script)
+
+
+def _picture_calls(segments) -> str:
+    """How many calls of each kind the segments make on a Picture, for the log (a step dropped on the way shows)."""
+    import re
+
+    counts = {"Picture": 0, "show": 0, "step": 0, "other": 0}
+    for draws in segments:
+        for calls in draws or []:
+            for c in calls:
+                if "Picture(" in c:
+                    counts["Picture"] += 1
+                elif m := re.match(r"\s*\w+\.(show|step)\(", c):
+                    counts[m.group(1)] += 1
+                else:
+                    counts["other"] += 1
+    return ", ".join(f"{k} {v}" for k, v in counts.items())
+
+
 def write_storyboard_planned(
     ku: KnowledgeUnit,
     corpus,
@@ -354,6 +379,10 @@ def write_storyboard_planned(
         raise ScriptValidationError(f"KU {ku.id} cites slides that don't resolve in the corpus: {ku.source_refs}")
     cast = load_cast()
     explainer, peer = cast.explainer.name, cast.peer.name
+    if os.environ.get("SYLLABYTE_PICTURES") == "grammar":  # a program draws the picture (scene grammar, P1)
+        from script_generation_agent.picture_plan import GRAMMAR_PLAN
+
+        picture, example = GRAMMAR_PLAN, None
     picture = picture or plan_picture(ku, model=model, manifest=manifest)
     plan = skeleton(level, bool(prereq_titles))
     allowed = set(picture.templates)
@@ -376,7 +405,11 @@ def write_storyboard_planned(
         board = structured(schema=plan_model(plan), content=[text_block(prompt + feedback), *image_blocks],
                            system=system, stage=f"{PLAN_STAGE}_l{level}", ku_id=ku.id, model=writer_model,
                            effort=STORYBOARD_EFFORT, max_tokens=12000, manifest=manifest)
+        if dump := os.environ.get("SYLLABYTE_PLAN_DUMP"):  # every planned board, to trace what later steps change
+            Path(dump).mkdir(parents=True, exist_ok=True)
+            (Path(dump) / f"{ku.id}-plan{attempt}.json").write_text(board.model_dump_json(indent=1))
         script = plan_to_script(board, plan, ku)
+        _log(ku.id, [f"planned: {_picture_calls(script_segments_of(script))}"])
         script, off_trace = _traced(script, example, ku.id)
         refused = []
         if attempt == 0:
@@ -395,6 +428,7 @@ def write_storyboard_planned(
     segments = settle_picture(script, ku_id=ku.id, model=model, manifest=manifest, system=system, allowed=allowed,
                               main=picture.main, trace=example, keep_echo=True)
     said = describe_script(segments)
+    _log(ku.id, [f"settled: {_picture_calls(segments)}"])
 
     # 3. The lines, written to the pictures.
     wsystem = writer_system_prompt(level, prereq_titles, explainer=explainer, peer=peer, lexicon=lexicon_for_prompt(),
@@ -427,6 +461,7 @@ def write_storyboard_planned(
     segments, notes = align_lines(best, segments, example, ku.id)
     script = match_lines(best, ku_id=ku.id, model=model, manifest=manifest, allowed=allowed, segments=segments,
                          accept=lambda s: not [p for p in validate_dialogue(s) if not _over_limit(p, s)], notes=notes)
+    _log(ku.id, [f"final: {_picture_calls(segments)}"])
     if on_lines_ready is not None:
         on_lines_ready(script)
     print(f"[storyboard] {ku.id}: planned, then written", file=sys.stderr, flush=True)

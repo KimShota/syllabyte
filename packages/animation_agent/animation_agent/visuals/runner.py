@@ -33,6 +33,7 @@ from animation_agent.visuals.graph import Graph
 from animation_agent.visuals.linear_map import LinearMap2D
 from animation_agent.visuals.merge_sort import MergeSort
 from animation_agent.visuals.note import Note
+from animation_agent.visuals.picture import Picture
 from animation_agent.visuals.number_line import NumberLine
 from animation_agent.visuals.specs import REGISTRY
 from animation_agent.visuals.table import Table
@@ -41,7 +42,8 @@ from animation_agent.visuals.advanced_math import SlopeField, GeometryConstructi
 
 CLASSES: dict[str, type[Template]] = {cls.spec.name: cls for cls in (
     ArrayBars, MergeSort, Graph, BarChart, NumberLine, Table, LinkedList, StackQueue, HashTable, BinaryTree,
-    FunctionPlot, LinearMap2D, EquationSteps, Note, MemoryRefs, VennDiagram, SlopeField, GeometryConstruction, Scene3D)}
+    FunctionPlot, LinearMap2D, EquationSteps, Note, MemoryRefs, VennDiagram, SlopeField, GeometryConstruction, Scene3D,
+    Picture)}
 assert set(CLASSES) == set(REGISTRY), "every spec needs a drawing class"
 
 BEAT_FILL = 0.8  # share of a beat's narration the animations may take

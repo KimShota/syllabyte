@@ -33,8 +33,11 @@ _views: dict[str, _View] = {}
 _snaps: list[dict] = []
 
 
+INFINITY = "∞"
+
+
 def _label(v) -> str:
-    s = str(v)
+    s = INFINITY if (isinstance(v, float) and v == float("inf")) or v in ("INF", "inf", "Infinity") else str(v)
     if len(s) > MAX_LABEL:
         raise PictureError(f"label {s!r} is longer than {MAX_LABEL} characters")
     return s
@@ -238,14 +241,17 @@ def container(name, capacity, level=0, title=None):
     return Container(name, capacity, level, title)
 
 
-def snap(caption=""):
-    """Records the picture as it is now: one state the storyboard can show."""
+def snap(caption="", name=None):
+    """Records the picture as it is now: one state the storyboard can show, by its name (p.show(snap=name))."""
     if len(_snaps) >= MAX_SNAPS:
         raise PictureError(f"at most {MAX_SNAPS} snapshots")
-    _snaps.append({"caption": str(caption), "views": {k: v.state() for k, v in _views.items()}})
+    name = str(len(_snaps)) if name is None else str(name)
+    if any(s["name"] == name for s in _snaps):
+        raise PictureError(f"two snapshots are named {name!r}; give each its own name")
+    _snaps.append({"caption": str(caption), "name": name, "views": {k: v.state() for k, v in _views.items()}})
 
 
-EXPORTS = {"cells": cells, "nodes": nodes, "code": code, "container": container, "snap": snap,
+EXPORTS = {"INF": float("inf"), "cells": cells, "nodes": nodes, "code": code, "container": container, "snap": snap,
            "PictureError": PictureError}
 
 

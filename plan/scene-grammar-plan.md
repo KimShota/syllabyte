@@ -111,7 +111,63 @@ number goes in the report.
   about 4 tree levels under a code panel and an array, and about 14 monospace characters per code line at the
   minimum font (code must be short pseudo-code); the layout refuses past these with a reason the writer can act on.
 - **P1:** `Picture` template in the storyboard (step through snapshots, captions to lines), writer prompt with the
-  API and examples; 10 COS 226 topics end to end, timed (keep <= ~60-75 s per video).
+  API and examples; 3 COS 226 topics end to end, timed (cut from 10 to save spend, 2026-11-12).
+  **Round 1, 2026-11-12** (`SYLLABYTE_PICTURES=grammar`, runs/picture-p1; KUs from the elementary-sorts and
+  shortest-paths decks, $0.57 to extract): Bellman-Ford, stability, decrease-key all made videos (94, 79, 134 s
+  from a cold process; about $0.3 each), every program ran, but visual alignment was 2, 2 and 3. Causes, all in the
+  wiring, not the idea: (1) `p.step()` means "the next snapshot", so when code moved or dropped a step (a reveal
+  held off a question line, a refused call) every later picture landed on the wrong line, and in one video every
+  step vanished; (2) problem messages quoted the whole program first, so the reason was cut off for the planner
+  and the log; (3) a Picture sharing the frame with a formula gets two thirds of it, and the graph layout refused
+  the slide's 8-node, 15-edge digraph there, so the planner pruned it to the tree and dropped `distTo[]`, then lost
+  the Picture altogether; (4) cells stayed at their minimum size in an empty frame. Fixed: snapshots are named and
+  shown by name (`snap('...', name='swap1')`, `p.show(snap='swap1')`); long calls are cut in problem messages; the
+  graph layout tries 50 arrangements stretched to the band, places each weight label clear of nodes and labels,
+  keeps the fewest crossings, and refuses with what to change; cells grow with their font; INF draws as ∞; plans
+  are saved with `SYLLABYTE_PLAN_DUMP` and the log counts Picture calls after each stage.
+  **Round 2, 2026-11-12** (round 1 kept in runs/picture-p1/round1; about $0.9): visual alignment 2, 4, 5
+  (Bellman-Ford, stability, decrease-key; was 2, 2, 3), 139, 66, 135 s. Decrease-key's picture now plays the
+  whole swim with `qp[]` kept in step (10 shows, one still line), though its first half only marks v2. Stability
+  lost 6 of 10 shows in the fix pass (a top_half area that didn't fit, a name the program never snapped).
+  Bellman-Ford's first plan was the slide's full graph (8 nodes, 16 edges, distTo 0 5 14 17 9 13 25 8, right),
+  refused for a bug of ours: calls are read as raw strings (for TeX), so the writer's `\'` reached the program
+  as a backslash and a SyntaxError. The redraw then cut the graph to 5 nodes with an invented 3->4 edge, added
+  formulas (so two thirds of the frame), and was refused for an 18+ character title and the string 'INF'; the
+  Picture was dropped and the critic marked the invented values (accuracy 2). Fixed: escaped quotes are
+  unescaped in program lines, the string 'INF' draws as ∞, and the brief states the title limit. The first
+  program now passes as written and renders with no layout findings. **Bellman-Ford rerun** (109 s, about $0.3; round 2's in
+  runs/picture-p1/round2): visual alignment 3, accuracy 3. The Picture reached the video this time (4 shows), but
+  the plan again put formulas beside the full 8-node, 16-edge graph; refused in two thirds of the frame, the fix
+  pass cut it to 6 nodes and 7 edges with its own weights while the lines and the formula box kept the slide's
+  (8 vertices, 16 edges, 7*16), which the critic marked. Three plans out of three paired a big graph with
+  formulas despite the brief, so this needs a rule in code, not in the prompt. Rule (user's choice, 2026-11-12): the picture wins.
+  `normalize.make_room` drops every formula and note on screen with a Picture whose program fits the whole frame
+  but no shared area, before the lines are written (and again after each fix), so the lines say the formula. On
+  the rerun's plan it keeps all 10 shows (the run kept 4) with nothing refused. The graph looked tiny for the same
+  reason (a 1-unit band beside the formula), so no separate scaling change was needed. **Rerun with the rule** (79 s, about $0.2;
+  the previous one in runs/picture-p1/round3): visual alignment 5, accuracy 6 (was 3 and 3); all 11 shows reached
+  the video, one still line, and the relaxations play one edge at a time beside a code panel. The rule didn't
+  fire: the planner chose no formulas and its own 4-node, 5-edge graph instead of the slide's, which the critic
+  marked as invented; the rest of its issues are the explanation (why V-1 passes is never answered). **Layout
+  rework (user: "nothing should overlap ... always prioritize making visuals larger", 2026-11-12; no LLM spend):**
+  the graph had been squeezed into a 1.6-unit band (0.8 for its nodes) above an array and a code panel that had
+  grown into theirs, and the audit had seen nothing because links and their labels were marked background.
+  Now (scene/layout.py): (1) arrays and code take their compact size first, the main picture (nodes, container)
+  the rest up to what it can use, then arrays grow; (2) a graph tries node radii 0.32 to 0.2 and is kept only
+  when nodes stand 0.22 apart, links pass 0.1 clear of other nodes, links leave a node at least 22 degrees apart,
+  a->b and b->a are drawn side by side, and every weight sits beside its link or set into it (the link drawn
+  with a gap), clear of every node, link and other label, 0.1 from other labels and no nearer another link;
+  fewest crossings, then largest nodes, win; (3) when no arrangement passes, the best 8 are refined by an
+  optimiser (a penalty over node positions, Penrose-style, keeping room for labels at link middles); (4) a
+  title gives way when the main picture is short or can't be drawn (the slide's full Bellman-Ford graph with
+  all 16 weights fits beside its array untitled); (5) nodes are sized to hold their labels; pointers on one cell
+  stack; (6) a refusal names what took the room ("the other views take an array 1.1, the code panel 1.4: drop a
+  view ... before making the example smaller"); (7) links and labels are no longer background, so the render
+  audit checks them. All 7 programs (3 examples, 4 from the runs) render with no findings; the Bellman-Ford
+  video re-rendered from its script with 0 findings in all 5 segments, its graph about twice the size. Cost:
+  a dense graph takes up to about 4 s to check (cached); the test suite went from 18 to 40 s. Limits: three
+  views in the portrait frame still leave the array at its compact size; union-find's single-node trees sit
+  close.
 - **P2:** axes and space views for Math (regions, Riemann sums, fields, level curves, 3D, any-set Venn) with sympy.
 - **P3:** layer 2 (checked codegen on primitives), icon set, miss log.
 - **P4:** benchmark; templates kept only where they beat the grammar.
