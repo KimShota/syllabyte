@@ -95,10 +95,16 @@ def _heights(kind: str, views: list[dict], width: float) -> tuple[float, float]:
         return h, h
     if kind == "container":
         return title + CONTAINER_H, title + 0.1 + CONTAINER_LABEL_H + CONTAINER_MAX
+    if kind in MATH_KINDS:
+        from animation_agent.scene import math_layout as M
+
+        return {"axes": M.axes_heights, "venn": M.venn_heights, "geometry": M.geometry_heights}[kind](
+            views, width, title)
     if views[0]["layout"] == "graph":
         return title + LEVEL_H, title + width  # about square at most: taller only stretches the links
     _unit, _gap, levels = _tree_shape(views, width)
-    return title + LEVEL_H, title + (levels - 1) * MAX_LEVEL_H + 2 * MAX_R + 0.1
+    level_h = LABELLED_LEVEL_H if _labelled(views) else MAX_LEVEL_H
+    return title + LEVEL_H, title + (levels - 1) * level_h + 2 * MAX_R + 0.1
 
 
 def _fill(h: list[float], most: list[float], which: list[int], spare: float) -> float:
@@ -115,7 +121,10 @@ def _fill(h: list[float], most: list[float], which: list[int], spare: float) -> 
     return spare
 
 
-_WHAT = {"cells": "an array", "code": "the code panel", "container": "a container", "nodes": "the diagram"}
+_WHAT = {"cells": "an array", "code": "the code panel", "container": "a container", "nodes": "the diagram",
+         "axes": "the axes", "venn": "the Venn diagram", "geometry": "the figure"}
+MATH_KINDS = ("axes", "venn", "geometry")
+MAIN_KINDS = ("nodes", "container") + MATH_KINDS  # what gets the room first
 
 
 def plan_regions(snaps: list[dict], width: float, height: float, top: float) -> dict[str, Region]:
@@ -142,7 +151,7 @@ def plan_regions(snaps: list[dict], width: float, height: float, top: float) -> 
         need = ", ".join(f"{_WHAT[kinds[b[0]]]} {x:.1f}" for b, x in zip(bands, h))
         raise PictureError(f"these views don't fit on screen together: they need {sum(h):.1f} units of the "
                            f"{height:.1f} ({need}); use fewer or smaller ones")
-    main = [i for i, band in enumerate(bands) if any(kinds[n] in ("nodes", "container") for n in band)]
+    main = [i for i, band in enumerate(bands) if any(kinds[n] in MAIN_KINDS for n in band)]
     spare = _fill(h, most, main, spare)  # the main picture first
     spare = _fill(h, most, [i for i in range(len(bands)) if i not in main], spare)
     regions: dict[str, Region] = {}
@@ -247,6 +256,14 @@ def node_r(views: list[dict]) -> float:
     return max(NODE_R, float(np.hypot(NODE_CHAR_W * longest / 2, NODE_TEXT_H / 2)) + 0.03)
 
 
+LABELLED_UNIT = 1.4  # a tree whose links carry labels (a probability tree) spreads out further
+LABELLED_LEVEL_H = 1.5
+
+
+def _labelled(views: list[dict]) -> bool:
+    return any(label for v in views for _a, _b, _s, label, _slot in v["links"])
+
+
 def _tree_shape(views: list[dict], width: float) -> tuple[float, float, int]:
     """A forest view's leaf unit, gap between trees and levels in all (rows of trees stack) at this width."""
     forests = [_tree_units(v) for v in views]
@@ -257,7 +274,7 @@ def _tree_shape(views: list[dict], width: float) -> tuple[float, float, int]:
     slack = width / least - leaves
     gap = TREE_GAP if most <= 1 else max(0.0, min(TREE_GAP, slack / (most - 1)))
     widest = max((sum(t[2] for t in ts) + gap * (len(ts) - 1) for ts in forests if ts), default=1.0)
-    unit = max(least, min(MAX_UNIT, width / widest))
+    unit = max(least, min(LABELLED_UNIT if _labelled(views) else MAX_UNIT, width / widest))
     per_row = width / unit
     levels = max((sum(max(t[3] for t in row) for row in _rows(ts, per_row, gap)) for ts in forests if ts), default=1)
     return unit, gap, levels
@@ -268,7 +285,8 @@ def node_scale(views: list[dict], region: Region) -> NodeScale:
     unit, gap, levels = _tree_shape(views, region.w)
     r = max(node_r(views), min(MAX_R, unit * 0.42))
     room = region.h - title - 2 * r - 0.08
-    level_h = MAX_LEVEL_H if levels <= 1 else min(MAX_LEVEL_H, room / (levels - 1))
+    most_h = LABELLED_LEVEL_H if _labelled(views) else MAX_LEVEL_H
+    level_h = most_h if levels <= 1 else min(most_h, room / (levels - 1))
     if levels > 1 and level_h < MIN_LEVEL_H:
         raise PictureError(f"the trees are {levels} levels deep in all; at most "
                            f"{int(room / MIN_LEVEL_H) + 1} fit; use a smaller example")
@@ -699,7 +717,8 @@ class PictureLayout:
     nodes: dict[str, NodeScale]
     labels: dict[str, dict[str, np.ndarray]] = field(default_factory=dict)  # a graph's link labels, by "a>b"
     label_font: dict[str, int] = field(default_factory=dict)
-    untitled: frozenset = frozenset()  # views whose titles were left out to give the picture room
+    untitled: frozenset = frozenset()
+    math: dict = field(default_factory=dict)  # an axes, Venn or geometry view's layout (scene/math_layout.py)  # views whose titles were left out to give the picture room
 
 
 def without_titles(snaps: list[dict], names) -> list[dict]:
@@ -714,7 +733,8 @@ def plan(snaps: list[dict], width: float, height: float, top: float) -> PictureL
     then every title, is left out before giving up (runs/picture-p1: the slide's Bellman-Ford graph and all 16
     of its weights fit beside its array only untitled)."""
     titled = [n for n in snaps[-1]["views"] if any(s["views"].get(n, {}).get("title") for s in snaps)]
-    main = [n for n in titled if snaps[-1]["views"][n]["kind"] == "nodes"]
+    main = [n for n in titled if snaps[-1]["views"][n]["kind"] in MAIN_KINDS and n in snaps[-1]["views"]
+            and snaps[-1]["views"][n]["kind"] != "container"]
 
     def untitled(names) -> PictureLayout | None:
         try:
@@ -738,7 +758,7 @@ def plan(snaps: list[dict], width: float, height: float, top: float) -> PictureL
 
 def _plan(snaps: list[dict], width: float, height: float, top: float) -> PictureLayout:
     regions = plan_regions(snaps, width, height, top)
-    graph_pos, cell, scales, labels, fonts = {}, {}, {}, {}, {}
+    graph_pos, cell, scales, labels, fonts, maths = {}, {}, {}, {}, {}, {}
     for name, region in regions.items():
         views = [s["views"][name] for s in snaps if name in s["views"]]
         kind = views[0]["kind"]
@@ -754,6 +774,11 @@ def _plan(snaps: list[dict], width: float, height: float, top: float) -> Picture
                     if tree_labels(v, region, scales[name]) is None:
                         raise PictureError(f"a link label can't be placed clear of the tree in snapshot {i + 1}; "
                                            "use shorter labels or fewer nodes")
+            elif kind in MATH_KINDS:
+                from animation_agent.scene import math_layout as M
+
+                maths[name] = {"axes": M.axes_layout, "venn": M.venn_layout, "geometry": M.geometry_layout}[kind](
+                    views, region)
             elif kind == "cells":
                 cell[name] = cell_size(views, region)
             elif kind == "code":
@@ -761,7 +786,7 @@ def _plan(snaps: list[dict], width: float, height: float, top: float) -> Picture
         except PictureError as e:
             others = [f"{_WHAT[snaps_kind]} {regions[n].h:.1f}" for n in regions if n != name
                       for snaps_kind in [next(s["views"][n]["kind"] for s in snaps if n in s["views"])]]
-            if kind == "nodes" and others:
+            if kind in MAIN_KINDS and others:
                 raise PictureError(f"{e}: it gets {region.h:.1f} of the {height:.1f} units because the other views "
                                    f"take {', '.join(others)}. Drop a view the lines can say instead (a code panel "
                                    "first) before making the example smaller; the slide's own example matters "
@@ -770,4 +795,4 @@ def _plan(snaps: list[dict], width: float, height: float, top: float) -> Picture
                 raise PictureError(f"{e}; use fewer links or nodes, or give the picture the whole frame (it shares "
                                    "the frame whenever the video also shows a formula or note)") from e
             raise
-    return PictureLayout(regions, graph_pos, cell, scales, labels, fonts)
+    return PictureLayout(regions, graph_pos, cell, scales, labels, fonts, math=maths)

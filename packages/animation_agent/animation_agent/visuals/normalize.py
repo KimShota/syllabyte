@@ -73,8 +73,8 @@ def format_call(call: Call) -> str:
 @dataclass
 class _Object:
     template: str
-    start: int  # global beat index of its creation
-    end: int  # last global beat it is on screen
+    start: float  # when it is created: the global beat index, plus a fraction for its call's place in the beat
+    end: float  # when it leaves the screen (a call that removes it, in the same terms), or the end
     where: tuple[int, int, int]  # (segment, beat, call) of its creation
     area: str | None = None
     target: str = ""
@@ -101,19 +101,23 @@ def _objects(segments: list[list[list[str]] | None]) -> list[_Object]:
     for s, draws in enumerate(segments):
         for b, calls in enumerate(draws or []):
             for c, text in enumerate(calls):
+                # calls in a beat run in order: a formula removed before the next is made frees its area for it
+                # (runs/picture-p2, the polar area element: `eq.remove()` then `eq2 = EquationSteps(...)` in one
+                # beat left eq2 no area, so it was refused, and the fixes that followed took the picture's steps)
+                t = g + c / (len(calls) + 1)
                 try:
                     call = parse_call(text, templates)
                 except CallError:
                     continue
                 if call.action is None:
                     if call.target in live:
-                        live.pop(call.target).end = g
-                    obj = _Object(call.template, g, -1, (s, b, c), target=call.target, args=call.args)
+                        live.pop(call.target).end = t
+                    obj = _Object(call.template, t, -1, (s, b, c), target=call.target, args=call.args)
                     objects.append(obj)
                     live[call.target] = obj
                     templates[call.target] = call.template
                 elif call.action == "remove" and call.target in live:
-                    live.pop(call.target).end = g
+                    live.pop(call.target).end = t
             g += 1
     for obj in live.values():
         obj.end = g
@@ -180,6 +184,7 @@ def make_room(segments: list[list[list[str]] | None]) -> tuple[list[list[list[st
         for b, calls in enumerate(draws):
             beat = []
             for c, text in enumerate(calls):
+                t = g + c / (len(calls) + 1)  # as _objects times it
                 try:
                     call = parse_call(text, templates)
                 except CallError:
@@ -187,7 +192,7 @@ def make_room(segments: list[list[list[str]] | None]) -> tuple[list[list[list[st
                     continue
                 if call.action is None:
                     templates[call.target] = call.template
-                if not any(o.target == call.target and o.start <= g <= o.end and (call.action is not None
+                if not any(o.target == call.target and o.start <= t <= o.end and (call.action is not None
                            or o.where == (s, b, c)) for o in drop):
                     beat.append(text)
             seg.append(beat)
@@ -311,7 +316,9 @@ def normalize_script(segments: list[list[list[str]] | None], lines: list[list[st
         # Highest call first within a beat, so dropping a call doesn't shift the next one's index.
         for p in sorted(problems, key=lambda p: (p.segment, p.beat, -(p.call if p.call is not None else -1))):
             calls = segs[p.segment][p.beat - 1]
-            if p.kind in _DROP and not (keep_echo and p.kind == "echo") and p.call is not None and p.call < len(calls):
+            redundant = p.kind == "other" and "is already on screen" in p.message  # showing what is shown
+            if ((p.kind in _DROP and not (keep_echo and p.kind == "echo")) or redundant) and p.call is not None \
+                    and p.call < len(calls):
                 log.append(f"segment {p.segment} beat {p.beat}: dropped `{calls.pop(p.call)}` ({p.kind})")
                 changed = True
             elif p.kind == "text_only" and calls and (p.segment, p.beat) not in keep_text:

@@ -55,14 +55,15 @@ def _as_raw_strings(text: str) -> str:
     return tokenize.untokenize(out)
 
 
-_DOUBLED = re.compile(r"\\\\(?=[A-Za-z])")
+_DOUBLED = re.compile(r"\\\\(?=[A-Za-z,;:!])")  # before a command or a spacing command (\, \; \: \!)
 
 
 def _undouble(value):
     """Strings are read raw, but a model writing calls inside JSON sometimes doubles a backslash ("\\\\Sigma").
     In TeX that is a line break followed by the word "Sigma", and isolating the piece "\\Sigma" in it then
     splits the two backslashes, which LaTeX can't convert (runs/course-test-1, the SVD video). A formula here
-    is one line, so a doubled backslash before a letter is always that mistake."""
+    is one line, so a doubled backslash before a letter is always that mistake; so is one before a spacing
+    command (runs/picture-p2: "dA = r\\\\, dr" drew r, then a line break and ", dr")."""
     if isinstance(value, str):
         return _DOUBLED.sub(r"\\", value)
     if isinstance(value, list):
@@ -86,12 +87,54 @@ def _kwargs(node: ast.Call, where: str) -> dict:
     return args
 
 
+_CLOSE = {"(": ")", "[": "]", "{": "}"}
+
+
+def _closed(text: str) -> str | None:
+    """The call with the brackets left open at its end closed, or None when nothing is left open (outside
+    strings). A long Picture call is sometimes written without its final ')' (runs/picture-p2, the polar area
+    element: a correct 40-line program lost to one missing character)."""
+    stack: list[str] = []
+    quote = None
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == "\\":
+                i += 1
+            elif ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+        elif ch in _CLOSE:
+            stack.append(_CLOSE[ch])
+        elif ch in ")]}":
+            if not stack or stack.pop() != ch:
+                return None
+        i += 1
+    if quote or not stack:
+        return None
+    return text + "".join(reversed(stack))
+
+
+def _parse(text: str) -> ast.Module:
+    text = text.strip()
+    try:
+        return ast.parse(_as_raw_strings(text))
+    except (SyntaxError, CallError) as e:
+        if (fixed := _closed(text)) is not None:
+            try:
+                return ast.parse(_as_raw_strings(fixed))
+            except (SyntaxError, CallError):
+                pass
+        if isinstance(e, CallError):
+            raise
+        raise CallError(f"not valid Python: {e.msg}") from e
+
+
 def parse_call(text: str, templates_of: dict[str, str]) -> Call:
     """One call. `templates_of` maps the names created so far in this segment to their template."""
-    try:
-        tree = ast.parse(_as_raw_strings(text.strip()))
-    except SyntaxError as e:
-        raise CallError(f"not valid Python: {e.msg}") from e
+    tree = _parse(text)
     if len(tree.body) != 1:
         raise CallError("one statement per call")
     stmt = tree.body[0]
@@ -727,7 +770,7 @@ TEXT_ONLY_ACTIONS = {"note", "say", "clear", "unpoint", "counter", "clear_ghosts
 def _call_name(text: str) -> tuple[ast.Call | None, str | None]:
     """The call node and its template or action name, without checking anything."""
     try:
-        stmt = ast.parse(_as_raw_strings(text.strip())).body[0]
+        stmt = _parse(text).body[0]
     except (CallError, SyntaxError, IndexError):
         return None, None
     call = getattr(stmt, "value", None)

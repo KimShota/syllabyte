@@ -29,6 +29,9 @@ from syllabyte_common.models import DialogueScript, SegmentAudio, Speaker, WordT
 from animation_agent.frame import DIALOGUE
 
 FONT_PATH = Path(__file__).parent / "fonts" / "Montserrat-ExtraBold.ttf"
+# Montserrat has no Greek beyond π, Δ and μ, so "r sin θ" showed a box (runs/picture-p2, the polar area element).
+# Any character it lacks is drawn in DejaVu Sans Bold, which has Greek and the math symbols.
+FALLBACK_PATH = Path(__file__).parent / "fonts" / "DejaVuSans-Bold.ttf"
 MAX_CHUNK_WORDS = 3
 MAX_CHUNK_CHARS = 18
 WHITE = (255, 255, 255)
@@ -138,7 +141,7 @@ def band_timeline(script: DialogueScript, audios: list[SegmentAudio]) -> list[Ba
                 end = t + words[chunks[k + 1][0]].start if k + 1 < len(chunks) else t + duration
                 states.append(BandState(
                     start=start, end=max(end, start), speaker=beat.speaker,
-                    words=[CaptionWord(words[i].word.upper(), colours[i]) for i in chunk],
+                    words=[CaptionWord(caption_case(words[i].word), colours[i]) for i in chunk],
                 ))
             if not chunks:
                 states.append(BandState(start=t, end=t + duration, speaker=beat.speaker, words=[]))
@@ -157,6 +160,59 @@ def _font(size: int) -> ImageFont.FreeTypeFont:
 
 
 @cache
+def _fallback(size: int) -> ImageFont.FreeTypeFont:
+    # DejaVu runs a little larger than Montserrat at one size: scaled so the two look alike side by side
+    return ImageFont.truetype(str(FALLBACK_PATH), round(size * 0.92))
+
+
+@cache
+def _covered() -> frozenset[int] | None:
+    """The characters Montserrat has, or None when they can't be read (then anything past Latin-1 falls back)."""
+    try:
+        from fontTools.ttLib import TTFont
+
+        return frozenset(TTFont(str(FONT_PATH)).getBestCmap())
+    except Exception:
+        return None
+
+
+def _has(ch: str) -> bool:
+    covered = _covered()
+    return ord(ch) in covered if covered is not None else ord(ch) < 256
+
+
+def _runs(text: str) -> list[tuple[str, bool]]:
+    """The text in runs of (characters, drawn in the fallback font)."""
+    runs: list[tuple[str, bool]] = []
+    for ch in text:
+        fallback = not _has(ch)
+        if runs and runs[-1][1] == fallback:
+            runs[-1] = (runs[-1][0] + ch, fallback)
+        else:
+            runs.append((ch, fallback))
+    return runs
+
+
+def _length(text: str, size: int) -> float:
+    return sum((_fallback(size) if fb else _font(size)).getlength(run) for run, fb in _runs(text))
+
+
+def _draw_text(draw: ImageDraw.ImageDraw, xy: tuple[float, float], text: str, size: int, fill, stroke: int) -> None:
+    x, y = xy
+    ascent = _font(size).getmetrics()[0]
+    for run, fb in _runs(text):
+        font = _fallback(size) if fb else _font(size)
+        dy = ascent - font.getmetrics()[0]  # the two fonts share a baseline
+        draw.text((x, y + dy), run, font=font, fill=fill, stroke_width=stroke, stroke_fill=BLACK)
+        x += font.getlength(run)
+
+
+def caption_case(word: str) -> str:
+    """A word in capitals, Latin letters only: θ stays θ (Θ is another symbol), δ stays δ (Δ means a change)."""
+    return "".join(c.upper() if c.isascii() else c for c in word)
+
+
+@cache
 def _character_image(path: str, max_w: int, max_h: int) -> Image.Image:
     img = Image.open(path).convert("RGBA")
     scale = min(max_w / img.width, max_h / img.height)
@@ -172,14 +228,14 @@ def _pieces(words: list[CaptionWord]) -> list[CaptionWord]:
     return out
 
 
-def _wrap(words: list[CaptionWord], font: ImageFont.FreeTypeFont, max_w: int) -> list[list[CaptionWord]] | None:
+def _wrap(words: list[CaptionWord], size: int, max_w: int) -> list[list[CaptionWord]] | None:
     """Words in lines no wider than max_w, or None if one word alone is wider. A piece ending in a hyphen joins
     the next one on its line without a space."""
-    space = font.getlength(" ")
+    space = _font(size).getlength(" ")
     lines: list[list[CaptionWord]] = [[]]
     width = 0.0
     for w in words:
-        ww = font.getlength(w.text)
+        ww = _length(w.text, size)
         if ww > max_w:
             return None
         gap = 0.0 if not lines[-1] or lines[-1][-1].text.endswith("-") else space
@@ -207,28 +263,27 @@ def draw_band(state: BandState, cast: Cast, width: int, height: int, cast_dir: P
     size, floor = round(height * 0.16), round(height * 0.11)
     words = _pieces(state.words)
     while True:
-        font = _font(size)
-        lines = _wrap(words, font, box_w)
+        lines = _wrap(words, size, box_w)
         line_h = round(size * 1.15)
         if lines is not None and len(lines) <= 3 and line_h * len(lines) <= box_h or size <= floor:
             break
         size -= 2
     if lines is None:  # one piece is wider than the box even at the floor size: shrink just enough for it
-        widest = max(font.getlength(w.text) for w in words)
+        widest = max(_length(w.text, size) for w in words)
         size = max(10, int(size * box_w / widest))
-        font, line_h = _font(size), round(size * 1.15)
-        lines = _wrap(words, font, box_w) or [words]
+        line_h = round(size * 1.15)
+        lines = _wrap(words, size, box_w) or [words]
     draw = ImageDraw.Draw(band)
     stroke = max(2, round(size * 0.12))
-    space = font.getlength(" ")
+    space = _font(size).getlength(" ")
     y = (height - line_h * len(lines)) / 2
     for line in lines:
         gaps = [0.0 if w.text.endswith("-") else space for w in line[:-1]]
-        line_w = sum(font.getlength(w.text) for w in line) + sum(gaps)
+        line_w = sum(_length(w.text, size) for w in line) + sum(gaps)
         cx = left + (box_w - line_w) / 2
         for k, w in enumerate(line):
-            draw.text((cx, y), w.text, font=font, fill=w.colour, stroke_width=stroke, stroke_fill=BLACK)
-            cx += font.getlength(w.text) + (gaps[k] if k < len(gaps) else 0)
+            _draw_text(draw, (cx, y), w.text, size, w.colour, stroke)
+            cx += _length(w.text, size) + (gaps[k] if k < len(gaps) else 0)
         y += line_h
     return band
 

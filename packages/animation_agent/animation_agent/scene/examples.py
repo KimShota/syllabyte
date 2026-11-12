@@ -142,3 +142,103 @@ snap('4 gallons left in the 5-gallon jug')
 '''
 
 PROGRAMS = {"union_find": UNION_FIND, "llrb": LLRB, "water_jugs": WATER_JUGS}
+
+# ---- math (P2) ---------------------------------------------------------------------------------------------
+
+RIEMANN = '''
+f = lambda x: x * x / 2 + 1
+a = axes('a', x=(0, 4), title='area under f')
+a.plot('f', f, label='f(x)')
+exact = integral(f, 0, 4)
+snap('f(x) = x^2/2 + 1, from 0 to 4', name='curve')
+for n in (2, 4, 8, 16):
+    total = a.riemann('rects', f, 0, 4, n, rule='left')
+    snap(f'{n} left rectangles: {total:.2f} in all', name='n' + str(n))
+a.remove('rects')
+a.area('exact', f, 0, 4, label=f'{exact:.2f}')
+snap(f'the exact area is {exact:.2f}: the sums climb toward it', name='exact')
+'''
+
+TANGENT = '''
+f = lambda x: x * x
+a = axes('a', x=(-1, 3), title='slope of x^2 at 1')
+a.plot('f', f, label='x^2')
+a.point('p', 1, f(1), label='P')
+snap('the point P = (1, 1) on y = x^2', name='p')
+for k, h in enumerate((1.5, 0.8, 0.3)):
+    m = (f(1 + h) - f(1)) / h
+    a.point('q', 1 + h, f(1 + h), label='Q', style='compare')
+    a.line('sec', (0, f(1) - m), (1 + h + 0.3, f(1) + m * (h + 0.3)), style='compare')
+    snap(f'Q is {h} to the right: the secant PQ has slope {m:.2f}', name='h' + str(k))
+a.remove('q')
+a.remove('sec')
+m = a.tangent('tan', f, 1, half=1.0, label='slope ' + str(round(m)))
+snap(f'as Q reaches P the slope settles at {m:.0f}: the tangent', name='tangent')
+'''
+
+LEVEL_CURVES = '''
+F = lambda x, y: x * x + 2 * y * y
+a = axes('a', x=(-4, 4), y=(-3, 3), equal=True, title='levels of F')
+for c in (1, 4, 9):
+    a.contour('c' + str(c), F, c, label=str(c))
+    snap(f'every point where x^2 + 2y^2 = {c}', name='level' + str(c))
+a.field('grad', lambda x, y: (2 * x, 4 * y), n=6)
+snap('the gradient (2x, 4y) crosses every level curve at a right angle', name='grad')
+'''
+
+VENN3 = '''
+v = venn('v', {'A': {1, 2, 3, 4}, 'B': {3, 4, 5, 6}, 'C': {4, 6, 7}}, universe={8})
+v.show_elements()
+snap('A, B and C; 8 is in none of them', name='sets')
+v.shade('A&B')
+snap('A and B share ' + str(sorted(v.region('A&B'))), name='and')
+v.unshade()
+v.shade('(A|B)-C')
+snap('in A or B but not C: ' + str(sorted(v.region('(A|B)-C'))), name='minus')
+v.unshade()
+v.shade('~(A|B|C)', 'grey')
+snap('outside all three: ' + str(sorted(v.region('~(A|B|C)'))), name='none')
+'''
+
+TRIANGLE = '''
+g = geometry('g', title='a triangle')
+g.point('A', 0, 0)
+g.point('B', 4, 0)
+g.point('C', 1.3, 2.6)
+g.polygon('t', ['A', 'B', 'C'])
+snap('triangle ABC', name='tri')
+a = g.angle('a', 'B', 'A', 'C')
+g.angle('a', 'B', 'A', 'C', label=f'{a:.0f}°')
+snap(f'the angle at A is {a:.0f} degrees', name='a')
+b = g.angle('b', 'C', 'B', 'A', style='compare')
+g.angle('b', 'C', 'B', 'A', label=f'{b:.0f}°', style='compare')
+snap(f'the angle at B is {b:.0f} degrees', name='b')
+c = g.angle('c', 'A', 'C', 'B', style='visited')
+g.angle('c', 'A', 'C', 'B', label=f'{c:.0f}°', style='visited')
+snap(f'{a:.0f} + {b:.0f} + {c:.0f} = {a + b + c:.0f} degrees', name='sum')
+'''
+
+PROBABILITY_TREE = '''
+red, blue = 3, 2
+t = nodes('t', ['S'], title='two draws')
+first = {'R': Fraction(red, red + blue), 'B': Fraction(blue, red + blue)}
+for c, p in first.items():
+    t.add(c)
+    t.link('S', c, label=str(p))
+snap('3 red and 2 blue balls: the first draw is red 3/5 of the time', name='first')
+both = {}
+for c, p in first.items():
+    r, b = red - (c == 'R'), blue - (c == 'B')
+    for d, q in (('R', Fraction(r, r + b)), ('B', Fraction(b, r + b))):
+        t.add(c + d)
+        t.link(c, c + d, label=str(q))
+        both[c + d] = p * q
+snap('the second draw: one ball fewer in the bag', name='second')
+t.mark('R', 'found')
+t.mark('RR', 'found')
+rr = both['RR']
+snap(f'two reds: 3/5 times 2/4 = {rr}', name='rr')
+'''
+
+MATH_PROGRAMS = {"riemann": RIEMANN, "tangent": TANGENT, "level_curves": LEVEL_CURVES, "venn3": VENN3,
+                 "triangle": TRIANGLE, "probability_tree": PROBABILITY_TREE}

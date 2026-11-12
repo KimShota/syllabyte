@@ -15,7 +15,15 @@ from __future__ import annotations
 import numpy as np
 from manim import (
     BLACK,
+    BLUE_C,
     BLUE_D,
+    PINK,
+    Arc,
+    Difference,
+    Dot,
+    Intersection,
+    Polygon,
+    ReplacementTransform,
     GREEN,
     GREY_B,
     GREY_C,
@@ -40,11 +48,14 @@ from manim import (
 from animation_agent.frame import scene_safe_size
 from animation_agent.layout_audit import BACKGROUND_ATTR
 from animation_agent.scene import layout as L
+from animation_agent.scene import math_layout as M
 
 FONT = 30
 MONO = "Menlo"
 STYLE_COLOUR = {None: WHITE, "current": YELLOW, "visited": TEAL, "found": GREEN, "compare": ORANGE, "red": RED,
-                "grey": GREY_C, "new": YELLOW}
+                "grey": GREY_C, "new": YELLOW, "blue": BLUE_C}
+CURVE_COLOURS = (BLUE_C, ORANGE, PINK, TEAL)  # unstyled curves, in the order they were drawn
+FILL = 0.4  # shaded areas, rectangles and Venn regions: translucent, so what is under them shows
 LIQUID = BLUE_D
 
 
@@ -91,7 +102,7 @@ class PictureRunner:
         for name, view in self.snaps[i]["views"].items():
             region = self.layout.regions[name]
             if view.get("title") and view["kind"] != "container":
-                t = _text(view["title"], GREY_B)
+                t = _text(M.pretty(view["title"]), GREY_B)
                 t.move_to([region.cx, region.top - L.TITLE_H / 2, 0])
                 out[f"{name}:title"] = t
             getattr(self, f"_{view['kind']}")(name, view, region, out)
@@ -225,6 +236,157 @@ class PictureRunner:
             t.move_to([region.cx, top + L.TITLE_H / 2 + 0.06, 0])
             out[f"{name}:title"] = t
 
+    # ---- math ------------------------------------------------------------------------------------------
+
+    def _colour(self, it: dict, order: int):
+        if it.get("style"):
+            return STYLE_COLOUR[it["style"]]
+        return CURVE_COLOURS[order % len(CURVE_COLOURS)] if it["type"] in ("curve", "area", "rects") else WHITE
+
+    def _label(self, name, key, text, at, colour, out):
+        out[f"{name}:label:{key}"] = Text(M.pretty(text), font_size=FONT, color=colour).move_to([at[0], at[1], 0])
+
+    def _axes(self, name, view, region, out):
+        lay: M.AxesLayout = self.layout.math[name]
+        x0, x1, y0, y1 = lay.box
+        lo, hi = (x0, y0), (x1, y1)
+        out[f"{name}:xaxis"] = Line([x0, lay.xaxis_y, 0], [x1, lay.xaxis_y, 0], stroke_width=2, color=GREY_B)
+        out[f"{name}:yaxis"] = Line([lay.yaxis_x, y0, 0], [lay.yaxis_x, y1, 0], stroke_width=2, color=GREY_B)
+        # tick labels along the plot's bottom and left edges; their marks on the axes themselves
+        for t, text, c in lay.xticks:
+            sx = lay.to_screen((t, 0))[0]
+            out[f"{name}:xtick:{text}"] = VGroup(
+                Line([sx, lay.xaxis_y - 0.05, 0], [sx, lay.xaxis_y + 0.05, 0], stroke_width=2, color=GREY_B),
+                Text(text, font_size=FONT, color=GREY_B).move_to([c[0], c[1], 0]))
+        for t, text, c in lay.yticks:
+            sy = lay.to_screen((0, t))[1]
+            out[f"{name}:ytick:{text}"] = VGroup(
+                Line([lay.yaxis_x - 0.05, sy, 0], [lay.yaxis_x + 0.05, sy, 0], stroke_width=2, color=GREY_B),
+                Text(text, font_size=FONT, color=GREY_B).move_to([c[0], c[1], 0]))
+        if lay.xlabel is not None and view["xlabel"]:
+            out[f"{name}:xname"] = Text(M.pretty(view["xlabel"]), font_size=FONT, color=GREY_B).move_to(
+                [lay.xlabel[0], lay.xlabel[1], 0])
+        if lay.ylabel is not None and view["ylabel"]:
+            out[f"{name}:yname"] = Text(M.pretty(view["ylabel"]), font_size=FONT, color=GREY_B).move_to(
+                [lay.ylabel[0], lay.ylabel[1], 0])
+        for order, (key, it) in enumerate(view["items"].items()):
+            colour = self._colour(it, order)
+            part = None
+            t = it["type"]
+            if t in ("curve", "segment"):
+                pieces = [piece for line in M.item_polylines(it, lay) for piece in M.clip_polyline(line, lo, hi)]
+                if (key, it.get("label")) in lay.inline:  # the label is set into the curve: the curve breaks there
+                    c = lay.labels[(key, it["label"])]
+                    half = M.text_half(it["label"]) + 0.02
+                    pieces = [p for piece in pieces for p in M.cut_out(piece, c - half, c + half)]
+                lines = [VMobject(stroke_width=4 if t == "curve" else 3, color=colour).set_points_as_corners(
+                    [[x, y, 0] for x, y in piece]) for piece in pieces]
+                part = lines[0] if len(lines) == 1 else VGroup(*lines) if lines else None
+            elif t == "area":
+                pts = [(min(max(x, x0), x1), min(max(y, y0), y1)) for x, y in M.item_polylines(it, lay)[0][:-1]]
+                part = Polygon(*[[x, y, 0] for x, y in pts], stroke_width=0, fill_color=colour, fill_opacity=FILL)
+            elif t == "rects":
+                rects = []
+                for poly in M.item_polylines(it, lay):
+                    pts = [(min(max(x, x0), x1), min(max(y, y0), y1)) for x, y in poly]
+                    rects.append(Polygon(*[[x, y, 0] for x, y in pts], stroke_width=2, color=colour,
+                                         fill_color=colour, fill_opacity=FILL))
+                part = VGroup(*rects)
+            elif t == "point":
+                sx, sy = lay.to_screen(it["at"])
+                if x0 - 1e-6 <= sx <= x1 + 1e-6 and y0 - 1e-6 <= sy <= y1 + 1e-6:
+                    part = Dot([sx, sy, 0], radius=M.POINT_R, color=colour)
+            elif t == "field":
+                hidden = lay.hidden.get(key, set())
+                part = VGroup(*[Arrow([a[0], a[1], 0], [b[0], b[1], 0], buff=0, stroke_width=3, color=colour,
+                                      tip_length=0.1, max_tip_length_to_length_ratio=0.4)
+                                for j, (a, b) in enumerate(M.field_arrows(it, lay)) if j not in hidden])
+            if part is not None:
+                out[f"{name}:item:{key}"] = part
+            if it.get("label") and (key, it["label"]) in lay.labels:
+                self._label(name, key, it["label"], lay.labels[(key, it["label"])], colour, out)
+
+    def _venn(self, name, view, region, out):
+        lay: M.VennLayout = self.layout.math[name]
+        circles = [Circle(radius=r, color=WHITE, stroke_width=4).move_to([c[0], c[1], 0]) for c, r in lay.circles]
+        universe = None
+        if lay.universe:
+            ux0, ux1, uy0, uy1 = lay.universe
+            universe = Rectangle(width=ux1 - ux0, height=uy1 - uy0, stroke_width=2, color=GREY_B).move_to(
+                [(ux0 + ux1) / 2, (uy0 + uy1) / 2, 0])
+            out[f"{name}:universe"] = universe
+        style_of: dict[str, str] = {}
+        for cells, style in view["shaded"]:
+            for m in cells:
+                style_of[m] = style
+        for m, style in style_of.items():
+            region_shape = self._venn_cell(m, circles, universe)
+            if region_shape is not None:
+                region_shape.set_stroke(width=0).set_fill(STYLE_COLOUR[style], opacity=FILL)
+                out[f"{name}:shade:{m}"] = region_shape
+        for k, (circle, set_name, at) in enumerate(zip(circles, view["sets"], lay.names)):
+            out[f"{name}:set:{set_name}"] = circle
+            out[f"{name}:setname:{set_name}"] = Text(set_name, font_size=FONT, color=WHITE).move_to([at[0], at[1], 0])
+        for e in view["elements"]:
+            if e in lay.elements:
+                p = lay.elements[e]
+                out[f"{name}:elem:{e}"] = Text(e, font_size=FONT, color=WHITE).move_to([p[0], p[1], 0])
+
+    @staticmethod
+    def _venn_cell(member: str, circles, universe):
+        """The region inside the circles marked 1 and outside those marked 0 (outside all: inside the box)."""
+        inside = [c for c, bit in zip(circles, member) if bit == "1"]
+        outside = [c for c, bit in zip(circles, member) if bit == "0"]
+        if inside:
+            shape = inside[0].copy()
+            for c in inside[1:]:
+                shape = Intersection(shape, c)
+        elif universe is not None:
+            shape = universe.copy()
+        else:
+            return None
+        for c in outside:
+            shape = Difference(shape, c)
+        return shape
+
+    def _geometry(self, name, view, region, out):
+        lay: M.GeometryLayout = self.layout.math[name]
+        pts = M.geometry_points(view, lay)
+        for key, it in view["items"].items():
+            colour = STYLE_COLOUR[it.get("style")]
+            t = it["type"]
+            if t == "segment":
+                a, b = pts[it["ends"][0]], pts[it["ends"][1]]
+                part = Line([a[0], a[1], 0], [b[0], b[1], 0], stroke_width=4, color=colour)
+            elif t == "polygon":
+                part = Polygon(*[[pts[k][0], pts[k][1], 0] for k in it["points"]], stroke_width=4, color=colour,
+                               fill_color=colour, fill_opacity=FILL if it["fill"] else 0)
+            elif t == "circle":
+                c = pts[it["center"]]
+                part = Circle(radius=it["r"] * lay.scale, stroke_width=4, color=colour).move_to([c[0], c[1], 0])
+            elif t == "angle":
+                v = pts[it["vertex"]]
+                part = Arc(radius=M.ANGLE_R, start_angle=it["start"], angle=it["sweep"], arc_center=[v[0], v[1], 0],
+                           stroke_width=4, color=colour)
+            elif t == "arc":
+                part = VMobject(stroke_width=4, color=colour).set_points_as_corners(
+                    [[x, y, 0] for x, y in M.ring_points(it, pts, lay)])
+            elif t == "sector":
+                part = Polygon(*[[x, y, 0] for x, y in M.ring_points(it, pts, lay)[:-1]], stroke_width=3,
+                               color=colour, fill_color=colour, fill_opacity=FILL if it["fill"] else 0)
+            else:
+                continue
+            out[f"{name}:item:{key}"] = part
+            if it.get("label") and (key, it["label"]) in lay.labels:
+                self._label(name, key, it["label"], lay.labels[(key, it["label"])], colour, out)
+        for k, p in view["points"].items():
+            if p.get("hidden"):  # made from a coordinate pair: a corner or a centre, not a point to show
+                continue
+            colour = STYLE_COLOUR[p.get("style")]
+            out[f"{name}:point:{k}"] = Dot([pts[k][0], pts[k][1], 0], radius=M.POINT_R, color=colour)
+            if p["label"] and (f"pt-{k}", p["label"]) in lay.labels:
+                self._label(name, f"pt-{k}", p["label"], lay.labels[(f"pt-{k}", p["label"])], colour, out)
+
     # ---- showing ---------------------------------------------------------------------------------------
 
     def changes(self, i: int) -> list:
@@ -240,6 +402,11 @@ class PictureRunner:
                 self.on_screen[key] = new
             elif _same_parts(old, new):
                 anims.append(old.animate.become(new))
+            elif ":item:" in key:  # a math thing that changed shape (more rectangles, a new curve): it morphs
+                anims.append(ReplacementTransform(old, new))
+                self._drop(old)
+                self._keep(new)
+                self.on_screen[key] = new
             else:
                 anims += [FadeOut(old), FadeIn(new)]
                 self._drop(old)

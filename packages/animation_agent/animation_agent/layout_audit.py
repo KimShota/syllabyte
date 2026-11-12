@@ -212,6 +212,26 @@ def _overlap_area(a: _Unit, b: _Unit) -> float:
     return w * h
 
 
+def _covers_part_of(shape: Mobject, text_bbox: np.ndarray) -> bool:
+    """Whether the filled shape's outline (not just its bounding box) takes in any of the label: a grid of points
+    over the label, tested against the outline's anchors (even-odd rule). A curved region (the area between two
+    curves, a Venn region) has a bounding box much bigger than itself, and a label beside it sits inside that box."""
+    anchors = shape.get_anchors() if hasattr(shape, "get_anchors") else shape.get_points()
+    if len(anchors) < 3:
+        return True
+    poly = np.asarray(anchors)[:, :2]
+    xs = np.linspace(text_bbox[0], text_bbox[2], 6)
+    ys = np.linspace(text_bbox[1], text_bbox[3], 4)
+    x1, y1 = poly[:, 0], poly[:, 1]
+    x2, y2 = np.roll(x1, -1), np.roll(y1, -1)
+    for x in xs:
+        for y in ys:
+            crosses = ((y1 > y) != (y2 > y)) & (x < (x2 - x1) * (y - y1) / np.where(y2 == y1, 1e-12, y2 - y1) + x1)
+            if np.count_nonzero(crosses) % 2:
+                return True
+    return False
+
+
 def _contains(outer: np.ndarray, inner: np.ndarray, tol: float = 0.02) -> bool:
     return (outer[0] - tol <= inner[0] and outer[1] - tol <= inner[1]
             and inner[2] <= outer[2] + tol and inner[3] <= outer[3] + tol)
@@ -356,7 +376,8 @@ def _check_text_vs_region(text: _Unit, shape: _Unit, *, shape_on_top: bool) -> F
             ("covered", shape.label, text.label),
         )
     if (not holds_label and (fill > VISIBLE_OPACITY or is_dot)
-            and area > MIN_OVERLAP_FRACTION * min(text.area, shape.area)):
+            and area > MIN_OVERLAP_FRACTION * min(text.area, shape.area)
+            and (is_dot or _covers_part_of(shape.mob, text.bbox))):
         return Finding(
             "overlap",
             f"{text.label} partly overlaps {shape.label}. Put the label fully inside the shape "

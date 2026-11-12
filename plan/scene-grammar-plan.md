@@ -169,6 +169,46 @@ number goes in the report.
   views in the portrait frame still leave the array at its compact size; union-find's single-node trees sit
   close.
 - **P2:** axes and space views for Math (regions, Riemann sums, fields, level curves, 3D, any-set Venn) with sympy.
+  **Built 2026-11-12** (no LLM spend; videos not yet made): `axes` (plot, which breaks where f is undefined; area;
+  riemann, returning the total; tangent, returning the slope; line; point; field; contour by marching squares),
+  `venn` (1-3 sets, regions as expressions such as `(A|B)-C`, elements in their regions) and `geometry`
+  (points, segments, circles, polygons, angle arcs returning degrees, one scale for x and y); math helpers in the
+  sandbox (sin ... gcd, derivative, integral by Simpson's rule, root by bisection, Fraction). All values come
+  from running the program. Layout in `scene/math_layout.py`, with the same rules as graphs: tick labels outside
+  the plot, labels clear of everything on screen with them (a curve's label set into the curve when there is no
+  room beside it, contour-plot style; vector-field arrows give way to labels), Venn elements tested inside their
+  own region, titles clear of axis names. Things keep their keys, so a Riemann sum going from 4 to 8 rectangles
+  morphs. Six worked examples (Riemann sums, secants to tangent, level curves with a gradient field, 3-set
+  Venn, a triangle's angles, a probability tree with Fractions) render with 0 audit findings; 12 new tests.
+  Deviations: no sympy (pure Python numerics in the sandbox keep it import-free; exact symbolic forms are not
+  available yet); Venn diagrams stop at 3 sets (4 or more need ellipses or a membership table); 3D surfaces
+  are deferred (a 3D camera in the portrait frame is its own piece of work).
+  **First run, 2026-11-12** (runs/picture-p2; MIT 18.01 lecture 15 and 18.02 week 7; about $0.85 in all): linear
+  approximation of 65^(1/3) 64 s, visual alignment 3; exchanging the order of integration 101 s, 5; the polar
+  area element 93 s, 3. The planner wrote sound programs every time (the tangent at 64 beside x^(1/3), the region
+  between y = x and y = sqrt x with its slices, polar patches), but three things lost them: (1) one label with
+  no clear place refused the whole picture, so the planner dropped the formulas (linear approximation) or drew
+  again (exchange order); (2) the polar program passed a coordinate pair where geometry wanted a point's key,
+  then lost its closing ')' on the redraw, so the segment fell back to written code and the rest showed only
+  formulas; (3) the audit compared a label with a curved region's bounding box. Fixed: a label with no clear
+  place is left out (never drawn over anything) and the picture kept; geometry takes (x, y) wherever it takes a
+  point, and gains arc() and sector() (a polar patch, returning its area); a call missing only its closing
+  brackets is closed; blank labels count as none; the audit tests a filled shape's outline; 65^1/3 is no longer
+  shown as a power. Every planned program from the run is now accepted and renders with 0 findings.
+  **Rerun of the two weak ones** (about $0.34; round 1 in runs/picture-p2/round1): linear approximation 60 s,
+  visual alignment 3 -> 5 (accuracy 7), the picture now beside its formulas throughout; the polar area element
+  69 s, 3 -> 4 (accuracy 8), the Picture drawn this time, but all its steps lost: one beat removed a formula and
+  made the next, and the layout counted both on screen at once, so the new one got no area, was refused, and the
+  fix call that followed took the picture's shows; its formulas were also drawn broken ("r\\, dr": a doubled
+  backslash before a spacing command is a TeX line break). Fixed: objects are timed by their call's place in the
+  beat, so a removal frees its area for what comes after it; a show of the snapshot already on screen is dropped
+  by code, not sent to the fix call; a doubled backslash before \, \; \: \! is undoubled like one before a
+  letter. The polar plan now settles in code with all its shows (5) and formulas (23). The subtitle font
+  (Montserrat) has no Greek beyond pi, Delta and mu, so theta showed as a box: captions now draw any character it
+  lacks in DejaVu Sans Bold (bundled, with its licence), and capitalise only Latin letters (delta stays delta).
+  **Polar rerun** (73 s, about $0.38; the previous one in runs/picture-p2/round2): visual alignment 3 -> 4 -> 6,
+  accuracy 8; the picture changes on 5 lines (the ray r, theta; a patch near the origin, one farther out), the
+  formulas draw whole, and the captions show theta. P2 so far: 3 topics, visual alignment 5, 5, 6, about $1.38.
 - **P3:** layer 2 (checked codegen on primitives), icon set, miss log.
 - **P4:** benchmark; templates kept only where they beat the grammar.
 

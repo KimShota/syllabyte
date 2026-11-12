@@ -268,3 +268,93 @@ def test_a_node_is_big_enough_for_its_label():
 def test_pointers_under_one_cell_stack():
     snaps = run("a = cells('a', [1, 2, 3])\na.point('lo', 1)\na.point('hi', 1)\nsnap()")
     assert L.pointer_rows([snaps[0]["views"]["a"]]) == 2
+
+
+# ---- math views (P2) ---------------------------------------------------------------------------------------
+
+from animation_agent.scene.examples import MATH_PROGRAMS  # noqa: E402
+
+
+def _captions(source):
+    return {s["name"]: s["caption"] for s in run(source)}
+
+
+def test_riemann_sums_are_computed_and_climb_to_the_integral():
+    caps = _captions(MATH_PROGRAMS["riemann"])
+    # f = x^2/2 + 1 on [0, 4], left ends: n = 4 gives 1 + 1.5 + 3 + 5.5 = 11
+    assert caps["n4"] == "4 left rectangles: 11.00 in all"
+    assert "14.67" in caps["exact"]  # 32/3 + 4
+    totals = [float(caps[f"n{n}"].split(": ")[1].split()[0]) for n in (2, 4, 8, 16)]
+    assert totals == sorted(totals) and totals[-1] < 14.67
+
+
+def test_the_tangent_slope_and_the_triangle_and_the_tree_are_computed():
+    assert "settles at 2" in _captions(MATH_PROGRAMS["tangent"])["tangent"]
+    assert _captions(MATH_PROGRAMS["triangle"])["sum"].endswith("= 180 degrees")
+    assert _captions(MATH_PROGRAMS["probability_tree"])["rr"].endswith("= 3/10")
+
+
+def test_a_level_curve_lies_on_its_level():
+    snaps = run("a = axes('a', x=(-2, 2), y=(-2, 2), equal=True)\na.contour('c', lambda x, y: x*x + y*y, 1)\nsnap()")
+    pts = [p for piece in snaps[0]["views"]["a"]["items"]["c"]["pieces"] for p in piece]
+    assert len(pts) > 40 and all(abs(x * x + y * y - 1) < 0.02 for x, y in pts)
+
+
+def test_a_curve_breaks_where_it_is_undefined():
+    snaps = run("a = axes('a', x=(-2, 2))\na.plot('f', lambda x: 1 / x)\nsnap()")
+    pieces = snaps[0]["views"]["a"]["items"]["f"]["pieces"]
+    assert len(pieces) == 2 and all(x < 0 for x, _ in pieces[0]) and all(x > 0 for x, _ in pieces[1])
+
+
+def test_venn_regions_are_set_operations():
+    caps = _captions(MATH_PROGRAMS["venn3"])
+    assert caps["and"] == "A and B share [3, 4]"
+    assert caps["minus"] == "in A or B but not C: [1, 2, 3, 5]"
+    assert caps["none"] == "outside all three: [8]"
+    snaps = run(MATH_PROGRAMS["venn3"])
+    assert snaps[1]["views"]["v"]["shaded"] == [[["110", "111"], "found"]]  # A&B: in A and B, in or out of C
+    assert snaps[2]["views"]["v"]["shaded"] == [[["010", "100", "110"], "found"]]  # (A|B)-C
+
+
+@pytest.mark.parametrize("source, why", [
+    ("a = axes('a')\nroot(lambda x: x * x + 1, -1, 1)\nsnap()", "same sign"),
+    ("v = venn('v', {'A': {1}, 'B': {2}, 'C': {3}, 'D': {4}})\nsnap()", "1-3 sets"),
+    ("v = venn('v', {'A': {1}})\nv.shade('A; 1')\nsnap()", "use set names"),
+    ("a = axes('a')\na.plot('f', lambda x: x, label='a long label')\nsnap()", "longer than 8"),
+])
+def test_math_mistakes_are_sent_back_with_a_reason(source, why):
+    assert why in run_program(source).error
+
+
+def test_every_math_example_lays_out_in_the_dialogue_frame():
+    for source in MATH_PROGRAMS.values():
+        L.plan(run(source), *DIALOGUE)
+
+
+def test_axes_labels_stay_clear_of_every_line_on_screen_with_them():
+    import numpy as np
+    from animation_agent.scene import math_layout as M
+
+    for key in ("riemann", "tangent", "level_curves"):
+        snaps = run(MATH_PROGRAMS[key])
+        lay = L.plan(snaps, 3.8, 4.7, 2.35).math["a"]
+        x0, x1, y0, y1 = lay.box
+        for (thing, text), c in lay.labels.items():
+            half = M.text_half(text) - M.ROOM
+            for s in snaps:
+                items = s["views"]["a"]["items"]
+                if thing not in items or items[thing].get("label") != text:
+                    continue
+                for other, it in items.items():
+                    if it["type"] == "field" or (other == thing and (thing, text) in lay.inline):
+                        continue
+                    for line in M.item_polylines(it, lay):
+                        for piece in M.clip_polyline(line, (x0, y0), (x1, y1)):
+                            assert not any(M.seg_hits_box(p, q, c - half, c + half) for p, q in zip(piece, piece[1:])), \
+                                (key, thing, other)
+
+
+def test_titles_and_names_show_powers_as_superscripts():
+    from animation_agent.scene.math_layout import pretty
+
+    assert pretty("x^2") == "x²" and pretty("slope of x^2 at 1") == "slope of x² at 1" and pretty("e^-x") == "e⁻x"

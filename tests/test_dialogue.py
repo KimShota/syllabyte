@@ -279,3 +279,11 @@ def test_dialogue_videos_have_their_own_cache_key(tmp_path, monkeypatch):
     assert dialogue != mono
     Image.new("RGBA", (10, 10)).save(cast_dir / "a.png")  # a new explainer image remakes the video
     assert video_key(corpus, ku, 2, [], style="dialogue") != dialogue
+
+
+def test_captions_draw_greek_in_the_fallback_font_and_keep_its_case():
+    from animation_agent.dialogue_band import _has, _runs, caption_case
+
+    assert caption_case("sinθ") == "SINθ" and caption_case("δx") == "δX"  # δ (small) and Δ mean different things
+    assert not _has("θ") and _has("A")
+    assert _runs("SINθ") == [("SIN", False), ("θ", True)]
