@@ -209,6 +209,46 @@ number goes in the report.
   **Polar rerun** (73 s, about $0.38; the previous one in runs/picture-p2/round2): visual alignment 3 -> 4 -> 6,
   accuracy 8; the picture changes on 5 lines (the ray r, theta; a patch near the origin, one farther out), the
   formulas draw whole, and the captions show theta. P2 so far: 3 topics, visual alignment 5, 5, 6, about $1.38.
+- **P4-lite coverage run, 2026-11-12** (runs/picture-p4; brought forward to decide P3; $5.35): 30 topics drawn at
+  random (seed 20261112) from 8 courses the grammar was never developed on (MIT 6.006, 6.042, 6.0002, a machine
+  learning course, 18.01, 18.02, 18.03, 18.650), 17 CS-side and 13 math-side; 29 videos made (one failed to
+  assemble), 53-106 s each with 4 running at once. A computed Picture reached 23 of 30 videos (77%). By hand:
+  13 good (the right picture, changing with the idea: DFS cost, finishing order, cycle witness, error bars,
+  confidence intervals, sampling distributions, tower functions, a perceptron, XOR, two antiderivatives, a
+  centroid, a quarter disc in polar, resonance), 10 partial (present but weak: a number line forced onto axes for
+  gcd and division, a short array for a factorisation, a 2D square for a volume, a picture shown on one line
+  only), 7 none: 3 algebra topics planned as formulas only (substitution, guess-and-check, an ODE worked
+  example), 2 that needed a bar chart (stratified sampling, explained variance) and fell back to written code,
+  1 whose formula's bad TeX failed every segment (the Hessian), 1 whose Picture call was cut off inside a string
+  (components; no video). Critic visual alignment 5.5 with a Picture, 4.2 without (5.24 over all, accuracy
+  6.1). No layout finding came from a Picture: all 8 findings were in formulas, notes or written code. Gaps,
+  most common first: bars and histograms (data science, statistics), a number line (number theory, intervals),
+  robustness (a too-long title refuses the picture; one bad formula takes its whole segment, picture included;
+  a call cut off inside a string), 3D surfaces, and pictures shown on too few lines.
+  **Gaps closed, 2026-11-13** (no LLM spend; not yet rerun): (1) charts on axes: bars (categorical names on the
+  x-axis, on two rows when crowded, never dropped; values above each bar with headroom sized on screen, or white
+  inside a tall bar), histogram (counts computed), points (a scatter as one thing); axes fit x to the data when
+  no range is given; (2) a number line view: points, intervals with open or closed ends, jumps as arcs; (3)
+  robustness: a too-long title or math label is left out, not refused; a formula LaTeX can't compile is drawn
+  without the isolations that cut a command (h in \\theta, the Hessian's failure), then as plain text, so the
+  segment and its picture survive; a call cut off inside a string, or ending in the wrong quote, is closed; (4)
+  3D: a surface view drawn flat from one fixed angle (z = f(x, y) as shaded patches, columns under it for a
+  double integral's sum returning their volume, points), faces painted far to near, opaque, kept out of the
+  audit's shape overlap rule since they overlap by design, labels clear of every face edge; a solid cross-fades
+  between snapshots rather than morphing; (5) a plan whose Picture changes on fewer than 5 beats (of 10 or
+  more) is drawn again once, and the brief asks for a snapshot on most beats from first segment to last. Three
+  new worked examples (a stratified-sample bar chart, division on a number line, volume under a surface); all 9
+  math and 3 CS examples and the run's CS programs render with 0 findings; 686 tests pass.
+  **Fix check, 2026-11-13** (5 topics, one per fix, instead of rerunning 17; $1.78, more than the $1 estimated:
+  two plans were drawn again by the new check; old outputs in runs/picture-p4/before-fixes): every fix worked in
+  a real video. Stratified sampling drew two bar charts (population, then the sample) instead of falling back to
+  written code: visual alignment 2 -> 5. Division drew a number line with -11 = (-2)7 + 3 as a jump. The Hessian
+  drew a 3D dome with its slices and kept every segment (no formula sank it). The double integral drew a surface
+  and columns. The thin-picture check sent the MLE and Hessian plans back; MLE went from 1 to 8 shows. But
+  visual alignment fell for three (division 5 -> 4, Hessian 5 -> 3, volume 6 -> 3), and the critic's reasons are
+  the script, not the views: the volume video used 2 - x^2 - y^2 where the slide has 1 - x^2 - y^2 (accuracy 3),
+  the Hessian's second function is never drawn, and key algebra steps are skipped. One finding came from a
+  Picture (a label touching a tick mark): tick marks are now obstacles too.
 - **P3:** layer 2 (checked codegen on primitives), icon set, miss log.
 - **P4:** benchmark; templates kept only where they beat the grammar.
 

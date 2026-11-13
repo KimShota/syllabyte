@@ -320,7 +320,6 @@ def test_venn_regions_are_set_operations():
     ("a = axes('a')\nroot(lambda x: x * x + 1, -1, 1)\nsnap()", "same sign"),
     ("v = venn('v', {'A': {1}, 'B': {2}, 'C': {3}, 'D': {4}})\nsnap()", "1-3 sets"),
     ("v = venn('v', {'A': {1}})\nv.shade('A; 1')\nsnap()", "use set names"),
-    ("a = axes('a')\na.plot('f', lambda x: x, label='a long label')\nsnap()", "longer than 8"),
 ])
 def test_math_mistakes_are_sent_back_with_a_reason(source, why):
     assert why in run_program(source).error
@@ -358,3 +357,71 @@ def test_titles_and_names_show_powers_as_superscripts():
     from animation_agent.scene.math_layout import pretty
 
     assert pretty("x^2") == "x²" and pretty("slope of x^2 at 1") == "slope of x² at 1" and pretty("e^-x") == "e⁻x"
+
+
+def test_a_title_or_label_too_long_is_left_out_not_refused():
+    snaps = run_program("a = axes('a', x=(0, 1), title='a title far too long to fit')\na.plot('f', lambda x: x, "
+                        "label='a long label')\nsnap()").snapshots
+    view = snaps[0]["views"]["a"]
+    assert view["title"] is None and view["items"]["f"]["label"] is None
+
+
+# ---- the coverage run's gaps (runs/picture-p4) ---------------------------------------------------------------
+
+def test_bars_and_histograms_are_computed_and_named():
+    snaps = run("a = axes('a')\nt = a.bars('b', [3, 5, 2], labels=['A', 'B', 'C'])\n"
+                "c = a.histogram('h', [1, 2, 2, 3, 3, 3, 9], bins=4)\nsnap(str(t) + ' ' + str(c))")
+    assert snaps[0]["caption"] == "10.0 [3, 3, 0, 1]"  # bins [1,3) [3,5) [5,7) [7,9]
+    bars = snaps[0]["views"]["a"]["items"]["b"]
+    assert bars["names"] == ["A", "B", "C"] and [round(h) for *_x, h in bars["bars"]] == [3, 5, 2]
+
+
+def test_a_bar_chart_shows_every_name_and_value_clear_of_each_other():
+    lay = L.plan(run(MATH_PROGRAMS["bar_chart"]), 3.8, 4.7, 2.35)
+    for m in lay.math.values():
+        assert [text for _t, text, _c in m.xticks] == ["Arch", "Engin", "HSS", "Mgmt", "Sci"]  # two rows, none dropped
+        assert m.dropped == []
+
+
+def test_a_number_line_places_points_intervals_and_jumps():
+    snaps = run(MATH_PROGRAMS["division"])
+    items = snaps[-1]["views"]["n"]["items"]
+    assert items["x"]["x"] == 17 and items["r"]["closed"] == [True, False] and items["j"]["a"] == 14
+    lay = L.plan(snaps, 3.8, 4.7, 2.35).math["n"]
+    assert lay.dropped == [] and [t for _v, t, _c in lay.ticks][0] == "-21"
+    assert "off the line" in run_program("n = numberline('n', 0, 10)\nn.point('p', 12)\nsnap()").error
+
+
+def test_columns_under_a_surface_approach_its_volume():
+    caps = _captions(MATH_PROGRAMS["volume"])
+    v = [float(caps[k].split("about ")[-1].split()[0].rstrip(";")) if "about" in caps[k]
+         else float(caps[k].split(": ")[0].split()[-1]) for k in ("n2", "n4")]
+    assert v[0] > v[1] > 1.5  # f falls away from the corner each column is measured at the middle of
+    assert caps["n8"].startswith("64 columns: 1.50")
+    lay = L.plan(run(MATH_PROGRAMS["volume"]), 3.8, 4.7, 2.35).math["s"]
+    assert {name for name, _c in lay.names} == {"x", "y", "z"}
+
+
+def test_a_formula_latex_cannot_compile_is_drawn_simpler_not_lost():
+    pytest.importorskip("manim")
+    from animation_agent.visuals.base import _isolable, tex
+
+    assert not _isolable("h", r"h(\theta_1,\theta_2)")  # isolating h would split \theta
+    assert tex(r"h(\theta_1,\theta_2)", isolate=["h"]) is not None
+    assert tex(r"\frac{1}{2", isolate=[]) is not None  # broken TeX: shown as text instead of failing the segment
+
+
+def test_a_cut_off_picture_call_is_closed():
+    from animation_agent.visuals.calls import parse_call
+
+    cut = "p = Picture(program=['a = cells(\\'a\\', [1])', 'snap(\\'one\\', name=\\'one\\')\""
+    assert parse_call(cut, {}).args["program"][-1].startswith("snap(")
+
+
+def test_a_plan_whose_picture_barely_changes_is_sent_back():
+    from script_generation_agent.storyboard_plan import _thin_picture
+
+    still = [[["p = Picture(program=['x = 1', 'snap()'])"], ["p.show(snap='0')"]]] + [[["eq.box()"]] * 4] * 4
+    assert "changes on only 1" in _thin_picture(still).message
+    lively = [[["p = Picture(program=['x = 1', 'snap()'])"]] + [["p.show(snap='0')"]] * 6] + [[["eq.box()"]] * 4] * 3
+    assert _thin_picture(lively) is None

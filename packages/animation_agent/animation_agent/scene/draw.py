@@ -24,6 +24,7 @@ from manim import (
     Intersection,
     Polygon,
     ReplacementTransform,
+    interpolate_color,
     GREEN,
     GREY_B,
     GREY_C,
@@ -285,13 +286,17 @@ class PictureRunner:
             elif t == "area":
                 pts = [(min(max(x, x0), x1), min(max(y, y0), y1)) for x, y in M.item_polylines(it, lay)[0][:-1]]
                 part = Polygon(*[[x, y, 0] for x, y in pts], stroke_width=0, fill_color=colour, fill_opacity=FILL)
-            elif t == "rects":
+            elif t in ("rects", "bars"):
                 rects = []
                 for poly in M.item_polylines(it, lay):
                     pts = [(min(max(x, x0), x1), min(max(y, y0), y1)) for x, y in poly]
                     rects.append(Polygon(*[[x, y, 0] for x, y in pts], stroke_width=2, color=colour,
                                          fill_color=colour, fill_opacity=FILL))
                 part = VGroup(*rects)
+            elif t == "points":
+                dots = [Dot([sx, sy, 0], radius=M.POINT_R, color=colour) for sx, sy in map(lay.to_screen, it["at"])
+                        if x0 - 1e-6 <= sx <= x1 + 1e-6 and y0 - 1e-6 <= sy <= y1 + 1e-6]
+                part = VGroup(*dots) if dots else None
             elif t == "point":
                 sx, sy = lay.to_screen(it["at"])
                 if x0 - 1e-6 <= sx <= x1 + 1e-6 and y0 - 1e-6 <= sy <= y1 + 1e-6:
@@ -305,6 +310,11 @@ class PictureRunner:
                 out[f"{name}:item:{key}"] = part
             if it.get("label") and (key, it["label"]) in lay.labels:
                 self._label(name, key, it["label"], lay.labels[(key, it["label"])], colour, out)
+            for j, text in enumerate(it.get("values") or []):
+                rk = (f"{key}#{j}", text)
+                if rk in lay.labels:  # inside its bar it is white, to read on the bar's fill
+                    inside = rk in lay.inside_spots and np.allclose(lay.labels[rk], lay.inside_spots[rk])
+                    self._label(name, f"{key}#{j}", text, lay.labels[rk], WHITE if inside else colour, out)
 
     def _venn(self, name, view, region, out):
         lay: M.VennLayout = self.layout.math[name]
@@ -387,6 +397,56 @@ class PictureRunner:
             if p["label"] and (f"pt-{k}", p["label"]) in lay.labels:
                 self._label(name, f"pt-{k}", p["label"], lay.labels[(f"pt-{k}", p["label"])], colour, out)
 
+    def _numberline(self, name, view, region, out):
+        lay: M.NumberLineLayout = self.layout.math[name]
+        y = lay.y
+        out[f"{name}:line"] = Line([lay.x0 - 0.2, y, 0], [lay.x1 + 0.2, y, 0], stroke_width=3, color=GREY_B)
+        for v, text, c in lay.ticks:
+            x = lay.at(v)
+            out[f"{name}:tick:{text}"] = VGroup(Line([x, y - 0.07, 0], [x, y + 0.07, 0], stroke_width=2, color=GREY_B),
+                                                Text(text, font_size=FONT, color=GREY_B).move_to([c[0], c[1], 0]))
+        for key, it in view["items"].items():
+            colour = STYLE_COLOUR[it.get("style")]
+            t = it["type"]
+            if t == "point":
+                part = Dot([lay.at(it["x"]), y, 0], radius=M.POINT_R + 0.02, color=colour)
+            elif t == "interval":
+                a, b = lay.at(it["a"]), lay.at(it["b"])
+                ends = [Circle(radius=0.07, stroke_width=3, color=colour, fill_color=colour if closed else BLACK,
+                               fill_opacity=1).move_to([x, y, 0]) for x, closed in zip((a, b), it["closed"])]
+                part = VGroup(Line([a, y, 0], [b, y, 0], stroke_width=8, color=colour), *ends)
+            elif t == "jump":
+                part = VMobject(stroke_width=4, color=colour).set_points_as_corners(
+                    [[px, py, 0] for px, py in M.jump_points(it, lay)])
+            else:
+                continue
+            out[f"{name}:item:{key}"] = part
+            if it.get("label") and (key, it["label"]) in lay.labels:
+                self._label(name, key, it["label"], lay.labels[(key, it["label"])], colour, out)
+
+    def _surface(self, name, view, region, out):
+        lay: M.SurfaceLayout = self.layout.math[name]
+        for k, (a, b) in enumerate(lay.axes):
+            out[f"{name}:axis:{k}"] = Line([a[0], a[1], 0], [b[0], b[1], 0], stroke_width=2, color=GREY_B)
+        for text, c in lay.names:
+            out[f"{name}:axisname:{text}"] = Text(M.pretty(text), font_size=FONT, color=GREY_B).move_to([c[0], c[1], 0])
+        for order, (key, it) in enumerate(view["items"].items()):
+            colour = self._colour({**it, "type": "curve"}, order)
+            if it["type"] == "point":
+                sx, sy = lay.to_screen(it["at"])
+                out[f"{name}:item:{key}"] = Dot([sx, sy, 0], radius=M.POINT_R, color=STYLE_COLOUR[it.get("style")])
+                if it.get("label") and (key, it["label"]) in lay.labels:
+                    self._label(name, key, it["label"], lay.labels[(key, it["label"])], STYLE_COLOUR[it.get("style")],
+                                out)
+                continue
+            # faces far to near, opaque: each drawn over the ones behind it (the painter's algorithm), shaded by
+            # how it faces the light. They overlap by design, so the audit leaves them out (BACKGROUND_ATTR); the
+            # layout keeps every label clear of every face's edge.
+            faces = [Polygon(*[[x, y, 0] for x, y in corners], stroke_width=1.5, stroke_color=colour,
+                             fill_color=interpolate_color(BLACK, colour, 0.2 + 0.55 * light), fill_opacity=1)
+                     for corners, _depth, light in M.surface_faces(it, lay)]
+            out[f"{name}:item:{key}"] = _bg(VGroup(*faces))
+
     # ---- showing ---------------------------------------------------------------------------------------
 
     def changes(self, i: int) -> list:
@@ -402,7 +462,9 @@ class PictureRunner:
                 self.on_screen[key] = new
             elif _same_parts(old, new):
                 anims.append(old.animate.become(new))
-            elif ":item:" in key:  # a math thing that changed shape (more rectangles, a new curve): it morphs
+            elif ":item:" in key and not getattr(new, BACKGROUND_ATTR, False):
+                # a math thing that changed shape (more rectangles, a new curve) morphs; a 3D solid (opaque faces in
+                # depth order) cross-fades instead, since its faces mid-morph would cut through each other
                 anims.append(ReplacementTransform(old, new))
                 self._drop(old)
                 self._keep(new)

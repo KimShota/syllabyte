@@ -28,6 +28,7 @@ better (visual alignment 4.14 -> 5.00, five up and none down; Dijkstra's lines n
 from __future__ import annotations
 
 import os
+import re
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -312,6 +313,33 @@ def write_example(level: int, family: str | None, *, explainer: str, peer: str) 
 # --------------------------------------------------------------------------
 
 
+MIN_PICTURE_BEATS = 5  # a Picture that changes on fewer beats than this is a still with a caption
+
+
+def _thin_picture(segments):
+    """A problem when the plan makes a Picture but shows it changing on only a few of its beats, or None. In
+    runs/picture-p4 several videos showed their Picture on one or two lines (an MLE's likelihood curve in one
+    segment only) and spent the rest on formulas; the critic marked them down for a still picture."""
+    from types import SimpleNamespace
+
+    names = set()
+    beats = changing = 0
+    for draws in segments:
+        for calls in draws or []:
+            beats += 1
+            for c in calls:
+                if m := re.match(r"\s*(\w+)\s*=\s*Picture\(", c):
+                    names.add(m.group(1))
+            if any(re.match(rf"\s*{re.escape(n)}\.(show|step)\(", c) for n in names for c in calls):
+                changing += 1
+    if not names or beats < 2 * MIN_PICTURE_BEATS or changing >= MIN_PICTURE_BEATS:
+        return None
+    return SimpleNamespace(segment=0, beat=1, call=None, kind="other", message=(
+        f"the Picture changes on only {changing} of the video's {beats} beats, so for most of the video it is a "
+        "still; snap a state for each point the lines make (10-25 snapshots) and show one on most beats, from the "
+        "first segment to the last (create the Picture in the video's first beat; a formula can sit beside it)"))
+
+
 def script_segments_of(script):
     from animation_agent.visuals.calls import script_segments
 
@@ -419,6 +447,8 @@ def write_storyboard_planned(
             refused = [p for p in check_script(segs, None, allowed)
                        if p.kind in ("other", "wrong_template") and p.call is not None
                        and _CREATES.match(segs[p.segment][p.beat - 1][p.call])]
+            if (thin := _thin_picture(segs)) is not None:
+                refused.append(thin)
         if not (off_trace or refused):
             break
         _log(ku.id, [f"the plan is drawn again: {'; '.join(p.message for p in off_trace + refused)[:400]}"])

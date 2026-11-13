@@ -90,10 +90,9 @@ def _kwargs(node: ast.Call, where: str) -> dict:
 _CLOSE = {"(": ")", "[": "]", "{": "}"}
 
 
-def _closed(text: str) -> str | None:
-    """The call with the brackets left open at its end closed, or None when nothing is left open (outside
-    strings). A long Picture call is sometimes written without its final ')' (runs/picture-p2, the polar area
-    element: a correct 40-line program lost to one missing character)."""
+def _scan(text: str) -> tuple[list[str], str | None] | None:
+    """The brackets left open at the end of `text` (closers, innermost last) and the quote left open, if any; None
+    when a bracket is closed by the wrong one."""
     stack: list[str] = []
     quote = None
     i = 0
@@ -112,9 +111,32 @@ def _closed(text: str) -> str | None:
             if not stack or stack.pop() != ch:
                 return None
         i += 1
-    if quote or not stack:
-        return None
-    return text + "".join(reversed(stack))
+    return stack, quote
+
+
+def _closed(text: str) -> list[str]:
+    """Repairs for a call cut off at its end, likeliest first: its open brackets closed; a string left open
+    closed first; or its last quote, the wrong kind, replaced by the one that opened the string. A long Picture
+    call is sometimes written without its final ')' (runs/picture-p2, the polar area element) or with its last
+    line ending in " where it began with ' (runs/picture-p4, components from reachability)."""
+    out = []
+    for candidate in (text, text[:-1] + ("'" if text.endswith('"') else '"') if text[-1:] in "'\"" else None):
+        if candidate is None:
+            continue
+        scanned = _scan(candidate)
+        if scanned is None:
+            continue
+        stack, quote = scanned
+        if quote:
+            closers = [quote + "".join(reversed(stack))]
+            # the string may hold the rest of a list item: close it, then the item's list and the call
+            closers += [quote + "]" + ")" * stack.count(")")] if stack else []
+        else:
+            closers = ["".join(reversed(stack))] if stack else []
+        out += [candidate + c for c in closers]
+        if candidate is not text and not quote and not stack:
+            out.append(candidate)
+    return out
 
 
 def _parse(text: str) -> ast.Module:
@@ -122,11 +144,11 @@ def _parse(text: str) -> ast.Module:
     try:
         return ast.parse(_as_raw_strings(text))
     except (SyntaxError, CallError) as e:
-        if (fixed := _closed(text)) is not None:
+        for fixed in _closed(text):
             try:
                 return ast.parse(_as_raw_strings(fixed))
             except (SyntaxError, CallError):
-                pass
+                continue
         if isinstance(e, CallError):
             raise
         raise CallError(f"not valid Python: {e.msg}") from e

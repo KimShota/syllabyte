@@ -148,7 +148,7 @@ class Obstacles:
 
     def clear(self, c: np.ndarray, half: np.ndarray, own: set[int] = frozenset()) -> bool:
         lo, hi = c - half, c + half
-        if any(np.all(np.abs(c - c2) < half + h2 + 0.06) for c2, h2 in self.boxes):
+        if any(np.all(np.abs(c - c2) < half + h2 + 0.03) for c2, h2 in self.boxes):
             return False
         if any(np.hypot(*(np.clip(d, lo, hi) - d)) < r for d, r in self.discs):
             return False
@@ -244,7 +244,7 @@ def nice_ticks(lo: float, hi: float, most: int = 5) -> list[float]:
         return [lo]
     raw = span / max(1, most - 1)
     mag = 10 ** math.floor(math.log10(raw))
-    step = next(m * mag for m in (1, 2, 2.5, 5, 10) if m * mag >= raw)
+    step = next(m * mag for m in (1, 2, 5, 10) if m * mag >= raw)
     first = math.ceil(lo / step - 1e-9) * step
     ticks = []
     t = first
@@ -273,10 +273,13 @@ def _data_extent(views: list[dict]) -> tuple[list[float], list[float]]:
             elif t in ("area", "segment"):
                 xs += [p[0] for p in it["points"]]
                 ys += [p[1] for p in it["points"]]
-            elif t == "rects":
-                for x0, x1, h in it["rects"]:
+            elif t in ("rects", "bars"):
+                for x0, x1, h in it["rects" if t == "rects" else "bars"]:
                     xs += [x0, x1]
                     ys += [0.0, h]
+            elif t == "points":
+                xs += [p[0] for p in it["at"]]
+                ys += [p[1] for p in it["at"]]
             elif t == "point":
                 xs.append(it["at"][0])
                 ys.append(it["at"][1])
@@ -285,6 +288,17 @@ def _data_extent(views: list[dict]) -> tuple[list[float], list[float]]:
                     xs.append(px)
                     ys.append(py)
     return xs, ys
+
+
+def _bar_names(views: list[dict]) -> list[tuple[float, str]]:
+    """(x, name) for each named bar any snapshot draws."""
+    out: dict[float, str] = {}
+    for v in views:
+        for it in v["items"].values():
+            if it["type"] == "bars" and it.get("names"):
+                for (x0, x1, _h), name in zip(it["bars"], it["names"]):
+                    out[round((x0 + x1) / 2, 9)] = name
+    return sorted(out.items())
 
 
 @dataclass
@@ -302,6 +316,7 @@ class AxesLayout:
     hidden: dict[str, set[int]] = field(default_factory=dict)  # field arrows left out under labels, by key
     inline: set = field(default_factory=set)  # labels set into their curve, by (key, label text)
     dropped: list = field(default_factory=list)  # labels with no clear place, left out
+    inside_spots: dict = field(default_factory=dict)  # a bar value's place inside its bar (drawn white there)
 
     def to_screen(self, p) -> tuple[float, float]:
         x0, x1, y0, y1 = self.box
@@ -311,10 +326,16 @@ class AxesLayout:
 
 def _ranges(views: list[dict]) -> tuple[tuple[float, float], tuple[float, float]]:
     first = views[0]
-    x = (float(first["x"][0]), float(first["x"][1]))
+    xs, ys = _data_extent(views)
+    if first["x"] is not None:
+        x = (float(first["x"][0]), float(first["x"][1]))
+    elif xs:  # fitted to the bars and points drawn, with a little room
+        pad = (max(xs) - min(xs)) * 0.04 or 0.5
+        x = (min(xs) - pad, max(xs) + pad)
+    else:
+        x = (-5.0, 5.0)
     if first["y"] is not None:
         return x, (float(first["y"][0]), float(first["y"][1]))
-    _xs, ys = _data_extent(views)
     if not ys:
         return x, x
     lo, hi = min(ys), max(ys)
@@ -325,7 +346,8 @@ def _ranges(views: list[dict]) -> tuple[tuple[float, float], tuple[float, float]
     if hi - lo < 1e-9:
         lo, hi = lo - 1, hi + 1
     pad = (hi - lo) * 0.06
-    return x, (lo - pad, hi + pad)
+    valued = any(it["type"] == "bars" and it.get("values") for v in views for it in v["items"].values())
+    return x, (lo - pad, hi + (hi - lo) * (0.24 if valued else 0.06))  # room above a bar for its value
 
 
 def axes_heights(views: list[dict], width: float, title: float) -> tuple[float, float]:
@@ -335,19 +357,22 @@ def axes_heights(views: list[dict], width: float, title: float) -> tuple[float, 
         plot_w = width - 0.7
         h = plot_w * (y[1] - y[0]) / (x[1] - x[0])
         return title + margin + min(h, MIN_PLOT), title + margin + h
-    return title + margin + MIN_PLOT + 0.4, title + margin + (width - 0.7) * 0.95
+    return title + margin + MIN_PLOT - 0.1, title + margin + (width - 0.7) * 0.95
 
 
 def axes_layout(views: list[dict], region) -> AxesLayout:
     title = 0.38 if any(v.get("title") for v in views) else 0.0
     x, y = _ranges(views)
     first = views[0]
-    xt, yt = nice_ticks(*x), nice_ticks(*y)
+    xt, yt = nice_ticks(*x), nice_ticks(*y)  # a bar chart of categories shows each bar's name instead
     ylabel_w = max((len(tick_text(t)) for t in yt), default=1) * CHAR_W
     left = region.cx - region.w / 2 + ylabel_w + TICK_GAP + 0.08
     right = region.cx + region.w / 2 - 0.12
     top = region.top - title - TEXT_H - 0.16  # the y-axis name sits above the plot, clear of the title
-    bottom = region.bottom + TEXT_H + TICK_GAP + 0.04
+    named = _bar_names(views)
+    # category names that won't fit side by side go on two rows, alternating, not dropped
+    two_rows = bool(named) and sum(text_half(n)[0] * 2 for _x, n in named) > (region.w - 1.0) * 0.92
+    bottom = region.bottom + TEXT_H + TICK_GAP + 0.04 + (TEXT_H + 0.02 if two_rows else 0.0)
     if right - left < MIN_PLOT or top - bottom < MIN_PLOT * 0.8:
         raise PictureError(f"the axes need more room than {region.w:.1f} by {region.h:.1f}")
     if first["equal"]:  # one scale for x and y, centred in the room
@@ -356,14 +381,29 @@ def axes_layout(views: list[dict], region) -> AxesLayout:
         cx, cy = (left + right) / 2, (top + bottom) / 2
         left, right, bottom, top = cx - w / 2, cx + w / 2, cy - h / 2, cy + h / 2
     box = (left, right, bottom, top)
+    if first["y"] is None and not first["equal"]:
+        # room above the tallest bar for its value, in screen units: a fraction of the range is too little in a
+        # short plot (runs/picture-p4: a stacked bar chart dropped its tallest bar's value)
+        tallest = max((h for v in views for it in v["items"].values() if it["type"] == "bars" and it.get("values")
+                       for _a, _b, h in it["bars"]), default=None)
+        if tallest is not None:
+            need = TEXT_H + 2 * ROOM + 0.14  # on screen, above the tallest bar
+            plot_h = top - bottom
+            if need < plot_h * 0.6:
+                # the top of the range such that (top - tallest) is `need` on screen once the range includes it
+                hi = (tallest - need * y[0] / plot_h) / (1 - need / plot_h)
+                if hi > y[1]:
+                    y = (y[0], hi)
+                    yt = nice_ticks(*y)
     lay = AxesLayout(box, x, y, [], [], 0.0, 0.0, None, None, {}, {}, set())
     lay.xaxis_y = lay.to_screen((0, min(max(0.0, y[0]), y[1])))[1]
     lay.yaxis_x = lay.to_screen((min(max(0.0, x[0]), x[1]), 0))[0]
     obstacles = Obstacles()
-    for t in xt:
+    for k, (t, text) in enumerate(named if named else [(t, tick_text(t)) for t in xt]):
         sx = lay.to_screen((t, 0))[0]
-        c = np.array([sx, bottom - TICK_GAP - TEXT_H / 2])
-        lay.xticks.append((t, tick_text(t), c))
+        row = k % 2 if two_rows else 0
+        c = np.array([sx, bottom - TICK_GAP - TEXT_H / 2 - row * (TEXT_H + 0.02)])
+        lay.xticks.append((t, text, c))
     for t in yt:
         sy = lay.to_screen((0, t))[1]
         half = text_half(tick_text(t))
@@ -372,6 +412,8 @@ def axes_layout(views: list[dict], region) -> AxesLayout:
     # tick labels may not crowd: drop every other one until they stand apart
     for name in ("xticks", "yticks"):
         ticks = getattr(lay, name)
+        if name == "xticks" and named:  # names are never thinned: two rows hold them
+            continue
         while len(ticks) > 2 and any(np.all(np.abs(a[2] - b[2]) < text_half(a[1]) + text_half(b[1]))
                                      for a, b in zip(ticks, ticks[1:])):
             ticks = ticks[::2]
@@ -389,11 +431,17 @@ def axes_layout(views: list[dict], region) -> AxesLayout:
     if first["ylabel"]:
         half = text_half(first["ylabel"])
         lay.ylabel = np.array([max(lay.yaxis_x, left + half[0] - ROOM), top + 0.05 + TEXT_H / 2])
+        obstacles.boxes.append((lay.ylabel, half))
     # what each label keeps clear of: the axes, the tick labels, and everything on screen with it (a vector
     # field aside: its arrows are a texture, and the ones under a label are left out instead)
     lo, hi = (left, bottom), (right, top)
+    # the axes and their tick marks (drawn across the axes, 0.05 each side)
+    marks = [((lay.to_screen((t, 0))[0], lay.xaxis_y - 0.05), (lay.to_screen((t, 0))[0], lay.xaxis_y + 0.05))
+             for t, _text, _c in lay.xticks]
+    marks += [((lay.yaxis_x - 0.05, lay.to_screen((0, t))[1]), (lay.yaxis_x + 0.05, lay.to_screen((0, t))[1]))
+              for t, _text, _c in lay.yticks]
     base = Obstacles(segments=[((left, lay.xaxis_y), (right, lay.xaxis_y)), ((lay.yaxis_x, bottom),
-                                                                             (lay.yaxis_x, top))],
+                                                                             (lay.yaxis_x, top))] + marks,
                      boxes=list(obstacles.boxes))
     requests: dict[tuple[str, str], Request] = {}
     for i, v in enumerate(views):
@@ -407,6 +455,8 @@ def axes_layout(views: list[dict], region) -> AxesLayout:
                 half = text_half(it["label"])
                 if it["type"] == "point":
                     cands = around(lay.to_screen(it["at"]), half)
+                elif it["type"] == "points":
+                    cands = [c for p in it["at"][::-1][:4] for c in around(lay.to_screen(p), half)]
                 elif it["type"] == "area":
                     cands = _inside(it, lay, half)
                 else:
@@ -426,6 +476,30 @@ def axes_layout(views: list[dict], region) -> AxesLayout:
             for other, it2 in v["items"].items():
                 if it2["type"] == "point" and other != key:
                     req.obstacles.discs.append((lay.to_screen(it2["at"]), POINT_R + ROOM))
+                if it2["type"] == "points" and other != key:
+                    req.obstacles.discs += [(lay.to_screen(p), POINT_R + ROOM) for p in it2["at"]]
+        for key, it in v["items"].items():  # each bar's value, just above it
+            if it["type"] != "bars" or not it.get("values"):
+                continue
+            for j, ((x0, x1, h), text) in enumerate(zip(it["bars"], it["values"])):
+                rk = (f"{key}#{j}", text)
+                if rk not in requests:
+                    top_y = lay.to_screen(((x0 + x1) / 2, max(h, 0.0)))
+                    base_y = lay.to_screen(((x0 + x1) / 2, 0.0))[1]
+                    bar_w = abs(lay.to_screen((x1, 0))[0] - lay.to_screen((x0, 0))[0])
+                    half = text_half(text)
+                    cands = [np.array([top_y[0], top_y[1] + half[1] + d]) for d in (0.04, 0.12, 0.22, 0.34, 0.46)]
+                    if top_y[1] - base_y > 2 * half[1] + 0.12 and bar_w > 2 * half[0]:  # inside a tall bar's top
+                        inside = np.array([top_y[0], top_y[1] - half[1] - 0.04])
+                        cands.append(inside)
+                        lay.inside_spots[rk] = inside
+                    requests[rk] = Request(rk, text, cands, Obstacles(list(base.segments), list(base.boxes)), set())
+                req = requests[rk]
+                req.shown.add(i)
+                for other, ls in lines.items():
+                    if other != key:
+                        for line in ls:
+                            req.obstacles.add_polyline(line)
     lay.labels = place(list(requests.values()), (region.cx - region.w / 2, region.cx + region.w / 2,
                                                  region.bottom, region.top - title), "the axes", lay.inline,
                        lay.dropped)
@@ -472,9 +546,9 @@ def item_polylines(it: dict, lay: AxesLayout) -> list[list[tuple[float, float]]]
         return [pts + pts[:1]]
     if t == "segment":
         return [[lay.to_screen(p) for p in it["points"]]]
-    if t == "rects":
+    if t in ("rects", "bars"):
         out = []
-        for x0, x1, h in it["rects"]:
+        for x0, x1, h in it["rects" if t == "rects" else "bars"]:
             corners = [(x0, 0), (x0, h), (x1, h), (x1, 0)]
             out.append([lay.to_screen(p) for p in corners])
         return out
@@ -752,3 +826,233 @@ def ring_points(it: dict, pts: dict, lay: GeometryLayout) -> list[tuple[float, f
         return outer
     inner = [(cx + it["r1"] * lay.scale * math.cos(t), cy + it["r1"] * lay.scale * math.sin(t)) for t in ts]
     return inner + outer[::-1] + inner[:1]
+
+
+# ---- number line ---------------------------------------------------------------------------------------
+
+JUMP_MAX = 0.9  # the tallest arc
+
+
+@dataclass
+class NumberLineLayout:
+    x0: float
+    x1: float
+    y: float  # the line's height on screen
+    lo: float
+    hi: float
+    ticks: list[tuple[float, str, np.ndarray]]  # value, text, label centre (below the line)
+    labels: dict[tuple[str, str], np.ndarray]
+    dropped: list = field(default_factory=list)
+
+    def at(self, v: float) -> float:
+        return self.x0 + (v - self.lo) / (self.hi - self.lo) * (self.x1 - self.x0)
+
+
+def numberline_heights(views: list[dict], width: float, title: float) -> tuple[float, float]:
+    jumps = any(it["type"] == "jump" for v in views for it in v["items"].values())
+    return title + 1.3, title + (2.4 if jumps else 1.6)
+
+
+def jump_points(it: dict, lay: NumberLineLayout) -> list[tuple[float, float]]:
+    a, b = lay.at(it["a"]), lay.at(it["b"])
+    h = min(JUMP_MAX, 0.35 + 0.3 * abs(b - a))
+    return [(a + (b - a) * t, lay.y + 0.08 + h * 4 * t * (1 - t)) for t in np.linspace(0, 1, 21)]
+
+
+def numberline_layout(views: list[dict], region) -> NumberLineLayout:
+    title = 0.38 if any(v.get("title") for v in views) else 0.0
+    first = views[0]
+    lo, hi = first["lo"], first["hi"]
+    x0, x1 = region.cx - region.w / 2 + 0.3, region.cx + region.w / 2 - 0.3
+    jumps = any(it["type"] == "jump" for v in views for it in v["items"].values())
+    above = (JUMP_MAX + TEXT_H + 0.45) if jumps else (TEXT_H + 0.6)
+    below = TEXT_H + 0.2
+    room = region.h - title
+    above = min(above, room - below)
+    y = region.top - title - (room - above - below) / 2 - above  # the drawing centred in its band
+    lay = NumberLineLayout(x0, x1, y, lo, hi, [], {})
+    step = first["step"]
+    values = [lo + k * step for k in range(int(round((hi - lo) / step)) + 1)] if step else nice_ticks(lo, hi, 7)
+    ticks = [(v, tick_text(v), np.array([lay.at(v), y - 0.1 - TEXT_H / 2])) for v in values]
+    while len(ticks) > 2 and any(np.all(np.abs(a[2] - b[2]) < text_half(a[1]) + text_half(b[1]))
+                                 for a, b in zip(ticks, ticks[1:])):
+        ticks = ticks[::2]  # numbers that would touch: every other one (the marks stay)
+    lay.ticks = ticks
+    base = Obstacles(segments=[((x0 - 0.2, y), (x1 + 0.2, y))], boxes=[(c, text_half(t)) for _v, t, c in ticks])
+    requests: dict[tuple[str, str], Request] = {}
+    for i, v in enumerate(views):
+        arcs = {key: jump_points(it, lay) for key, it in v["items"].items() if it["type"] == "jump"}
+        for key, it in v["items"].items():
+            if not it.get("label"):
+                continue
+            rk = (key, it["label"])
+            if rk not in requests:
+                half = text_half(it["label"])
+                if it["type"] == "point":
+                    px = lay.at(it["x"])
+                    cands = [np.array([px + dx, y + POINT_R + 0.06 + half[1] + dy]) for dy in (0.0, 0.25, 0.5, 0.75)
+                             for dx in (0.0, 0.25, -0.25, 0.5, -0.5)]
+                elif it["type"] == "interval":
+                    mid = (lay.at(it["a"]) + lay.at(it["b"])) / 2
+                    cands = [np.array([mid + dx, y + 0.12 + half[1] + dy]) for dy in (0.0, 0.25, 0.5, 0.75)
+                             for dx in (0, .3, -.3, .6, -.6)]
+                else:
+                    top = max(arcs[key], key=lambda p: p[1])
+                    cands = [np.array([top[0] + dx, top[1] + 0.04 + half[1] + dy]) for dy in (0.0, 0.15, 0.3, 0.45, 0.6)
+                             for dx in (0.0, 0.25, -0.25, 0.5, -0.5)]
+                    cands += [np.array([top[0], top[1] - 0.04 - half[1]])]  # under the arc's peak
+                requests[rk] = Request(rk, it["label"], cands, Obstacles(list(base.segments), list(base.boxes)), set())
+            req = requests[rk]
+            req.shown.add(i)
+            for k2, pts in arcs.items():
+                req.obstacles.add_polyline(pts)
+            for k2, it2 in v["items"].items():
+                if it2["type"] == "point" and k2 != key:
+                    req.obstacles.discs.append(((lay.at(it2["x"]), y), POINT_R + ROOM))
+    lay.labels = place(list(requests.values()), (region.cx - region.w / 2, region.cx + region.w / 2, region.bottom,
+                                                 region.top - title), "the number line", dropped=lay.dropped)
+    return lay
+
+
+# ---- 3D surface (drawn flat from one fixed view) ------------------------------------------------------
+
+AZIMUTH, ELEVATION = math.radians(-55), math.radians(24)
+Z_HEIGHT = 1.25  # the z range's height, in units of half the x range
+_R = np.array([-math.sin(AZIMUTH), math.cos(AZIMUTH), 0.0])
+_U = np.array([-math.cos(AZIMUTH) * math.sin(ELEVATION), -math.sin(AZIMUTH) * math.sin(ELEVATION), math.cos(ELEVATION)])
+_D = np.array([math.cos(AZIMUTH) * math.cos(ELEVATION), math.sin(AZIMUTH) * math.cos(ELEVATION), math.sin(ELEVATION)])
+
+
+@dataclass
+class SurfaceLayout:
+    x: tuple[float, float]
+    y: tuple[float, float]
+    z: tuple[float, float]
+    scale: float
+    origin: tuple[float, float]
+    axes: list[tuple[tuple, tuple]]  # the floor's back edges and the z axis, on screen
+    names: list[tuple[str, np.ndarray]]  # axis names and end values, placed
+    labels: dict[tuple[str, str], np.ndarray]
+    dropped: list = field(default_factory=list)
+
+    def unit(self, p) -> np.ndarray:
+        """A data point in the view's own cube: x, y in [-1, 1], z in [0, Z_HEIGHT]."""
+        (x0, x1), (y0, y1), (z0, z1) = self.x, self.y, self.z
+        return np.array([(p[0] - x0) / (x1 - x0) * 2 - 1, (p[1] - y0) / (y1 - y0) * 2 - 1,
+                         (p[2] - z0) / (z1 - z0) * Z_HEIGHT])
+
+    def to_screen(self, p) -> tuple[float, float]:
+        q = self.unit(p)
+        return (self.origin[0] + float(q @ _R) * self.scale, self.origin[1] + float(q @ _U) * self.scale)
+
+    def depth(self, p) -> float:
+        return float(self.unit(p) @ _D)
+
+
+def _surface_z(views: list[dict]) -> tuple[float, float]:
+    if views[0]["z"] is not None:
+        return tuple(views[0]["z"])
+    zs = [0.0]
+    for v in views:
+        for it in v["items"].values():
+            if it["type"] == "mesh":
+                zs += [z for row in it["z"] for z in row]
+            elif it["type"] == "columns":
+                zs += [c[4] for c in it["columns"]]
+            elif it["type"] == "point":
+                zs.append(it["at"][2])
+    lo, hi = min(zs), max(zs)
+    return (lo, hi if hi > lo else lo + 1)
+
+
+def surface_heights(views: list[dict], width: float, title: float) -> tuple[float, float]:
+    return title + 2.2, title + width * 1.05
+
+
+def surface_faces(it: dict, lay: SurfaceLayout) -> list[tuple[list[tuple[float, float]], float, float]]:
+    """A thing's faces: (screen corners, depth, brightness 0-1), the ones a viewer sees, far first."""
+    faces = []
+
+    def face(corners):
+        q = [lay.unit(c) for c in corners]
+        normal = np.cross(q[1] - q[0], q[2] - q[0])
+        if np.linalg.norm(normal) < 1e-12:
+            return
+        normal /= np.linalg.norm(normal)
+        if normal @ _D < 0:
+            normal = -normal if it["type"] == "mesh" else normal  # a mesh shows both sides
+        if normal @ _D < -1e-9:
+            return
+        light = 0.45 + 0.55 * max(0.0, float(normal @ np.array([0.3, -0.2, 0.93])))
+        faces.append(([lay.to_screen(c) for c in corners], float(np.mean([lay.depth(c) for c in corners])), light))
+
+    if it["type"] == "mesh":
+        n, z = it["n"], it["z"]
+        (x0, x1), (y0, y1) = lay.x, lay.y
+        for i in range(n):
+            for j in range(n):
+                xs = [x0 + (x1 - x0) * k / n for k in (i, i + 1)]
+                ys = [y0 + (y1 - y0) * k / n for k in (j, j + 1)]
+                face([(xs[0], ys[0], z[i][j]), (xs[1], ys[0], z[i + 1][j]), (xs[1], ys[1], z[i + 1][j + 1]),
+                      (xs[0], ys[1], z[i][j + 1])])
+    elif it["type"] == "columns":
+        base = lay.z[0] if lay.z[0] > 0 else 0.0
+        for xa, xb, ya, yb, h in it["columns"]:
+            lo, hi = min(base, h), max(base, h)
+            face([(xa, ya, hi), (xb, ya, hi), (xb, yb, hi), (xa, yb, hi)])  # top
+            face([(xa, ya, lo), (xb, ya, lo), (xb, ya, hi), (xa, ya, hi)])  # y = ya side
+            face([(xb, yb, lo), (xa, yb, lo), (xa, yb, hi), (xb, yb, hi)])  # y = yb side
+            face([(xa, yb, lo), (xa, ya, lo), (xa, ya, hi), (xa, yb, hi)])  # x = xa side
+            face([(xb, ya, lo), (xb, yb, lo), (xb, yb, hi), (xb, ya, hi)])  # x = xb side
+    return sorted(faces, key=lambda f: f[1])
+
+
+def surface_layout(views: list[dict], region) -> SurfaceLayout:
+    title = 0.38 if any(v.get("title") for v in views) else 0.0
+    first = views[0]
+    lay = SurfaceLayout(tuple(first["x"]), tuple(first["y"]), _surface_z(views), 1.0, (0.0, 0.0), [], [], {})
+    (x0, x1), (y0, y1), (z0, z1) = lay.x, lay.y, lay.z
+    cube = [(a, b, c) for a in (x0, x1) for b in (y0, y1) for c in (z0, z1)]
+    pts = np.array([lay.to_screen(p) for p in cube])
+    margin = 0.45  # axis names and end values round the box
+    w, h = region.w - 2 * margin, region.h - title - 2 * margin
+    lay.scale = min(w / max(np.ptp(pts[:, 0]), 1e-9), h / max(np.ptp(pts[:, 1]), 1e-9))
+    pts = np.array([lay.to_screen(p) for p in cube])  # at the new scale, origin still 0
+    cx, cy = region.cx, region.top - title - (region.h - title) / 2
+    lay.origin = (cx - (pts[:, 0].min() + pts[:, 0].max()) / 2, cy - (pts[:, 1].min() + pts[:, 1].max()) / 2)
+    # the axes run along the floor's back edges from its farthest corner, and up from it
+    floor = [(a, b, z0) for a in (x0, x1) for b in (y0, y1)]
+    back = min(floor, key=lay.depth)
+    ex = (x1 if back[0] == x0 else x0, back[1], z0)
+    ey = (back[0], y1 if back[1] == y0 else y0, z0)
+    ez = (back[0], back[1], z1)
+    lay.axes = [(lay.to_screen(back), lay.to_screen(e)) for e in (ex, ey, ez)]
+    obstacles = Obstacles()
+    for a, b in lay.axes:
+        obstacles.segments.append((a, b))
+    for v in views:
+        for it in v["items"].values():
+            for corners, _d, _l in surface_faces(it, lay):
+                obstacles.add_polyline(corners + corners[:1])
+    bounds = (region.cx - region.w / 2, region.cx + region.w / 2, region.bottom, region.top - title)
+    # axis names beyond each axis's far end; then each axis's end values beside its ends
+    wanted = []
+    for (a, b), name in zip(lay.axes, first["labels"]):
+        if name:
+            d = np.array(b) - np.array(a)
+            d /= np.linalg.norm(d) or 1
+            half = text_half(name)
+            wanted.append(((f"axis-{name}", name), name, [np.array(b) + d * (half.max() + k * 0.1) for k in range(1, 6)]))
+    reqs = [Request(rk, text, cands, Obstacles(list(obstacles.segments), list(obstacles.boxes), []), {0})
+            for rk, text, cands in wanted]
+    names = place(reqs, bounds, "the 3D view", dropped=[])
+    lay.names = [(text, c) for (_k, text), c in names.items()]
+    requests = []
+    for i, v in enumerate(views):
+        for key, it in v["items"].items():
+            if it["type"] == "point" and it.get("label"):
+                p = lay.to_screen(it["at"])
+                obs = Obstacles(list(obstacles.segments), [(c, text_half(t)) for t, c in lay.names], [])
+                requests.append(Request((key, it["label"]), it["label"], around(p, text_half(it["label"])), obs, {i}))
+    lay.labels = place(requests, bounds, "the 3D view", dropped=lay.dropped)
+    return lay

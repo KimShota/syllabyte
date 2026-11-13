@@ -98,8 +98,8 @@ def _heights(kind: str, views: list[dict], width: float) -> tuple[float, float]:
     if kind in MATH_KINDS:
         from animation_agent.scene import math_layout as M
 
-        return {"axes": M.axes_heights, "venn": M.venn_heights, "geometry": M.geometry_heights}[kind](
-            views, width, title)
+        return {"axes": M.axes_heights, "venn": M.venn_heights, "geometry": M.geometry_heights,
+                "numberline": M.numberline_heights, "surface": M.surface_heights}[kind](views, width, title)
     if views[0]["layout"] == "graph":
         return title + LEVEL_H, title + width  # about square at most: taller only stretches the links
     _unit, _gap, levels = _tree_shape(views, width)
@@ -122,8 +122,9 @@ def _fill(h: list[float], most: list[float], which: list[int], spare: float) -> 
 
 
 _WHAT = {"cells": "an array", "code": "the code panel", "container": "a container", "nodes": "the diagram",
-         "axes": "the axes", "venn": "the Venn diagram", "geometry": "the figure"}
-MATH_KINDS = ("axes", "venn", "geometry")
+         "axes": "the axes", "venn": "the Venn diagram", "geometry": "the figure", "numberline": "the number line",
+         "surface": "the 3D view"}
+MATH_KINDS = ("axes", "venn", "geometry", "numberline", "surface")
 MAIN_KINDS = ("nodes", "container") + MATH_KINDS  # what gets the room first
 
 
@@ -777,8 +778,8 @@ def _plan(snaps: list[dict], width: float, height: float, top: float) -> Picture
             elif kind in MATH_KINDS:
                 from animation_agent.scene import math_layout as M
 
-                maths[name] = {"axes": M.axes_layout, "venn": M.venn_layout, "geometry": M.geometry_layout}[kind](
-                    views, region)
+                maths[name] = {"axes": M.axes_layout, "venn": M.venn_layout, "geometry": M.geometry_layout,
+                               "numberline": M.numberline_layout, "surface": M.surface_layout}[kind](views, region)
             elif kind == "cells":
                 cell[name] = cell_size(views, region)
             elif kind == "code":

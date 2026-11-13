@@ -12,6 +12,8 @@ font size >= MIN_FONT, colours with enough contrast on black, labels clear of li
 
 from __future__ import annotations
 
+import re
+
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import ClassVar
@@ -128,9 +130,41 @@ def wrapped(s: str, max_width: float, size: int = BODY_FONT, col=WHITE, max_line
     return Text("\n".join(lines), font_size=size, color=col, line_spacing=0.8)
 
 
+_COMMAND = re.compile(r"\\[A-Za-z]+")
+
+
+def _isolable(part: str, s: str) -> bool:
+    """Whether MathTex can isolate `part` in `s`: it splits the source at every occurrence, so a part that also
+    occurs inside a command's name (h in \\theta, a in \\nabla) cuts the command in two and LaTeX fails."""
+    return part in s and not any(part in cmd[1:] for cmd in _COMMAND.findall(s))
+
+
+def _plain(s: str) -> str:
+    """A formula as plain text for \\text{}: commands to their names, TeX's special characters escaped."""
+    s = _COMMAND.sub(lambda m: m.group(0)[1:] + " ", s).replace("{", "").replace("}", "")
+    for ch, esc in (("\\", " "), ("#", "\\#"), ("$", "\\$"), ("%", "\\%"), ("&", "\\&"), ("_", "\\_"),
+                    ("^", "\\^{}"), ("~", " ")):
+        s = s.replace(ch, esc)
+    return " ".join(s.split())
+
+
 def tex(s: str, size: int = TEX_FONT, col=WHITE, isolate: list[str] | None = None) -> MathTex:
-    parts = [p for p in (isolate or []) if p and p in s]
-    return MathTex(s, font_size=size, color=col, substrings_to_isolate=parts or None)
+    """The formula, isolating `isolate` so it can be coloured. A formula LaTeX can't compile no longer fails the
+    whole segment (runs/picture-p4, the Hessian: one formula took every segment and its picture down to written
+    code): parts that would cut a command are not isolated, then nothing is, and last the formula is shown as
+    plain text."""
+    parts = [p for p in (isolate or []) if p and _isolable(p, s)]
+    attempts = [(s, parts or None), (s, None), (rf"\text{{{_plain(s)}}}", None)]
+    for k, (source, iso) in enumerate(attempts):
+        if k and attempts[k] == attempts[k - 1]:
+            continue
+        try:
+            return MathTex(source, font_size=size, color=col, substrings_to_isolate=iso)
+        except (ValueError, RuntimeError, OSError) as e:
+            if k == len(attempts) - 1:
+                raise
+            print(f"[tex] {source[:80]!r} didn't compile ({type(e).__name__}); trying again more simply", flush=True)
+    raise AssertionError("unreachable")
 
 
 def fit(mob: VMobject, box: Box, *, grow: bool = False) -> VMobject:

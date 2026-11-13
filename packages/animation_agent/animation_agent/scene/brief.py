@@ -9,6 +9,9 @@ _EXAMPLE_TOPICS = {
     "union_find": "quick-union (union-find): the id[] array, the forest it encodes and the code line, kept in step",
     "llrb": "inserting S E A R C H X M into a left-leaning red-black BST: each insert, then its rotations and flips",
     "water_jugs": "the water-jug puzzle: measure 4 gallons with a 3 and a 5",
+    "bar_chart": "a population by group as a bar chart, then a stratified sample in proportion",
+    "division": "division with remainder on a number line: 17 = 2 x 7 + 3",
+    "volume": "volume under a surface: columns under z = f(x, y), more of them each time",
     "riemann": "left Riemann sums with 2, 4, 8, 16 rectangles climbing toward the exact area",
     "tangent": "secant lines through P and Q as Q slides to P, then the tangent",
     "level_curves": "level curves of F(x, y) = x^2 + 2y^2, then its gradient field",
@@ -25,7 +28,8 @@ and animates each change, so every step shown is the real algorithm's. Create th
 the whole program (p = Picture(program=[...]), one string per line); it opens on the first snapshot. Then a beat \
 shows a snapshot by its name, p.show(snap='swap1'), on the line that talks about it (two or three show calls in \
 one beat play one after another). Plan the program from the beats: write the beats' points first, then give \
-each point-making beat the snapshot it talks about, named for it (10-25 in all). A question or predict line \
+each point-making beat the snapshot it talks about, named for it (10-25 in all), so the picture changes on most \
+beats from the first segment to the last. A question or predict line \
 keeps the picture as it is ([]); the line that answers shows the answer. Every name you show must be one the \
 program snaps.
 
@@ -46,16 +50,20 @@ program ever shows, a link's label (up to 6 characters) is its weight, directed=
 line i (None: none).
   - container(name, capacity, level=0, title=None): a vessel drawn to scale with the others; .level, .capacity, \
 .style, x.pour_into(y) (returns the amount poured).
-  - axes(name, x=(lo, hi), y=None, title=None, xlabel='x', ylabel='y', equal=False): math on axes over x in \
-(lo, hi) (y fitted to what is drawn unless given; equal=True keeps one scale for x and y, for shapes and fields). \
+  - axes(name, x=None, y=None, title=None, xlabel='x', ylabel='y', equal=False): math, data and charts on axes \
+over x in (lo, hi) (a range is needed for curves; x and y are fitted to what is drawn unless given; equal=True \
+keeps one scale for x and y, for shapes and fields). \
 Each thing has a key, and drawing it again under the same key changes it in place: a.plot(key, f, style=None, \
 label=None, x=None) a curve of f (a lambda or def; it breaks where f is undefined); a.area(key, f, a, b, g=None, \
 style='visited', label=None) the region between f and g (or the x-axis); a.riemann(key, f, a, b, n, rule='left', \
 style='visited') n rectangles (rule 'left', 'right' or 'mid'), returning their total; a.tangent(key, f, x0, \
 half=None, style='current', label=None), returning the slope; a.line(key, p, q, style=None, label=None) a segment \
 between two (x, y) points; a.point(key, x, y, label=None, style='current'); a.field(key, F, n=7) arrows of \
-F(x, y) -> (u, v); a.contour(key, F, level, label=None) the curve F(x, y) = level; a.mark(key, style), \
-a.remove(key). At most 12 things; a label is at most 8 characters (x^2 shows as x²) and goes beside its thing, \
+F(x, y) -> (u, v); a.contour(key, F, level, label=None) the curve F(x, y) = level; a.bars(key, heights, \
+x=None, labels=None, style='visited', values=False) a bar chart (labels names each bar on the x-axis, at most 8 \
+characters each; values=True writes each height on its bar), returning the total; a.histogram(key, data, bins=8, \
+range=None) bars counting the data in equal bins, returning the counts; a.points(key, xs, ys, style='current', \
+label=None) a scatter (one thing however many points); a.mark(key, style), a.remove(key). At most 12 things; a label is at most 8 characters (x^2 shows as x²) and goes beside its thing, \
 so label a level curve with just its level ('4'). A label with no clear place is left out, so let the lines say \
 what matters and keep labels few.
   - venn(name, sets, universe=None, title=None): 1-3 sets as circles, sets a dict of a letter or two to a set (at \
@@ -69,6 +77,14 @@ g.circle(key, center, r, style=None), g.polygon(key, [points], style=None, fill=
 t2) (angles in radians), g.sector(key, center, r1, r2, t1, t2, style='current') the patch between two radii and \
 two angles (r1=0: a pie slice), returning its area; g.angle(key, a, vertex, b, style='current', label=None) an \
 arc at vertex from a to b, returning the angle in degrees; g.mark(key, style), g.remove(key).
+  - numberline(name, lo, hi, step=None, title=None): a number line (ticks every step, or at round numbers), for \
+integers, multiples, remainders, intervals and sequences. n.point(key, x, label=None, style='current'), \
+n.interval(key, a, b, closed=(True, True), style='visited', label=None) (an open end is a hollow dot), n.jump(key, \
+a, b, label=None) an arc from a to b (a step of +7, a remainder), n.mark(key, style), n.remove(key).
+  - surface(name, x=(lo, hi), y=(lo, hi), z=None, title=None, xlabel='x', ylabel='y', zlabel='z'): z = f(x, y) \
+seen in 3D from one fixed angle. s.plot(key, f, n=12) the surface; s.columns(key, f, n=4) n x n boxes under it \
+(a double integral's sum), returning their total volume; s.point(key, x, y, z, label=None); s.mark(key, style), \
+s.remove(key).
   - Math you can call: sin cos tan asin acos atan atan2 exp log log2 log10 sqrt floor ceil hypot radians degrees \
 pi e factorial comb perm gcd; derivative(f, x), integral(f, a, b), root(f, a, b) (f(a), f(b) of opposite signs); \
 Fraction(p, q) for exact probabilities (str(Fraction(3, 10)) is '3/10'). A probability tree is nodes() with each \
@@ -84,7 +100,7 @@ Rules:
 orders, areas, slopes, probabilities); never type a result.
   - Plain Python: def, class, loops, lists, dicts, f-strings. No imports, no names starting with _, no print. \
 Write the program's strings in single quotes (each line sits inside double quotes in the call). At most 80 lines.
-  - What fits: about 8 nodes or cells across, a tree about 4 levels deep below one other view, a graph of 8 \
+  - What fits: about 8 nodes or cells across, 10 bars, a tree about 4 levels deep below one other view, a graph of 8 \
 nodes and about 16 weighted links above an array (the whole frame). The Picture has the whole frame only while nothing else is on \
 screen: with a formula or note anywhere in the video it gets two thirds of the frame, where a big graph won't \
 fit. A picture that needs the whole frame wins: code then removes the formulas and notes, so for a big graph \

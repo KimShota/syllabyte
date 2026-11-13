@@ -64,9 +64,11 @@ class _View:
             raise PictureError(f"there is already a view named {name!r}")
         if len(_views) >= MAX_VIEWS:
             raise PictureError(f"at most {MAX_VIEWS} views on screen")
-        if title is not None and len(title) > MAX_TITLE:
-            raise PictureError(f"title {title!r} is longer than {MAX_TITLE} characters")
-        self.name, self.title = name, title
+        if title is not None and len(str(title)) > MAX_TITLE:
+            # left out, not refused: in runs/picture-p4 a 20-character title refused a whole picture, and the
+            # redraw lost it (the lines say what a title would)
+            title = None
+        self.name, self.title = name, None if title is None else str(title)
         _views[name] = self
 
     def state(self) -> dict:
@@ -252,9 +254,7 @@ def _math_label(label):
     if label is None or not str(label).strip():  # '' or ' ': no label
         return None
     label = str(label).strip()
-    if len(label) > MAX_MATH_LABEL:
-        raise PictureError(f"label {label!r} is longer than {MAX_MATH_LABEL} characters")
-    return label
+    return label if len(label) <= MAX_MATH_LABEL else None  # too long to sit beside a curve: left out
 
 
 def _value(f, x):
@@ -377,10 +377,10 @@ class Axes(_View):
 
     kind = "axes"
 
-    def __init__(self, name, x=(-5, 5), y=None, title=None, xlabel="x", ylabel="y", equal=False):
+    def __init__(self, name, x=None, y=None, title=None, xlabel="x", ylabel="y", equal=False):
         super().__init__(name, title)
-        self.x = [_num(x[0]), _num(x[1])]
-        if not self.x[0] < self.x[1]:
+        self.x = None if x is None else [_num(x[0]), _num(x[1])]  # None: fitted to what is drawn (bars, points)
+        if self.x is not None and not self.x[0] < self.x[1]:
             raise PictureError(f"{name}: x must run from low to high")
         self.y = None if y is None else [_num(y[0]), _num(y[1])]
         if self.y is not None and not self.y[0] < self.y[1]:
@@ -395,8 +395,15 @@ class Axes(_View):
             raise PictureError(f"{self.name}: at most {MAX_ITEMS} things on one set of axes")
         self._items[key] = {**item, "style": _style(style), "label": _math_label(label)}
 
+    def _xrange(self, x=None, what="this"):
+        if x is not None:
+            return [_num(x[0]), _num(x[1])]
+        if self.x is None:
+            raise PictureError(f"{self.name}: give the axes an x range (axes(name, x=(lo, hi))) to draw {what}")
+        return self.x
+
     def plot(self, key, f, style=None, label=None, x=None):
-        lo, hi = (self.x if x is None else [_num(x[0]), _num(x[1])])
+        lo, hi = self._xrange(x, "a curve")
         pieces = _pieces(f, lo, hi)
         if not pieces:
             raise PictureError(f"{self.name}: {key} is undefined everywhere on {lo}..{hi}")
@@ -441,7 +448,8 @@ class Axes(_View):
         y0, m = _value(f, x0), derivative(f, x0)
         if y0 is None:
             raise PictureError(f"{self.name}: f is undefined at x = {x0:g}")
-        half = (self.x[1] - self.x[0]) / 4 if half is None else _num(half)
+        xr = self._xrange(None, "a tangent")
+        half = (xr[1] - xr[0]) / 4 if half is None else _num(half)
         self.line(key, (x0 - half, y0 - m * half), (x0 + half, y0 + m * half), style, label)
         return m
 
@@ -451,7 +459,7 @@ class Axes(_View):
     def field(self, key, F, n=7, style="blue"):
         """Arrows of the vector field F(x, y) -> (u, v) on an n x n grid (lengths scaled to the largest)."""
         n = max(3, min(int(n), 9))
-        y = self.y or self.x
+        y = self.y or self._xrange(None, "a field")
         arrows = []
         for i in range(n):
             for j in range(n):
@@ -468,11 +476,57 @@ class Axes(_View):
 
     def contour(self, key, F, level, style=None, label=None):
         """The level curve F(x, y) = level (marching squares over the axes' ranges)."""
-        y = self.y or self.x
+        y = self.y or self._xrange(None, "a level curve")
         lines = _marching_squares(F, self.x, y, _num(level))
         if not lines:
             raise PictureError(f"{self.name}: F never equals {level} on these axes")
         self._put(key, {"type": "curve", "pieces": lines}, style, label)
+
+    def bars(self, key, heights, x=None, labels=None, width=0.8, style="visited", values=False):
+        """A bar for each height, at x (default 1, 2, 3...), `width` wide; `labels` names each bar on the x-axis
+        (a bar chart of categories, each name at most 8 characters); values=True writes each height above its bar.
+        Returns the total of the heights."""
+        heights = [_num(h) for h in heights]
+        if not 1 <= len(heights) <= MAX_RECTS:
+            raise PictureError(f"{self.name}: 1-{MAX_RECTS} bars")
+        xs = [float(i + 1) for i in range(len(heights))] if x is None else [_num(v) for v in x]
+        if len(xs) != len(heights):
+            raise PictureError(f"{self.name}: {key}: {len(heights)} heights but {len(xs)} x positions")
+        names = None
+        if labels is not None:
+            names = [str(n).strip() for n in labels]
+            if len(names) != len(heights) or any(len(n) > MAX_MATH_LABEL for n in names):
+                raise PictureError(f"{self.name}: {key}: one label per bar, each at most {MAX_MATH_LABEL} characters")
+        w = _num(width) * (min(b - a for a, b in zip(sorted(xs), sorted(xs)[1:])) if len(xs) > 1 else 1.0)
+        shown = [f"{h:g}" if len(f"{h:g}") <= 6 else f"{h:.3g}" for h in heights] if values else None
+        self._put(key, {"type": "bars", "bars": [[cx - w / 2, cx + w / 2, h] for cx, h in zip(xs, heights)],
+                        "names": names, "values": shown}, style)
+        return sum(heights)
+
+    def histogram(self, key, data, bins=8, range=None, style="visited", values=False):
+        """Bars counting how many of `data` fall in each of `bins` equal bins over `range` (default: the data's
+        own); returns the counts."""
+        data = [_num(v) for v in data]
+        if not data:
+            raise PictureError(f"{self.name}: {key}: no data")
+        lo, hi = (min(data), max(data)) if range is None else (_num(range[0]), _num(range[1]))
+        bins = max(1, min(int(bins), MAX_RECTS))
+        hi = hi if hi > lo else lo + 1
+        w = (hi - lo) / bins
+        counts = [0] * bins
+        for v in data:
+            if lo <= v <= hi:
+                counts[min(int((v - lo) / w), bins - 1)] += 1
+        self._put(key, {"type": "bars", "bars": [[lo + i * w, lo + (i + 1) * w, c] for i, c in enumerate(counts)],
+                        "names": None, "values": [str(c) for c in counts] if values else None}, style)
+        return counts
+
+    def points(self, key, xs, ys, style="current", label=None):
+        """A scatter of points (x, y), one thing however many points."""
+        pts = [[_num(a), _num(b)] for a, b in zip(xs, ys)]
+        if not 1 <= len(pts) <= 60:
+            raise PictureError(f"{self.name}: 1-60 points in one scatter")
+        self._put(key, {"type": "points", "at": pts}, style, label)
 
     def mark(self, key, style="current"):
         if str(key) in self._items:
@@ -482,7 +536,8 @@ class Axes(_View):
         self._items.pop(str(key), None)
 
     def state(self):
-        return {"kind": self.kind, "title": self.title, "x": list(self.x), "y": None if self.y is None else
+        return {"kind": self.kind, "title": self.title, "x": None if self.x is None else list(self.x),
+                "y": None if self.y is None else
                 list(self.y), "xlabel": self.xlabel, "ylabel": self.ylabel, "equal": self.equal,
                 "items": copy.deepcopy(self._items)}
 
@@ -661,7 +716,134 @@ class Geometry(_View):
                 "items": copy.deepcopy(self._items)}
 
 
-def axes(name, x=(-5, 5), y=None, title=None, xlabel="x", ylabel="y", equal=False):
+class NumberLine(_View):
+    """A number line from lo to hi (ticks every `step`, or at round numbers): points on it, intervals along it
+    (closed or open ends), and jumps between two numbers drawn as arcs (counting by 7s, a gcd's steps)."""
+
+    kind = "numberline"
+
+    def __init__(self, name, lo, hi, step=None, title=None):
+        super().__init__(name, title)
+        self.lo, self.hi = _num(lo), _num(hi)
+        if not self.lo < self.hi:
+            raise PictureError(f"{name}: the line must run from low to high")
+        self.step = None if step is None else _num(step)
+        if self.step is not None and not 0 < self.step <= self.hi - self.lo:
+            raise PictureError(f"{name}: step must be positive and at most hi - lo")
+        self._items: dict[str, dict] = {}
+
+    def _put(self, key, item, style, label=None):
+        key = str(key)
+        if key not in self._items and len(self._items) >= MAX_ITEMS * 2:
+            raise PictureError(f"{self.name}: at most {MAX_ITEMS * 2} things on one number line")
+        self._items[key] = {**item, "style": _style(style), "label": _math_label(label)}
+
+    def _on(self, v):
+        v = _num(v)
+        if not self.lo - 1e-9 <= v <= self.hi + 1e-9:
+            raise PictureError(f"{self.name}: {v:g} is off the line ({self.lo:g} to {self.hi:g})")
+        return v
+
+    def point(self, key, x, label=None, style="current"):
+        self._put(key, {"type": "point", "x": self._on(x)}, style, label)
+
+    def interval(self, key, a, b, closed=(True, True), style="visited", label=None):
+        """The numbers from a to b, a solid dot at a closed end and a hollow one at an open end."""
+        a, b = self._on(a), self._on(b)
+        if not a < b:
+            raise PictureError(f"{self.name}: an interval runs from low to high")
+        self._put(key, {"type": "interval", "a": a, "b": b, "closed": [bool(closed[0]), bool(closed[1])]}, style,
+                  label)
+
+    def jump(self, key, a, b, label=None, style="compare"):
+        """An arc from a to b above the line (a step of a count, a move)."""
+        self._put(key, {"type": "jump", "a": self._on(a), "b": self._on(b)}, style, label)
+
+    def mark(self, key, style="current"):
+        if str(key) in self._items:
+            self._items[str(key)]["style"] = _style(style)
+
+    def remove(self, key):
+        self._items.pop(str(key), None)
+
+    def state(self):
+        return {"kind": self.kind, "title": self.title, "lo": self.lo, "hi": self.hi, "step": self.step,
+                "items": copy.deepcopy(self._items)}
+
+
+class Surface(_View):
+    """z = f(x, y) over a rectangle, seen from above and to the side (a fixed 3D view drawn flat): the surface
+    itself, columns under it (the boxes of a double integral's sum) and points in space."""
+
+    kind = "surface"
+    MAX_GRID = 16
+    MAX_COLUMNS = 8
+
+    def __init__(self, name, x=(-2, 2), y=(-2, 2), z=None, title=None, xlabel="x", ylabel="y", zlabel="z"):
+        super().__init__(name, title)
+        self.x, self.y = [_num(x[0]), _num(x[1])], [_num(y[0]), _num(y[1])]
+        if not (self.x[0] < self.x[1] and self.y[0] < self.y[1]):
+            raise PictureError(f"{name}: x and y must each run from low to high")
+        self.z = None if z is None else [_num(z[0]), _num(z[1])]
+        self.labels = [_math_label(xlabel), _math_label(ylabel), _math_label(zlabel)]
+        self._items: dict[str, dict] = {}
+
+    def _put(self, key, item, style, label=None):
+        key = str(key)
+        if key not in self._items and len(self._items) >= MAX_ITEMS:
+            raise PictureError(f"{self.name}: at most {MAX_ITEMS} things in one 3D view")
+        self._items[key] = {**item, "style": _style(style), "label": _math_label(label)}
+
+    def _z(self, f, x, y):
+        v = _value(lambda q: f(q[0], q[1]), (x, y))
+        if v is None:
+            raise PictureError(f"{self.name}: f is undefined at ({x:g}, {y:g})")
+        return v
+
+    def plot(self, key, f, n=12, style="blue"):
+        """The surface z = f(x, y), as an n x n grid of patches."""
+        n = max(2, min(int(n), self.MAX_GRID))
+        (x0, x1), (y0, y1) = self.x, self.y
+        grid = [[self._z(f, x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * j / n) for j in range(n + 1)]
+                for i in range(n + 1)]
+        self._put(key, {"type": "mesh", "n": n, "z": grid}, style)
+
+    def columns(self, key, f, n=4, style="visited"):
+        """n x n boxes standing on the rectangle, each as tall as f at its centre; returns their total volume
+        (the double integral's Riemann sum)."""
+        n = max(1, min(int(n), self.MAX_COLUMNS))
+        (x0, x1), (y0, y1) = self.x, self.y
+        w, d = (x1 - x0) / n, (y1 - y0) / n
+        cols = [[x0 + i * w, x0 + (i + 1) * w, y0 + j * d, y0 + (j + 1) * d,
+                 self._z(f, x0 + (i + 0.5) * w, y0 + (j + 0.5) * d)] for i in range(n) for j in range(n)]
+        self._put(key, {"type": "columns", "columns": cols}, style)
+        return sum(c[4] for c in cols) * w * d
+
+    def point(self, key, x, y, z, label=None, style="current"):
+        self._put(key, {"type": "point", "at": [_num(x), _num(y), _num(z)]}, style, label)
+
+    def mark(self, key, style="current"):
+        if str(key) in self._items:
+            self._items[str(key)]["style"] = _style(style)
+
+    def remove(self, key):
+        self._items.pop(str(key), None)
+
+    def state(self):
+        return {"kind": self.kind, "title": self.title, "x": list(self.x), "y": list(self.y),
+                "z": None if self.z is None else list(self.z), "labels": list(self.labels),
+                "items": copy.deepcopy(self._items)}
+
+
+def surface(name, x=(-2, 2), y=(-2, 2), z=None, title=None, xlabel="x", ylabel="y", zlabel="z"):
+    return Surface(name, x, y, z, title, xlabel, ylabel, zlabel)
+
+
+def numberline(name, lo, hi, step=None, title=None):
+    return NumberLine(name, lo, hi, step, title)
+
+
+def axes(name, x=None, y=None, title=None, xlabel="x", ylabel="y", equal=False):
     return Axes(name, x, y, title, xlabel, ylabel, equal)
 
 
@@ -704,7 +886,7 @@ MATH = {k: getattr(math, k) for k in ("sin", "cos", "tan", "asin", "acos", "atan
                                        "factorial", "comb", "perm", "gcd")}
 
 EXPORTS = {"INF": float("inf"), "cells": cells, "nodes": nodes, "code": code, "container": container, "snap": snap,
-           "axes": axes, "venn": venn, "geometry": geometry, "derivative": derivative, "integral": integral,
+           "axes": axes, "venn": venn, "geometry": geometry, "numberline": numberline, "surface": surface, "derivative": derivative, "integral": integral,
            "root": root, "Fraction": Fraction, "PictureError": PictureError, **MATH}
 
 

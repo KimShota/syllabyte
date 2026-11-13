@@ -240,5 +240,42 @@ rr = both['RR']
 snap(f'two reds: 3/5 times 2/4 = {rr}', name='rr')
 '''
 
-MATH_PROGRAMS = {"riemann": RIEMANN, "tangent": TANGENT, "level_curves": LEVEL_CURVES, "venn3": VENN3,
+BAR_CHART = '''
+pop = [30, 2450, 80, 50, 720]
+names = ['Arch', 'Engin', 'HSS', 'Mgmt', 'Sci']
+a = axes('a', title='majors by school', xlabel='', ylabel='students')
+a.bars('pop', pop, labels=names, values=True)
+snap('students per school: Engineering dwarfs Architecture', name='pop')
+b = axes('b', title='stratified sample', xlabel='', ylabel='picked')
+picked = [max(1, round(v * 100 / sum(pop))) for v in pop]
+b.bars('s', picked, labels=names, values=True, style='found')
+snap('100 picked in proportion, at least one per school: ' + ', '.join(str(v) for v in picked), name='sample')
+'''
+
+DIVISION = '''
+n = numberline('n', -21, 21, step=7, title='multiples of 7')
+for k in range(-3, 4):
+    n.point('m' + str(k), 7 * k, style='grey')
+snap('the multiples of 7', name='mult')
+n.point('x', 17, label='17')
+n.jump('j', 14, 17, label='+3')
+snap('17 = 2 x 7 + 3: the remainder is 3', name='div')
+n.interval('r', 14, 21, closed=(True, False), label='[14,21)')
+snap('every number in [14, 21) has quotient 2', name='range')
+'''
+
+VOLUME = '''
+f = lambda x, y: 1 - x * x - y * y / 2 + 1
+s = surface('s', x=(0, 1), y=(0, 1), title='volume under f')
+s.plot('f', f, n=10)
+snap('the surface z = 2 - x^2 - y^2/2 over the unit square', name='surface')
+for n in (2, 4):
+    v = s.columns('cols', f, n)
+    snap(f'{n * n} columns: volume about {v:.3f}', name='n' + str(n))
+s.remove('f')
+v = s.columns('cols', f, 8)
+snap(f'64 columns: {v:.3f}; the exact volume is {2 - 1/3 - 1/6:.3f}', name='n8')
+'''
+
+MATH_PROGRAMS = {"bar_chart": BAR_CHART, "division": DIVISION, "volume": VOLUME, "riemann": RIEMANN, "tangent": TANGENT, "level_curves": LEVEL_CURVES, "venn3": VENN3,
                  "triangle": TRIANGLE, "probability_tree": PROBABILITY_TREE}
