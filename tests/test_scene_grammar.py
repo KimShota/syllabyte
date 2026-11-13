@@ -425,3 +425,30 @@ def test_a_plan_whose_picture_barely_changes_is_sent_back():
     assert "changes on only 1" in _thin_picture(still).message
     lively = [[["p = Picture(program=['x = 1', 'snap()'])"]] + [["p.show(snap='0')"]] * 6] + [[["eq.box()"]] * 4] * 3
     assert _thin_picture(lively) is None
+
+
+def test_a_fix_call_that_breaks_the_picture_keeps_the_calls_from_before_it(monkeypatch):
+    # runs/h2h: the fix call sent back a program that failed, so code dropped the Picture and all its shows
+    from script_generation_agent import storyboard
+    from test_storyboard import KU, example_board
+
+    good = "a = cells('a', [3, 1, 2])\nsnap('three', name='s0')\na.mark(0, 'current')\nsnap('first', name='s1')"
+    broken = "a = cells('a', [3, 1, 2])\nsnap('three', name='s0')\nb.mark(0, 'current')\nsnap('first', name='s1')"
+    plan = storyboard.skeleton(2)
+    script = storyboard.assemble(example_board(plan), plan, KU)
+    for s, seg in enumerate(script.segments):
+        for b, beat in enumerate(seg.beats):
+            beat.draw = [picture_call(good)] if (s, b) == (2, 0) else []
+    sent = []
+
+    def fake(**kw):
+        sent.append(kw["stage"])
+        draws = [[picture_call(broken)], ["p.show(snap='s1')"], [], [], []]
+        return storyboard._Fixes(segments=[storyboard._SegmentFix(
+            segment_index=2, beats=[storyboard._BeatDraw(draw=d) for d in draws])])
+
+    monkeypatch.setattr(storyboard, "structured", fake)
+    out = storyboard.settle_picture(script, ku_id="ku-x")
+    assert sent == ["storyboard_fix"]
+    assert out[2][0] and out[2][0][0].startswith("p = Picture(") and "a.mark(0" in out[2][0][0]
+    assert "p.show(snap='s1')" in [c for calls in out[2] for c in calls]

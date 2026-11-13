@@ -474,8 +474,27 @@ def settle_picture(script: TemplatedDialogueScript, *, ku_id: str, model: str = 
         if trace is not None:
             segments, kept = keep_steps(before, segments, trace)
             _log(ku_id, kept)
-        segments = normalize_script(highlighted(held(segments)), lines, allowed, keep_echo=keep_echo).segments
+        fixed = normalize_script(highlighted(held(segments)), lines, allowed, keep_echo=keep_echo)
+        _log(ku_id, fixed.log)
+        settled = _drop_broken(fixed.segments, lines, allowed)
+        # The fix call is asked for small changes, but its answer can break a Picture's program (in runs/h2h it
+        # came back with one that failed, so code dropped the Picture and every show of it, and the video fell back
+        # to code written per segment). A picture with a few still beats beats no picture: keep the calls from
+        # before the fix call then.
+        if len(_pictures(settled)) < len(_pictures(before)):
+            kept = _drop_broken([None if d is None else [list(b) for b in d] for d in before], lines, allowed)
+            if len(_pictures(kept)) == len(_pictures(before)):
+                _log(ku_id, ["the fix call's answer lost the picture: kept the calls from before it"])
+                return kept
+        return settled
     return _drop_broken(segments, lines, allowed)
+
+
+def _pictures(segments) -> list[str]:
+    """The Picture calls among the calls (`p = Picture(program=[...])`)."""
+    from animation_agent.visuals.normalize import _MAKE_PICTURE
+
+    return [c for draws in segments for calls in draws or [] for c in calls if _MAKE_PICTURE.match(c)]
 
 
 def drop_echoes(segments, lines, ku_id: str = ""):

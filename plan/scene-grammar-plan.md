@@ -284,6 +284,18 @@ the critic's scores unchanged (8, 8, 7, 6). A plan drawn again still adds 15-20 
 planner, and speaking lines while the writer is still writing.
 - **P3:** layer 2 (checked codegen on primitives), icon set, miss log.
 - **P4:** benchmark; templates kept only where they beat the grammar.
+- **Head-to-head (2026-11-13, runs/h2h, $2.11):** 10 topics (5 CS, 5 math, none used to tune the grammar), each
+  made with the grammar and with the templates on the same code (d4fd3acf) and the same extracted topics. Critic
+  means, grammar vs templates: accuracy **6.3 vs 5.4**, visual alignment 4.6 vs 4.4, coherence 5.8 vs 5.6,
+  appropriateness 6.0 vs 5.9; layout findings **8 vs 49**; $0.114 vs $0.097 a video; about 59 s vs 51 s on the
+  runs the network didn't stall (the grammar drew its plan again on 4 of 10). By topic, accuracy 6 wins, 1 loss,
+  3 ties; visual alignment 3 wins, 2 losses, 5 ties. Templates won on DFS (a visited list filled step by step).
+  The grammar's worst video (sample size, VA 2) was our bug: the fix call sent back a Picture program that failed,
+  code dropped the Picture and every show of it without a word, and each segment fell back to codegen. Fixed: the
+  answer's normalize log is printed, and a fix call that loses a Picture is thrown away for the calls before it.
+  The run also stalled on a flaky connection (one request 10 minutes, the SDK's default): the client now gives up
+  on a request after 60 s without a byte, and a stream cut off midway is retried again (the SDK runs on httpx2, so
+  `httpx.TransportError` had stopped catching it).
 
 ## Risks
 

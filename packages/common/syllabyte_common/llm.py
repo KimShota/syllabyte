@@ -174,12 +174,21 @@ def anthropic_api_key() -> str | None:
     return key
 
 
+# How long a request may go without a byte from the server before it is given up and made again. The SDK's default
+# is 10 minutes: on a flaky connection in runs/h2h one request sat 7 minutes and another the full 10 before its retry,
+# and two videos took 12 minutes instead of about one. Every call streams, and a stream sends events (pings, thinking,
+# text) every few seconds while the model works, so a minute of silence is a dead connection, not a slow answer.
+STALL_SECONDS = 60
+CONNECT_SECONDS = 10
+
+
 def get_client() -> anthropic.Anthropic:
     global _client
     if _client is None:
         # Segments render concurrently, so expect occasional 429s; the SDK
         # retries them with backoff (its default is 2 retries).
-        _client = anthropic.Anthropic(api_key=anthropic_api_key(), max_retries=6)
+        _client = anthropic.Anthropic(api_key=anthropic_api_key(), max_retries=6,
+                                      timeout=anthropic.Timeout(STALL_SECONDS, connect=CONNECT_SECONDS))
     return _client
 
 
@@ -188,6 +197,14 @@ def get_client() -> anthropic.Anthropic:
 # without sending complete message body". So a call that fails like that is made again after each of these waits
 # (about 3.5 minutes in all) before it gives up.
 OUTAGE_WAITS: tuple[float, ...] = (10, 30, 60, 120)
+# anthropic 1.x makes its requests with httpx2, not httpx, so a stream cut off or gone silent midway raises httpx2's
+# errors, which httpx.TransportError doesn't catch.
+try:
+    import httpx2
+
+    _SDK_TRANSPORT_ERRORS: tuple[type[Exception], ...] = (httpx2.TransportError,)
+except ImportError:  # an SDK that runs on httpx
+    _SDK_TRANSPORT_ERRORS = ()
 TRANSIENT_ERRORS = (
     anthropic.APIConnectionError,  # includes timeouts
     anthropic.InternalServerError,
@@ -195,6 +212,7 @@ TRANSIENT_ERRORS = (
     anthropic.ServiceUnavailableError,
     anthropic.RateLimitError,
     httpx.TransportError,  # a stream cut off midway (RemoteProtocolError, ReadError)
+    *_SDK_TRANSPORT_ERRORS,  # the same from the HTTP package the SDK itself runs on (anthropic 1.x: httpx2)
 )
 
 
