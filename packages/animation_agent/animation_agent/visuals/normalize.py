@@ -18,6 +18,7 @@ No Manim import.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from animation_agent.visuals.calls import (
@@ -442,6 +443,71 @@ def fill_still(segments: list[list[list[str]] | None], steps: list[list[tuple[st
         if call is not None:
             out[s][b - 1].append(call)
             log.append(f"segment {s} beat {b}: the picture was still; added `{call}`, the cells the line names")
+    return out, log
+
+
+_SHOW = re.compile(r"\s*(\w+)\.show\(\s*snap\s*=\s*['\"]([^'\"]+)['\"]")
+_STEP = re.compile(r"\s*(\w+)\.step\(")
+_MAKE_PICTURE = re.compile(r"\s*(\w+)\s*=\s*Picture\(")
+
+
+def fill_picture_still(segments: list[list[list[str]] | None],
+                       steps: list[list[tuple[str, bool]]]) -> tuple[list[list[list[str]] | None], list[str]]:
+    """In code, no LLM: a still point-making beat with a Picture on screen shows the Picture's next snapshot, when
+    that snapshot comes between the one on screen and the next one any beat shows (an in-between state no beat
+    uses; one a later beat shows is never taken from it). The lines are written after the picture settles, so
+    the line then says what it shows. This was the fix call's most common job (runs/picture-p2 timing: 5 s)."""
+    from animation_agent.visuals.calls import CallError, parse_call
+    from animation_agent.visuals.specs import PictureParams, picture_snapshots
+
+    out = [None if d is None else [list(b) for b in d] for d in segments]
+    names: dict[str, list[str]] = {}  # each Picture's snapshot names, in program order
+    shown: list[tuple[int, str, int]] = []  # (global beat, picture, snapshot index) of every show, in order
+    order: list[tuple[int, int]] = []
+    live: dict[str, int] = {}  # picture -> global beat it was made at
+    made_at: dict[tuple[int, int], dict[str, int]] = {}
+    g = 0
+    for si, draws in enumerate(out):
+        for bi, calls in enumerate(draws or []):
+            for c in calls:
+                if m := _MAKE_PICTURE.match(c):
+                    try:
+                        args = parse_call(c, {}).args
+                        program = PictureParams(**{k: v for k, v in args.items() if k != "area"}).program
+                        names[m.group(1)] = [str(x.get("name")) for x in picture_snapshots(program)]
+                        live[m.group(1)] = g
+                        shown.append((g, m.group(1), 0))
+                    except (CallError, ValueError):
+                        continue
+                elif (m := _SHOW.match(c)) and m.group(1) in names and m.group(2) in names[m.group(1)]:
+                    shown.append((g, m.group(1), names[m.group(1)].index(m.group(2))))
+                elif (m := re.match(r"\s*(\w+)\.remove\(", c)) and m.group(1) in live:
+                    live.pop(m.group(1))
+            made_at[(si, bi)] = dict(live)
+            order.append((si, bi))
+            g += 1
+    used = {(p, k) for _g, p, k in shown}
+    log = []
+    still = set(still_beats(out, steps, text_too=False))
+    for gi, (si, bi) in enumerate(order):
+        if (si, bi + 1) not in still:
+            continue
+        for p in made_at.get((si, bi), {}):
+            if any(_STEP.match(c) and c.strip().startswith(p + ".") for draws in out for b in draws or [] for c in b):
+                continue  # a picture stepped through in order: an extra step would shift every later one
+            before = [k for g2, q, k in shown if q == p and g2 <= gi]
+            after = [k for g2, q, k in shown if q == p and g2 > gi]
+            if not before:
+                continue
+            nxt = before[-1] + 1
+            if nxt < len(names[p]) and (not after or nxt < min(after)) and (p, nxt) not in used:
+                out[si][bi].append(f"{p}.show(snap='{names[p][nxt]}')")
+                shown.append((gi, p, nxt))
+                shown.sort()
+                used.add((p, nxt))
+                log.append(f"segment {si} beat {bi + 1}: the picture was still; showed its next state, "
+                           f"'{names[p][nxt]}'")
+                break
     return out, log
 
 

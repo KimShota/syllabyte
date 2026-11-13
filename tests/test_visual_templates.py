@@ -233,16 +233,21 @@ def test_early_voices_are_used_only_for_the_same_lines(tmp_path, monkeypatch):
     from test_dialogue import make_script
     from syllabyte_common.models import SegmentAudio
 
-    def fake_tts(script, out, backend):
+    def fake_tts(script, out, backend, on_segment=None):
         out.mkdir(parents=True)
         (out / "seg_0.wav").write_bytes(b"RIFF")
-        return [SegmentAudio(segment_index=0, wav_path=str(out / "seg_0.wav"), duration_seconds=1.0,
-                             srt_start=0.0, srt_end=1.0, beat_durations=[1.0])]
+        audio = SegmentAudio(segment_index=0, wav_path=str(out / "seg_0.wav"), duration_seconds=1.0,
+                             srt_start=0.0, srt_end=1.0, beat_durations=[1.0])
+        if on_segment is not None:
+            on_segment(0, audio)
+        return [audio]
 
     monkeypatch.setattr(generate_shorts, "synthesize_segments", fake_tts)
     voices = generate_shorts.EarlyVoices(tmp_path / "audio", "kokoro")
     script = make_script()
     voices.start(script)
+    stream = voices.stream(script)  # each segment as it is spoken, for its render to start
+    assert stream is not None and stream[0].result(timeout=5).beat_durations == [1.0]
     redrawn = script.model_copy(deep=True)
     redrawn.segments[0].beats[0].visual = "something else"  # pictures change, words don't
     audios = voices.take(redrawn)

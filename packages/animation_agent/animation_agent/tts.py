@@ -88,7 +88,9 @@ class KokoroBackend:
         if lang_code not in _kokoro_pipelines:
             from kokoro import KPipeline
 
-            _kokoro_pipelines[lang_code] = KPipeline(lang_code=lang_code, repo_id="hexgrad/Kokoro-82M")
+            # one model for every accent: each pipeline loaded its own copy (the cast speaks American and British)
+            shared = next((p.model for p in _kokoro_pipelines.values() if p.model is not None), True)
+            _kokoro_pipelines[lang_code] = KPipeline(lang_code=lang_code, repo_id="hexgrad/Kokoro-82M", model=shared)
         return _kokoro_pipelines[lang_code]
 
     def synthesize_words(self, text: str, out_wav_path: Path, voice: str | None = None) -> tuple[float, list[WordTiming]]:
@@ -190,6 +192,12 @@ def _synthesize_beat(backend: TTSBackend, text: str, path: Path, voice: str | No
     return estimate_words(text, backend.synthesize(text, path, voice))
 
 
+# Each line's audio by (backend, voice, words): a script whose lines changed after its voices started (the line
+# check rewrote one) is spoken again only where it changed.
+_BEAT_CACHE: dict[tuple, tuple] = {}
+_BEAT_CACHE_MAX = 400
+
+
 def _synthesize_beats(
     backend: TTSBackend, seg: Segment, wav_path: Path,
     voices: list[str | None] | None = None, gaps: list[float] | None = None,
@@ -205,16 +213,26 @@ def _synthesize_beats(
     chunks, durations, words = [], [], []
     sample_rate = None
     for j, beat in enumerate(seg.beats):
-        beat_path = wav_path.with_name(f"{wav_path.stem}_beat_{j}.wav")
-        words.append(_synthesize_beat(backend, beat.narration, beat_path, voices[j] if voices else None))
-        audio, sample_rate = sf.read(str(beat_path), dtype="float32")
-        beat_path.unlink(missing_ok=True)
+        voice = voices[j] if voices else None
+        key = (type(backend).__name__, voice, beat.narration)
+        if key in _BEAT_CACHE:  # spoken already (the voices start before the line check; it rewrites few lines)
+            audio, sample_rate, beat_words = _BEAT_CACHE[key]
+            words.append(beat_words)
+        else:
+            beat_path = wav_path.with_name(f"{wav_path.stem}_beat_{j}.wav")
+            words.append(_synthesize_beat(backend, beat.narration, beat_path, voice))
+            audio, sample_rate = sf.read(str(beat_path), dtype="float32")
+            beat_path.unlink(missing_ok=True)
+            _BEAT_CACHE[key] = (audio, sample_rate, words[-1])
+            while len(_BEAT_CACHE) > _BEAT_CACHE_MAX:
+                _BEAT_CACHE.pop(next(iter(_BEAT_CACHE)))
         if j < len(seg.beats) - 1:
             gap_seconds = gaps[j] if gaps else BEAT_GAP_SECONDS
             gap = np.zeros((int(gap_seconds * sample_rate), *audio.shape[1:]), dtype="float32")
             audio = np.concatenate([audio, gap])
         chunks.append(audio)
         durations.append(len(audio) / sample_rate)
+    wav_path.parent.mkdir(parents=True, exist_ok=True)  # every line may have come from the cache
     sf.write(str(wav_path), np.concatenate(chunks), sample_rate)
     return durations, words
 
@@ -238,14 +256,63 @@ def _dialogue_voices_and_gaps(script: DialogueScript, i: int) -> tuple[list[str]
 _SYNTH_LOCK = threading.Lock()
 
 
-def synthesize_segments(
-    script: Script, audio_dir: Path, backend_name: str = "kokoro"
-) -> list[SegmentAudio]:
+_WARM: set[tuple[str, str]] = set()
+
+
+def _offline_if_cached(repo_id: str = "hexgrad/Kokoro-82M") -> None:
+    """Skips the Hub's network checks once Kokoro's model is cached: each voice file's first use in a process
+    asked the Hub over HTTP (about 5 s of HEAD requests per video, runs/picture-p2 timing)."""
+    import os
+
+    try:
+        from huggingface_hub import constants, try_to_load_from_cache
+
+        if isinstance(try_to_load_from_cache(repo_id, "config.json"), str):
+            os.environ["HF_HUB_OFFLINE"] = "1"
+            constants.HF_HUB_OFFLINE = True
+    except Exception:  # best effort: online still works
+        pass
+
+
+def warm_voices(voices: list[str], backend_name: str = "kokoro") -> None:
+    """Loads the voice model, its phonemizer and each voice by speaking one short word in it, so the narration
+    starts speaking at once when the lines are ready (in a timed run the model, its files and its phonemizer took
+    about 8 s of the voices' 19 s). Under the synthesis lock, so a synthesis that starts meanwhile waits for it."""
+    if backend_name != "kokoro":
+        return
     with _SYNTH_LOCK:
-        return _synthesize_segments(script, audio_dir, backend_name)
+        _offline_if_cached()
+        backend = get_backend(backend_name)
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for v in dict.fromkeys(voices):
+                if ("kokoro", v) in _WARM:
+                    continue
+                try:
+                    backend.synthesize_words("Hi.", Path(tmp) / "warm.wav", voice=v)
+                    _WARM.add(("kokoro", v))
+                except Exception as e:  # the real synthesis reports any problem
+                    print(f"[tts] warming voice {v} failed: {e}", flush=True)
 
 
-def _synthesize_segments(script: Script, audio_dir: Path, backend_name: str) -> list[SegmentAudio]:
+def start_warming(voices: list[str], backend_name: str = "kokoro") -> threading.Thread:
+    """warm_voices in a background thread (while the storyboard is planned and written)."""
+    t = threading.Thread(target=warm_voices, args=(voices, backend_name), daemon=True, name="warm-voices")
+    t.start()
+    return t
+
+
+def synthesize_segments(
+    script: Script, audio_dir: Path, backend_name: str = "kokoro", on_segment=None,
+) -> list[SegmentAudio]:
+    """Every segment's narration. `on_segment(i, audio)` is called as each one is done, so its render can start
+    while the rest are spoken."""
+    with _SYNTH_LOCK:
+        return _synthesize_segments(script, audio_dir, backend_name, on_segment)
+
+
+def _synthesize_segments(script: Script, audio_dir: Path, backend_name: str, on_segment=None) -> list[SegmentAudio]:
     backend = get_backend(backend_name)
     results: list[SegmentAudio] = []
     t = 0.0
@@ -266,6 +333,8 @@ def _synthesize_segments(script: Script, audio_dir: Path, backend_name: str) -> 
             )
         )
         t += duration
+        if on_segment is not None:
+            on_segment(i, results[-1])
     return results
 
 

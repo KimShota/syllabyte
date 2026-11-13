@@ -213,6 +213,19 @@ def _final_message(kwargs: dict, *, stage: str, ku_id: str | None):
     raise AssertionError("unreachable")
 
 
+# A system prompt this long (about 1k tokens, the smallest a model caches) is marked for the prompt cache: the
+# storyboard planner's runs to 20k tokens with the picture brief and is the same for every KU of a level, so the
+# videos of a course made together read it from the cache (a tenth of the price, and a faster first token) instead
+# of sending it again. A cache entry lives 5 minutes; writing one costs a quarter more than plain input.
+CACHE_SYSTEM_CHARS = 4500
+
+
+def _system_blocks(system: str):
+    if len(system) < CACHE_SYSTEM_CHARS:
+        return system
+    return [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+
+
 # --------------------------------------------------------------------------
 # Content block builders
 # --------------------------------------------------------------------------
@@ -327,7 +340,7 @@ def structured(
     if (chosen := _effort(model, effort)) is not None:
         kwargs["output_config"]["effort"] = chosen
     if system is not None:
-        kwargs["system"] = system
+        kwargs["system"] = _system_blocks(system)
 
     start = time.monotonic()
     response = _final_message(kwargs, stage=stage, ku_id=ku_id)
@@ -378,7 +391,7 @@ def text(
         "messages": [{"role": "user", "content": content}],
     }
     if system is not None:
-        kwargs["system"] = system
+        kwargs["system"] = _system_blocks(system)
     if (chosen := _effort(model, effort)) is not None:
         kwargs["output_config"] = {"effort": chosen}
 

@@ -261,6 +261,27 @@ number goes in the report.
   that doesn't is marked for the line-matching call, which rewrites it to say the step. Over the 170 formula
   steps of the recent runs' scripts it marks 10, nearly all real (the polar video's r - r^3, gcd(36, 60) = 12,
   12 = 3 x 2 x 2); the writer is also told to say each step.
+  **Checked in two videos** (runs/picture-p4 volume, runs/picture-p2 polar): the volume video declared and drew
+  the slide's 1 - x^2 - y^2 (accuracy 3 -> 7, no redraw); the polar video said all seven steps of its working.
+
+## Speed (2026-11-13): 60.6 s -> 44.0 s to a finished video
+
+Timed line by line on the polar video, alone on this Mac. Before: plan 15.5 s, fix call 5.3, lines 7.1, line
+check 2.2, voices 19.4 (of which about 8 s loading Kokoro, its voice files over HTTP and its phonemizer), render
+6.5, assembly 2.7. Changes, none touching what is drawn or said:
+  - the voices load in the background while the plan is written (one Kokoro model shared by both accents; the
+    Hub's network checks skipped once the model is cached);
+  - the voices start on the writer's lines, beside the line check; each line's audio is cached, so a line the
+    check rewrites is the only one spoken again;
+  - each segment renders as soon as its own voice is done;
+  - long system prompts go to the prompt cache (the planner's 17.6k tokens and the writer's 6.2k read from it on
+    the next video of a batch);
+  - the fix call is skipped when its only work would be one or two still beats in a video whose Picture changes
+    on 5 or more (14 of 32 fix calls were only that);
+  - the video no longer waits for the critic, which is recorded when it finishes.
+After: plan 17.3 s, lines 6.9, line check 1.5, then voices and renders together, assembly 2.7: **44.0 s**, with
+the critic's scores unchanged (8, 8, 7, 6). A plan drawn again still adds 15-20 s. Not done: low effort for the
+planner, and speaking lines while the writer is still writing.
 - **P3:** layer 2 (checked codegen on primitives), icon set, miss log.
 - **P4:** benchmark; templates kept only where they beat the grammar.
 

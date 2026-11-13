@@ -138,7 +138,14 @@ def same_function(declared: ast.AST, names: list[str], args: list[str], body: as
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
 
 
+def _plain_numbers(text: str) -> str:
+    """TeX's numbers as written out: \\frac14 and \\frac{1}{4} as 1/4 (so 1 and 4 are found, not 14)."""
+    text = re.sub(r"\\[dt]?frac\{([^{}]*)\}\{([^{}]*)\}", r" \1/\2 ", text)
+    return re.sub(r"\\[dt]?frac(\d)(\d)", r" \1/\2 ", text)
+
+
 def _digits(text: str) -> set[str]:
+    text = _plain_numbers(text)
     return {m.group(0).rstrip("0").rstrip(".") if "." in m.group(0) else m.group(0) for m in _NUMBER.finditer(text)}
 
 

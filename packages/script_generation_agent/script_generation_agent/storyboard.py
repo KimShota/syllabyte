@@ -394,6 +394,9 @@ def _missing_main(segments, main: str | None):
                     "idea is first shown (by the deliver segment at the latest) and keep acting on it")]
 
 
+LIVELY_PICTURE = 5  # beats a Picture changes on, past which a still beat or two is left as it is
+
+
 def settle_picture(script: TemplatedDialogueScript, *, ku_id: str, model: str = DEFAULT_MODEL,
                    manifest: RunManifest | None = None, system: str = "", allowed: set[str] | None = None,
                    main: str | None = None, trace=None, keep_echo: bool = False) -> list:
@@ -407,6 +410,7 @@ def settle_picture(script: TemplatedDialogueScript, *, ku_id: str, model: str = 
     the lines can be matched to it (match_lines) before the voices start."""
     from animation_agent.visuals.calls import script_segments
     from animation_agent.visuals.normalize import (
+        fill_picture_still,
         fill_still,
         hold_reveals,
         normalize_script,
@@ -437,13 +441,29 @@ def settle_picture(script: TemplatedDialogueScript, *, ku_id: str, model: str = 
     # note-only beat there goes to the fix call (to be drawn) instead of being cleared.
     segments, filled = fill_still(highlighted(held(segments)), steps, lines)
     _log(ku_id, filled)
+    segments, filled = fill_picture_still(segments, steps)
+    _log(ku_id, filled)
     fixed = normalize_script(segments, lines, allowed, keep_text=point_beats(steps), keep_echo=keep_echo)
     _log(ku_id, fixed.log)
     segments = fixed.segments
+    # normalizing can leave a beat still (a show it dropped as already on screen): a Picture fills it in code
+    segments, filled = fill_picture_still(segments, steps)
+    if filled:
+        _log(ku_id, filled)
+        fixed = normalize_script(segments, lines, allowed, keep_text=point_beats(steps), keep_echo=keep_echo)
+        segments = fixed.segments
     # Only problems that break or contradict the picture are worth a call; a segment showing only notes or a
     # count the words don't match is left to the critic.
     worth = ([p for p in fixed.left if p.kind not in ("notes_only", "count")] + _missing_main(segments, main)
              + still_problems(segments, steps))
+    # One or two still beats in a video whose Picture changes on many others aren't worth a 4-5 s fix call (14 of
+    # the 32 fix calls in runs/picture-p2 and picture-p4 were only that): the lines, written next, speak to the
+    # picture as it stands. Anything else still goes to the call.
+    changing = sum(1 for draws in segments for calls in draws or []
+                   if any(re.match(r"\s*\w+\.(show|step)\(", c) for c in calls))
+    if worth and all(p.kind == "still" for p in worth) and len(worth) <= 2 and changing >= LIVELY_PICTURE:
+        _log(ku_id, [f"left {len(worth)} still beat(s): the picture changes on {changing} others"])
+        worth = []
     if worth:
         note = ""
         if trace is not None and (name := example_name(segments, trace)):

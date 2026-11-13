@@ -65,3 +65,27 @@ def test_spoken_forms_of_numbers_fractions_and_decimals():
     tokens = step_tokens(r"\frac12-\frac14=\frac14 \quad 24 \quad 0.5 \quad x^3")
     assert "half" in tokens["1/2"] and "twenty-four" in tokens["24"] and "point five" in tokens["0.5"]
     assert "cubed" in tokens["^3"]
+
+
+def test_a_fraction_written_in_tex_counts_as_its_numbers():
+    plan = [[["eq = EquationSteps(tex=\"\\int_0^{\\pi/2}\\frac14 d\\theta=\\frac{\\pi}{8}\")"]]]
+    decl = SlideExample(slide=3, functions=[], numbers=["1/4", "pi/8"], own=False)
+    assert example_problem(decl, plan, "the inner integral is 1/4, so the area is pi/8") is None
+
+
+def test_a_segment_spoken_wholly_from_the_line_cache_is_still_written(tmp_path):
+    import numpy as np
+    from types import SimpleNamespace
+
+    from animation_agent import tts
+
+    class Never:  # every line is cached, so nothing is synthesized
+        def synthesize_words(self, *a, **k):
+            raise AssertionError("synthesized a cached line")
+
+    seg = SimpleNamespace(beats=[SimpleNamespace(narration="Hi there."), SimpleNamespace(narration="Bye.")])
+    for text in ("Hi there.", "Bye."):
+        tts._BEAT_CACHE[("Never", "v", text)] = (np.zeros(2400, dtype="float32"), 24000, [])
+    out = tmp_path / "new" / "seg_0.wav"  # its folder doesn't exist yet
+    durations, _words = tts._synthesize_beats(Never(), seg, out, ["v", "v"], [0.1, 0.1])
+    assert out.exists() and len(durations) == 2

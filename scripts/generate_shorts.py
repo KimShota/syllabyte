@@ -26,8 +26,9 @@ import argparse
 import hashlib
 import json
 import sys
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
 # Make the sibling `packages/*/…` dirs importable when run via `uv run
@@ -124,6 +125,7 @@ class EarlyVoices:
         self.audio_dir, self.backend = audio_dir, backend
         self.pool = ThreadPoolExecutor(max_workers=1)
         self.jobs: dict[str, tuple[Path, object]] = {}
+        self.segments: dict[str, list[Future]] = {}  # each job's segments, as each one is spoken
 
     def start(self, script) -> None:
         key = voice_key(script)
@@ -131,7 +133,27 @@ class EarlyVoices:
             return
         out = self.audio_dir / f"early-{hashlib.sha256(key.encode()).hexdigest()[:12]}"
         log("    voices: starting the narration now that the lines passed")
-        self.jobs[key] = (out, self.pool.submit(synthesize_segments, script, out, self.backend))
+        done = [Future() for _ in script.segments]
+        self.segments[key] = done
+
+        def finished(i, audio, done=done):
+            done[i].set_result(audio)
+
+        job = self.pool.submit(synthesize_segments, script, out, self.backend, finished)
+
+        def failed(f, done=done):  # a failed job fails the segments it never reached
+            if f.exception() is not None:
+                for d in done:
+                    if not d.done():
+                        d.set_exception(f.exception())
+
+        job.add_done_callback(failed)
+        self.jobs[key] = (out, job)
+
+    def stream(self, script) -> list[Future] | None:
+        """Each segment's audio as it is spoken (beat durations only: take() moves the files), or None when the
+        voices were started on other lines."""
+        return self.segments.get(voice_key(script)) if voice_key(script) in self.jobs else None
 
     def take(self, script) -> list | None:
         import shutil
@@ -202,6 +224,13 @@ def make_ku_video(
     audio_dir = ku_dir / "audio"
     audio_manifest_path = audio_dir / "segment_audio.json"
     early_voices = EarlyVoices(audio_dir, tts)
+    if style == "dialogue" and (force_from <= stage_index("tts") or not audio_manifest_path.exists()):
+        # the voice model and the cast's voices load while the storyboard is planned, not after its lines
+        from animation_agent.tts import start_warming
+        from syllabyte_common.cast import load_cast
+
+        cast = load_cast()
+        start_warming([cast.explainer.voice, cast.peer.voice], tts)
     if force_from <= stage_index("script") or not script_path.exists():
         log(f"[3/6] script: writing + critiquing script for {ku.id}")
         try:
@@ -234,26 +263,60 @@ def make_ku_video(
     if on_script is not None:
         on_script(script_path)  # lets the caller start work that needs only the script, beside the voices and render
 
-    # Stage 4: TTS (usually already done: it starts as soon as the lines pass, while the pictures are drawn)
-    if force_from <= stage_index("tts") or not audio_manifest_path.exists():
-        segment_audios = early_voices.take(script)
-        if segment_audios is not None:
-            log(f"[4/6] tts: narration was synthesized while the script was finished ({tts})")
-        else:
-            log(f"[4/6] tts: synthesizing narration ({tts})")
-            segment_audios = synthesize_segments(script, audio_dir, backend_name=tts)
+    # Stage 4: TTS (it starts as soon as the lines pass, beside the line check; each segment renders as soon as
+    # its own voice is done, while the rest are spoken)
+    def save_audio(segment_audios) -> None:
         audio_dir.mkdir(parents=True, exist_ok=True)
         audio_manifest_path.write_text(
             SegmentAudioList(items=segment_audios).model_dump_json(indent=2)
         )
         concat_wavs(segment_audios, audio_dir / "narration.wav")
         build_srt(script, segment_audios, audio_dir / "captions.srt")
+
+    audio_stream = None
+    if force_from <= stage_index("tts") or not audio_manifest_path.exists():
+        audio_stream = early_voices.stream(script)
+        if audio_stream is not None:
+            log(f"[4/6] tts: the narration is being spoken; each segment renders when its voice is done ({tts})")
+            segment_audios = None
+        else:
+            early_voices.take(script)  # lets a job on other lines finish before the voice model is used again
+            log(f"[4/6] tts: synthesizing narration ({tts})")
+            segment_audios = synthesize_segments(script, audio_dir, backend_name=tts)
+            save_audio(segment_audios)
     else:
         log(f"[4/6] tts: reusing existing audio for {ku.id}")
         segment_audios = SegmentAudioList.model_validate_json(
             audio_manifest_path.read_text()
         ).items
-    early_voices.close()
+
+    respoken: list = []
+    respeak_lock = threading.Lock()
+
+    def audio_of(i: int):
+        if audio_stream is None:
+            return segment_audios[i]
+        try:
+            return audio_stream[i].result()
+        except Exception as e:  # the early voices failed: speak the script here, once, as before
+            with respeak_lock:
+                if not respoken:
+                    log(f"    voices: early synthesis failed ({e}); synthesizing again")
+                    respoken.extend(synthesize_segments(script, audio_dir, backend_name=tts))
+            return respoken[i]
+
+    def finish_audio():
+        nonlocal segment_audios
+        if segment_audios is None and respoken:
+            segment_audios = list(respoken)
+            save_audio(segment_audios)
+        if segment_audios is None:
+            segment_audios = early_voices.take(script)
+            if segment_audios is None:  # the early voices failed: speak it here
+                segment_audios = synthesize_segments(script, audio_dir, backend_name=tts)
+            save_audio(segment_audios)
+        early_voices.close()
+        return segment_audios
 
     # Stage 5: animate
     render_dir = ku_dir / "render"
@@ -292,10 +355,11 @@ def make_ku_video(
         # threads run them concurrently. Results keep segment order.
         with ThreadPoolExecutor(max_workers=parallel_segments) as pool:
             futures = [
-                pool.submit(animate_segment, i, render_segment_for(script, i, frame), audio)
-                for i, (seg, audio) in enumerate(zip(script.segments, segment_audios))
+                pool.submit(lambda i=i: animate_segment(i, render_segment_for(script, i, frame), audio_of(i)))
+                for i in range(len(script.segments))
             ]
             render_results = [f.result() for f in futures]
+        segment_audios = finish_audio()
         render_dir.mkdir(parents=True, exist_ok=True)
         render_results_path.write_text(
             RenderResultList(items=render_results).model_dump_json(indent=2)
@@ -306,6 +370,7 @@ def make_ku_video(
         render_results = RenderResultList.model_validate_json(
             render_results_path.read_text()
         ).items
+        segment_audios = finish_audio()
 
     # Fallback segments show narration captions instead of a real visual;
     # don't ship a video containing one unless explicitly allowed.
@@ -339,8 +404,16 @@ def make_ku_video(
     else:
         log(f"[6/6] assemble: {ku.id} already has final.mp4")
     if critic_future is not None:
-        _record_critique(critic_future, critique_path)
-        save_manifest()
+        # the critique is only recorded (nothing is rewritten from it), so the video doesn't wait for it
+        def recorded(f, critique_path=critique_path):
+            _record_critique(f, critique_path)
+            save_manifest()
+
+        if critic_future.done():
+            recorded(critic_future)
+        else:
+            log("    critique: still being written; it is recorded when done (the video is ready)")
+            critic_future.add_done_callback(recorded)
     return final_path
 
 
