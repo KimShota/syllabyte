@@ -128,9 +128,11 @@ def _describe_plan(beat) -> str:
     return out
 
 
-def plan_model(plan) -> type[BaseModel]:
+def plan_model(plan, slide_example: bool = False) -> type[BaseModel]:
     """One required field per planned beat, in order (as storyboard.storyboard_model), each a picture and a
-    point."""
+    point. With `slide_example`, first the example the picture draws, which code checks (fidelity.py)."""
+    from script_generation_agent.fidelity import SlideExample
+
     segments = {}
     for seg in plan:
         fields: dict = {"source_refs": (list[SlideRef], Field(description="the slides this segment uses"))}
@@ -139,7 +141,11 @@ def plan_model(plan) -> type[BaseModel]:
         fields["sketches"] = (list[str], Field(
             description="[] unless no template can draw this segment: then one sentence per beat for an animator"))
         segments[seg.key] = (create_model(f"Plan_{seg.key}", **fields), Field(description=seg.phase))
-    return create_model("PicturePlanBoard", title=(str, ...), colour_key=(list[TermColour], ...), **segments)
+    first = {"slide_example": (SlideExample, Field(description=(
+        "the slides' own worked example that the picture draws, copied exactly; write it before the beats")))} \
+        if slide_example else {}
+    return create_model("PicturePlanBoard", title=(str, ...), colour_key=(list[TermColour], ...), **first,
+                        **segments)
 
 
 def plan_to_script(board: BaseModel, plan, ku: KnowledgeUnit) -> TemplatedDialogueScript:
@@ -190,6 +196,8 @@ never describe the screen ("the picture shows", "on screen").
 marked "wrong idea" says the misconception with confidence; the next feedback line says why it is wrong and \
 what holds instead.
   - "The picture stays as it is" means the line can talk about the picture before it.
+  - A beat that writes a step of the working (a formula's next line) says that step: what it does and what it \
+gives ("expand: one minus r squared, times r, is r minus r cubed"), never only its result.
   - Each line says its point once, and right: never a line that corrects itself. Keep to each beat's word range: \
 the whole script must come to {min_words}-{max_words} words.
   - Every segment cites the slides its lines come from (`source_refs`).
@@ -381,6 +389,7 @@ def write_storyboard_planned(
     from animation_agent.visuals.calls import describe_script
     from animation_agent.visuals.trace import trace_brief
 
+    from script_generation_agent.fidelity import example_problem, unsaid_steps
     from script_generation_agent.picture_plan import plan_picture
     from script_generation_agent.script_writer import ScriptValidationError, gather_source_material, validate_dialogue
     from script_generation_agent.slang import lexicon_for_prompt
@@ -407,7 +416,8 @@ def write_storyboard_planned(
         raise ScriptValidationError(f"KU {ku.id} cites slides that don't resolve in the corpus: {ku.source_refs}")
     cast = load_cast()
     explainer, peer = cast.explainer.name, cast.peer.name
-    if os.environ.get("SYLLABYTE_PICTURES") == "grammar":  # a program draws the picture (scene grammar, P1)
+    grammar = os.environ.get("SYLLABYTE_PICTURES") == "grammar"
+    if grammar:  # a program draws the picture (scene grammar, P1)
         from script_generation_agent.picture_plan import GRAMMAR_PLAN
 
         picture, example = GRAMMAR_PLAN, None
@@ -430,7 +440,8 @@ def write_storyboard_planned(
         prompt += trace_brief(example)
     feedback = ""
     for attempt in range(2):
-        board = structured(schema=plan_model(plan), content=[text_block(prompt + feedback), *image_blocks],
+        board = structured(schema=plan_model(plan, slide_example=grammar), content=[text_block(prompt + feedback),
+                                                                                  *image_blocks],
                            system=system, stage=f"{PLAN_STAGE}_l{level}", ku_id=ku.id, model=writer_model,
                            effort=STORYBOARD_EFFORT, max_tokens=12000, manifest=manifest)
         if dump := os.environ.get("SYLLABYTE_PLAN_DUMP"):  # every planned board, to trace what later steps change
@@ -449,6 +460,9 @@ def write_storyboard_planned(
                        and _CREATES.match(segs[p.segment][p.beat - 1][p.call])]
             if (thin := _thin_picture(segs)) is not None:
                 refused.append(thin)
+            if grammar and (stray := example_problem(getattr(board, "slide_example", None), segs,
+                                                     text_context)) is not None:
+                refused.append(stray)
         if not (off_trace or refused):
             break
         _log(ku.id, [f"the plan is drawn again: {'; '.join(p.message for p in off_trace + refused)[:400]}"])
@@ -489,6 +503,12 @@ def write_storyboard_planned(
     # line it was planned for goes (it was kept while the lines were only points).
     segments = drop_echoes(segments, [[b.narration for b in seg.beats] for seg in best.segments], ku.id)
     segments, notes = align_lines(best, segments, example, ku.id)
+    # each step of the working on screen has a line that says it (fidelity.py); the line call rewrites those
+    unsaid = unsaid_steps(segments, [[b.narration for b in seg.beats] for seg in best.segments],
+                          [[(b.step, bool(b.misconception)) for b in seg.beats] for seg in best.segments])
+    if unsaid:
+        _log(ku.id, [f"segment {s} beat {b + 1}: {why}" for (s, b), why in unsaid.items()])
+        notes = {**unsaid, **(notes or {})}
     script = match_lines(best, ku_id=ku.id, model=model, manifest=manifest, allowed=allowed, segments=segments,
                          accept=lambda s: not [p for p in validate_dialogue(s) if not _over_limit(p, s)], notes=notes)
     _log(ku.id, [f"final: {_picture_calls(segments)}"])

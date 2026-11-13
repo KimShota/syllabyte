@@ -249,6 +249,18 @@ number goes in the report.
   the script, not the views: the volume video used 2 - x^2 - y^2 where the slide has 1 - x^2 - y^2 (accuracy 3),
   the Hessian's second function is never drawn, and key algebra steps are skipped. One finding came from a
   Picture (a label touching a tick mark): tick marks are now obstacles too.
+  **Slide fidelity and said steps, 2026-11-13** (script_generation_agent/fidelity.py; no LLM spend, not yet
+  run): (1) in picture mode the planner first declares the slides' worked example it draws (slide, functions as
+  expressions, numbers) or that it makes its own (own=true, and the lines say so). Code checks the plan: each
+  declared function must be one the Picture program defines, compared by value at a few points with a small
+  arithmetic evaluator (model-written code is never run outside the sandbox); each declared number must be on the
+  slides and in the plan. A plan that strays is drawn once more with the reason (it catches the volume video's
+  2 - x^2 - y^2 against the slide's 1 - x^2 - y^2). (2) each beat whose formula writes a step of the working (an
+  EquationSteps made, then() or rewrite()) on a build, feedback or answer line, or a predict line whose result is
+  covered, must say what the step brings in (its new numbers, fractions, powers, functions, in words); a line
+  that doesn't is marked for the line-matching call, which rewrites it to say the step. Over the 170 formula
+  steps of the recent runs' scripts it marks 10, nearly all real (the polar video's r - r^3, gcd(36, 60) = 12,
+  12 = 3 x 2 x 2); the writer is also told to say each step.
 - **P3:** layer 2 (checked codegen on primitives), icon set, miss log.
 - **P4:** benchmark; templates kept only where they beat the grammar.
 

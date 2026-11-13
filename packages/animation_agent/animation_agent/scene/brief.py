@@ -104,8 +104,9 @@ Write the program's strings in single quotes (each line sits inside double quote
 nodes and about 16 weighted links above an array (the whole frame). The Picture has the whole frame only while nothing else is on \
 screen: with a formula or note anywhere in the video it gets two thirds of the frame, where a big graph won't \
 fit. A picture that needs the whole frame wins: code then removes the formulas and notes, so for a big graph \
-plan none and let the lines say the formula. Use the slide's own \
-example when it fits, else a smaller one the lines name as such. If the program fails or doesn't fit, the \
+plan none and let the lines say the formula. Draw the slide's own \
+example exactly (its functions, numbers, graph, region): declare it in slide_example, and the checker compares \
+your program with it. Only when it can't fit, make one of your own (own=true) and let the lines say so. If the program fails or doesn't fit, the \
 checker says why and you fix it.
   - The wrong idea is a snapshot of the wrong state (a wrong value in a cell marked red, the wrong order); the \
 next snapshot shows what holds instead.
