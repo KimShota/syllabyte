@@ -625,3 +625,65 @@ def test_a_view_that_needs_the_frame_alone_is_told_to_stand_alone():
     table = "t = grid('t', [[a, b, c] for a in (0, 1) for b in (0, 1) for c in (0, 1)], col_names=['A', 'B', 'Cin'])\n"
     with pytest.raises(PictureError, match="the circuit needs .* by itself, so it can't share the frame"):
         L.plan(run(table + adder + "snap()"), *FULL)
+
+
+# ---- visual alignment: the line and the snapshot on screen, and the picture's pace -------------------------
+
+RR = "\n".join([
+    "tl = timeline('tl', ['P3', 'P4'])",
+    "tl.block('a', 'P3', 97, 117)", "snap('P3 runs until t = 117', name='s5')",
+    "tl.block('b', 'P4', 117, 121)", "snap('P4 finishes at t = 121', name='s6')",
+    "tl.block('c', 'P3', 121, 129)", "snap('P3 finishes at t = 129', name='end')"])
+
+
+def _pic(draws, lines):
+    from animation_agent.visuals.calls import check_script
+
+    return [p for p in check_script(draws, lines) if p.kind == "out_of_step"]
+
+
+def test_a_line_naming_the_next_snapshots_numbers_is_out_of_step_with_its_picture():
+    # runs/p5, round robin: 'P4 runs 117 to 121 and finishes' over a picture of P3 running to 117
+    draws = [[[picture_call(RR)], ["p.show(snap='s6')"]]]
+    probs = _pic(draws, [["P3 runs 97 to 117. Then P4 runs 117 to 121 and finishes.", "P4 is done at 121."]])
+    assert len(probs) == 1 and probs[0].beat == 1 and "121" in probs[0].message and "'s6'" in probs[0].message
+
+
+def test_names_counts_questions_and_spoken_decimals_are_not_out_of_step():
+    draws = [[[picture_call(RR)], ["p.show(snap='s6')"]]]
+    assert _pic(draws, [["Four processes share the CPU; P3 runs until 117.", "Does P4 end at 121? It does: 121."]]) == []
+    assert _pic(draws, [["P3 is in q4 after 117 and gets zero point seven of it... 117.", "P4 ends at 121."]]) == []
+
+
+def test_a_snapshot_shown_before_an_earlier_one_the_video_shows_later_is_held_back():
+    from animation_agent.visuals.normalize import pace_picture
+
+    # runs/p5: the objective line showed the finished chart before the lines that build it
+    draws = [[[picture_call(RR)], ["p.show(snap='end')"]], [["p.show(snap='s6')"], ["p.show(snap='end')"]]]
+    out, log = pace_picture(draws)
+    assert out[0][1] == [] and out[1] == draws[1] and "an answer shown early" in log[0]
+    replay = [[[picture_call(RR)], ["p.show(snap='s6')"], ["p.show(snap='end')"]], [["p.show(snap='s5')"], []]]
+    assert pace_picture(replay)[0] == replay  # going back is a replay, not a jump ahead
+
+
+def test_a_line_shows_at_most_two_snapshots():
+    from animation_agent.visuals.normalize import pace_picture
+
+    draws = [[[picture_call(RR)], ["p.show(snap='s5')", "p.show(snap='s6')", "p.show(snap='end')"]]]
+    out, _log = pace_picture(draws)
+    assert out[0][1] == ["p.show(snap='s6')", "p.show(snap='end')"]
+
+
+def test_the_critic_sees_the_first_snapshot_not_the_whole_program():
+    import json
+
+    from script_generation_agent import storyboard
+    from script_generation_agent.critic import as_seen
+    from test_storyboard import KU, example_board
+
+    plan = storyboard.skeleton(2)
+    script = storyboard.assemble(example_board(plan), plan, KU)
+    script.segments[0].beats[0].draw = [picture_call(RR)]
+    seen = json.loads(as_seen(script))["segments"][0]["beats"][0]["draw"]
+    assert seen == ["p = Picture(...)  # draws a timeline; on screen: its first snapshot only"]
+

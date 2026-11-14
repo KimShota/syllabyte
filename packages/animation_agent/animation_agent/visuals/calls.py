@@ -221,7 +221,8 @@ _KINDS = [
     ("overlaps", "layout"), ("needs at least half", "layout"), ("objects on screen", "layout"),
     ("calls; at most", "too_many_calls"), ("repeats the line", "echo"), ("only put text", "text_only"),
     ("only Notes", "notes_only"), ("the line says", "count"), ("names none of the", "unmentioned"),
-    ("doesn't draw this idea", "wrong_template"), ("isn't on screen", "unshown_number"),
+    ("doesn't draw this idea", "wrong_template"), ("isn't in the snapshot on screen", "out_of_step"),
+    ("isn't on screen", "unshown_number"),
     ("the line compares", "wrong_front"), ("but the line doesn't say so", "unsaid_change"),
     ("but the set on screen", "wrong_set"), ("the formula on screen", "false_formula"),
 ]
@@ -377,7 +378,9 @@ def simulate_script(segments: list[list[list[str]] | None], lines: list[list[str
                      if o.template == "MergeSort"}
         # A number any call of this segment writes counts as on screen: a line may name a search target the
         # picture draws a line later.
-        seen_numbers.update(_call_numbers([text for calls in draws for text in calls]))
+        # (a Picture's creation call holds its whole program, every number of every snapshot to come: what it has on
+        # screen is judged by its snapshot instead, _picture_number_problems)
+        seen_numbers.update(_call_numbers([text for calls in draws for text in calls if "Picture(" not in text]))
 
         def flag(beat: int, call: int | None, message: str) -> None:
             if report:
@@ -387,6 +390,7 @@ def simulate_script(segments: list[list[list[str]] | None], lines: list[list[str
             flag(1, None, "beat 1 has no calls: the segment's first beat must create what it shows")
         for b, calls in enumerate(draws, 1):
             fronts_before = _merge_fronts(live)
+            pictured = _picture_numbers(live)  # what a Picture has on screen as the line starts
             if report and len(calls) > MAX_CALLS_PER_BEAT:
                 flag(b, None, f"beat {b}: {len(calls)} calls; at most {MAX_CALLS_PER_BEAT} per beat")
             words = []
@@ -419,6 +423,7 @@ def simulate_script(segments: list[list[list[str]] | None], lines: list[list[str
                 for message, c in (_count_problems(b, seg_lines[b - 1], live)
                                    + _echo_problems(b, seg_lines[b - 1], calls)
                                    + _number_problems(b, seg_lines[b - 1], live, seen_numbers)
+                                   + _picture_number_problems(b, seg_lines[b - 1], live, pictured, seen_numbers)
                                    + _front_problems(b, seg_lines[b - 1], live, fronts_before, seg_pairs)
                                    + _set_rule_problems(b, seg_lines[b - 1] + " " + script_text, live,
                                                         _created(calls, "VennDiagram"))):
@@ -514,6 +519,76 @@ def _number_problems(b: int, line: str, live: dict[str, _Live], seen: set[float]
     return [(f"beat {b}: the line names {said}, which isn't on screen ({shown}); the line and the picture must name "
              "the same numbers, so say the numbers the picture shows (or draw the ones the line names, if they fit)",
              None)]
+
+
+def _leaf_numbers(x) -> set[float]:
+    """Every number in a snapshot's state or caption: values, labels, a block's start and end."""
+    if isinstance(x, bool):
+        return set()
+    if isinstance(x, int | float):
+        return {float(x)}
+    if isinstance(x, str):
+        return {float(n) for n in re.findall(r"(?<![\w.])-?\d+(?:\.\d+)?", x.replace(",", ""))}
+    if isinstance(x, dict):
+        return set().union(*(_leaf_numbers(v) for v in x.values())) if x else set()
+    if isinstance(x, list | tuple):
+        return set().union(*(_leaf_numbers(v) for v in x)) if x else set()
+    return set()
+
+
+def _picture_numbers(live: dict[str, _Live]) -> set[float]:
+    """The numbers each Picture on screen shows now: its current snapshot's views and caption."""
+    out: set[float] = set()
+    for o in live.values():
+        if o.template == "Picture" and o.state.get("snaps"):
+            out |= _leaf_numbers(o.state["snaps"][o.state["at"]])
+    return out
+
+
+# what a diagram's lines count besides cells and checks
+_PICTURE_COUNT_NOUNS = set("""process processes job jobs thread threads frame frames state states message messages
+packet packets row rows column columns bit bits gate gates input inputs output outputs house houses box boxes
+arrow arrows layer layers lane lanes object objects field fields variable variables entry entries term terms""".split())
+
+
+def _picture_number_problems(b: int, line: str, live: dict[str, _Live], before: set[float],
+                             seen: set[float]) -> list[tuple[str, int | None]]:
+    """While a Picture is on screen, a number the line says that neither the snapshot on screen during the line
+    (the one it starts on and any it moves to) nor a formula or note shows: the line describes another step than the
+    picture's (runs/p5, round robin: 'P4 runs 117 to 121 and finishes' over a picture of P3 running to 117). Counts,
+    numbers up to 2, years and lines doing arithmetic pass, as for lists."""
+    pics = [(name, o) for name, o in live.items() if o.template == "Picture" and o.state.get("snaps")]
+    if not pics or "?" in line:  # a question may name the step it asks about, before the picture takes it
+        return []
+    on_screen = before | _picture_numbers(live) | seen
+    # a name with a digit in it (q3, P4, x2) is a name, not a value; "zero point seven" is 0.7
+    line = re.sub(r"\b[A-Za-z]+\d+\w*", " ", line)
+    line = re.sub(r"\b(zero|one|two|three|four|five|six|seven|eight|nine) point "
+                  r"(zero|one|two|three|four|five|six|seven|eight|nine)\b",
+                  lambda m: f"{_UNITS.index(m.group(1))}.{_UNITS.index(m.group(2))}", line, flags=re.I)
+    tokens = _number_tokens(line)
+    if _ARITHMETIC & {t for t in tokens if isinstance(t, str)}:
+        return []
+    missing = []
+    for k, t in enumerate(tokens):
+        if not isinstance(t, float) or t <= 2 or t >= 1000 or t in on_screen:
+            continue
+        after = [w for w in tokens[k + 1:k + 3] if isinstance(w, str)]
+        if (any(w in _COUNT_NOUNS | _PICTURE_COUNT_NOUNS for w in after)
+                and not (after and after[0] in ("and", "or", "vs", "versus"))):
+            continue
+        if t not in missing:
+            missing.append(t)
+    if not missing:
+        return []
+    said = ", ".join(_fmt_num(n) for n in missing)
+    name, o = pics[0]
+    snaps = o.state["snaps"]
+    where = [s.get("name") for s in snaps if set(missing) <= _leaf_numbers(s)]
+    hint = (f" (snapshot {where[0]!r} shows {said}: the line describes that step, not this one)" if where else "")
+    caption = snaps[o.state["at"]]["caption"].strip().rstrip(".")
+    return [(f"beat {b}: the line names {said}, which isn't in the snapshot on screen (the picture shows: "
+             f"{caption}){hint}", None)]
 
 
 _COMPARING = [re.compile(p) for p in (

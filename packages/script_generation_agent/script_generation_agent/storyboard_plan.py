@@ -182,7 +182,9 @@ _WRITE_TASK = """\
 You write the lines of one short dialogue video whose pictures are planned and drawn already. Under each beat is \
 what its picture shows while the line is spoken (computed from the animation itself, so it is always right) and \
 the point the planner meant the line to make. Write every line so it says what its picture shows at that moment, \
-in the character's voice.
+in the character's voice. Where the planner's point and the picture differ, the picture wins: a line says the \
+step its own picture takes, with that picture's numbers, and a step the picture hasn't reached yet waits for the \
+line that shows it.
 
 The beat plan is fixed. Each beat in the schema is named for its speaker and its tutoring step (e.g. \
 b3_explainer_feedback), and its description says what the line does, how many words it has, and whether it \

@@ -414,6 +414,7 @@ def settle_picture(script: TemplatedDialogueScript, *, ku_id: str, model: str = 
         fill_still,
         hold_reveals,
         normalize_script,
+        pace_picture,
         point_beats,
         still_problems,
     )
@@ -439,7 +440,9 @@ def settle_picture(script: TemplatedDialogueScript, *, ku_id: str, model: str = 
 
     # A line that makes a point changes the picture: code highlights the cells it names where it can, and a
     # note-only beat there goes to the fix call (to be drawn) instead of being cleared.
-    segments, filled = fill_still(highlighted(held(segments)), steps, lines)
+    segments, paced = pace_picture(held(segments))
+    _log(ku_id, paced)
+    segments, filled = fill_still(highlighted(segments), steps, lines)
     _log(ku_id, filled)
     segments, filled = fill_picture_still(segments, steps)
     _log(ku_id, filled)
@@ -454,7 +457,10 @@ def settle_picture(script: TemplatedDialogueScript, *, ku_id: str, model: str = 
         segments = fixed.segments
     # Only problems that break or contradict the picture are worth a call; a segment showing only notes or a
     # count the words don't match is left to the critic.
-    worth = ([p for p in fixed.left if p.kind not in ("notes_only", "count")] + _missing_main(segments, main)
+    # an out-of-step line (a Picture's snapshot and its line name different numbers) is measured, not fixed here:
+    # patched one line at a time it broke round robin's story (runs/va1), so the plan and the writer prevent it
+    worth = ([p for p in fixed.left if p.kind not in ("notes_only", "count", "out_of_step")]
+             + _missing_main(segments, main)
              + still_problems(segments, steps))
     # One or two still beats in a video whose Picture changes on many others aren't worth a 4-5 s fix call (14 of
     # the 32 fix calls in runs/picture-p2 and picture-p4 were only that): the lines, written next, speak to the
@@ -555,6 +561,12 @@ def with_pictures(script: TemplatedDialogueScript, segments, *, ku_id: str = "",
     _log(ku_id, [f"lines vs picture: {len(left)} mismatches"
                  + (" (" + "; ".join(f"segment {p.segment} beat {p.beat} {p.kind}" for p in left) + ")"
                     if left else "")])
+    from animation_agent.visuals.calls import check_script
+
+    lines = [[b.narration for b in seg.beats] for seg in script.segments]
+    if apart := [p for p in check_script(segments, lines, allowed) if p.kind == "out_of_step"]:
+        _log(ku_id, [f"lines out of step with their snapshot: {len(apart)} ("
+                     + "; ".join(f"segment {p.segment} beat {p.beat}" for p in apart) + ")"])
     if crowded := _two_steps(segments):
         _log(ku_id, ["lines showing two steps: " + ", ".join(f"segment {i} beat {k}" for i, k in crowded)])
     if muddled := [(i, k) for i, seg in enumerate(script.segments) for k, b in enumerate(seg.beats, 1)

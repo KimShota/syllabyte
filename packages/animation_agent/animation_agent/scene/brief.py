@@ -33,8 +33,11 @@ Draw it with Picture: you write a short Python program that runs the idea on the
 snap('caption', name='...') after every state the viewer should see. Code runs the program, lays everything out \
 and animates each change, so every step shown is the real algorithm's. Create the Picture in the first beat with \
 the whole program (p = Picture(program=[...]), one string per line); it opens on the first snapshot. Then a beat \
-shows a snapshot by its name, p.show(snap='swap1'), on the line that talks about it (two or three show calls in \
-one beat play one after another). Plan the program from the beats: write the beats' points first, then give \
+shows a snapshot by its name, p.show(snap='swap1'), on the line that talks about it: one snapshot per line, and \
+the line says what that snapshot shows, its numbers included (a line that walks through two steps may show two, \
+never more; code keeps only the last two). Show the snapshots in the program's order the first time: the \
+objective line keeps the picture or shows the first step, never the result (code drops a show that jumps ahead of \
+a snapshot the video shows later, since it gives the answer away). Plan the program from the beats: write the beats' points first, then give \
 each point-making beat the snapshot it talks about, named for it (10-25 in all), so the picture changes on most \
 beats from the first segment to the last. A question or predict line \
 keeps the picture as it is ([]); the line that answers shows the answer. Every name you show must be one the \

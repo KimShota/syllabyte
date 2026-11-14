@@ -11,6 +11,8 @@ a revision instruction, up to MAX_ROUNDS total attempts.
 
 from __future__ import annotations
 
+import json
+
 from script_generation_agent.prompts import (
     CRITIQUE_SYSTEM_PROMPT,
     build_critique_prompt,
@@ -52,7 +54,7 @@ def critique(
     # The critic sees the same slides the writer saw: text and slide images. With text alone it
     # marks anything shown only in a diagram as invented and forces a needless rewrite.
     text_context, image_blocks = gather_source_material(corpus, ku)
-    prompt = build_critique_prompt(script.model_dump_json(indent=2), text_context, has_images=bool(image_blocks))
+    prompt = build_critique_prompt(as_seen(script), text_context, has_images=bool(image_blocks))
 
     return structured(
         schema=CritiqueScore,
@@ -64,6 +66,40 @@ def critique(
         max_tokens=16000,  # a dialogue critique with many issues ran past 4000
         manifest=manifest,
     )
+
+
+_VIEW_NAMES = {"cells": "an array", "nodes": "a tree or graph", "code": "a code panel", "container": "containers",
+               "axes": "axes", "venn": "a Venn diagram", "geometry": "a figure", "numberline": "a number line",
+               "surface": "a 3D surface", "grid": "a table", "flow": "a box-and-arrow diagram",
+               "timeline": "a timeline", "sequence": "a message diagram", "circuit": "a logic circuit",
+               "memory": "a memory diagram"}
+
+
+def as_seen(script: Script) -> str:
+    """The script as the critic should judge it: what the viewer sees and hears. A Picture is created with its
+    whole program, every step to come and every snapshot's caption, but the viewer sees only its first snapshot
+    until a p.show moves it on (each beat's `visual` says what is on screen). Shown the program, the critic read it
+    as on screen at once and marked answers as shown early (runs/p5: 'the Prepare picture runs through the whole
+    sequence'), so the program is replaced by what it draws."""
+    import re
+
+    data = script.model_dump(mode="json")
+    for seg in data.get("segments", []):
+        for beat in seg.get("beats", []):
+            draws = beat.get("draw")
+            if not draws:
+                continue
+            out = []
+            for call in draws:
+                m = re.match(r"\s*(\w+)\s*=\s*Picture\(", call)
+                if m:
+                    kinds = list(dict.fromkeys(k for k in re.findall(r"\b(\w+)\(\\?['\"]", call) if k in _VIEW_NAMES))
+                    what = ", ".join(_VIEW_NAMES[k] for k in kinds) or "a diagram"
+                    out.append(f"{m.group(1)} = Picture(...)  # draws {what}; on screen: its first snapshot only")
+                else:
+                    out.append(call)
+            beat["draw"] = out
+    return json.dumps(data, indent=2, ensure_ascii=False)
 
 
 def critique_storyboard(

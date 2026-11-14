@@ -518,3 +518,60 @@ def still_problems(segments: list[list[list[str]] | None], steps: list[list[tupl
                     "the diagram (highlight or point at what it names, take a step, ghost a value, write the "
                     "formula), not only a note")
             for s, b in still_beats(segments, steps, text_too=False)]
+
+
+MAX_SHOWS_PER_BEAT = 2
+
+
+def pace_picture(segments: list[list[list[str]] | None]) -> tuple[list[list[list[str]] | None], list[str]]:
+    """In code, no LLM, the Picture's pace across the video:
+      - a snapshot shown for the first time before an earlier snapshot of the program that the video shows later
+        jumps ahead and shows an answer early (runs/p5: the objective line showed the DFA's final 'accept', the
+        round-robin chart finished at 162, the topological order reversed, before the lines that work them out).
+        When the video shows that snapshot again later, the early show is dropped (the line keeps the picture).
+        Going back to a snapshot already seen (a replay) is fine.
+      - a line shows at most MAX_SHOWS_PER_BEAT snapshots: four in one line (a whole trace) went by too fast to
+        follow; the last ones, which the line ends on, are kept."""
+    from animation_agent.visuals.calls import CallError, parse_call
+    from animation_agent.visuals.specs import PictureParams, picture_snapshots
+
+    out = [None if d is None else [list(b) for b in d] for d in segments]
+    log: list[str] = []
+    names: dict[str, list[str]] = {}
+    shows: list[tuple[int, int, int, str, int]] = []  # (segment, beat, call, picture, snapshot index), in order
+    for si, draws in enumerate(out):
+        for bi, calls in enumerate(draws or []):
+            for ci, c in enumerate(calls):
+                if m := _MAKE_PICTURE.match(c):
+                    try:
+                        args = parse_call(c, {}).args
+                        program = PictureParams(**{k: v for k, v in args.items() if k != "area"}).program
+                        names[m.group(1)] = [str(x.get("name")) for x in picture_snapshots(program)]
+                    except (CallError, ValueError):
+                        continue
+                elif (m := _SHOW.match(c)) and m.group(1) in names and m.group(2) in names[m.group(1)]:
+                    shows.append((si, bi, ci, m.group(1), names[m.group(1)].index(m.group(2))))
+    drop: set[tuple[int, int, int]] = set()
+    for n, (si, bi, ci, p, j) in enumerate(shows):
+        earlier = [(s2, b2, k) for s2, b2, _c, q, k in shows[:n] if q == p]
+        if any(k == j for *_x, k in earlier):
+            continue  # seen before: a replay
+        seen = {0} | {k for *_x, k in earlier}
+        later = [(k, idx) for idx, (_s, _b, _c, q, k) in enumerate(shows[n + 1:], n + 1) if q == p]
+        skipped = [i for i in range(1, j) if i not in seen and any(k == i for k, _ in later)]
+        again = any(k == j for k, _ in later)
+        if skipped and again:
+            drop.add((si, bi, ci))
+            log.append(f"segment {si} beat {bi + 1}: dropped `{out[si][bi][ci]}`: it shows "
+                       f"'{names[p][j]}' before '{names[p][skipped[0]]}', which comes first (an answer shown early)")
+    for si, draws in enumerate(out):
+        for bi, calls in enumerate(draws or []):
+            kept = [c for ci, c in enumerate(calls) if (si, bi, ci) not in drop]
+            show_at = [k for k, c in enumerate(kept) if _SHOW.match(c)]
+            if len(show_at) > MAX_SHOWS_PER_BEAT:
+                cut = set(show_at[:-MAX_SHOWS_PER_BEAT])
+                log.append(f"segment {si} beat {bi + 1}: kept the last {MAX_SHOWS_PER_BEAT} of {len(show_at)} shows "
+                           "(more in one line go by too fast)")
+                kept = [c for k, c in enumerate(kept) if k not in cut]
+            draws[bi] = kept
+    return out, log

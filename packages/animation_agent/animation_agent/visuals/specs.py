@@ -3032,16 +3032,18 @@ PICTURE = TemplateSpec(
     noun="picture",
     min_rows=3,
     init_state=_picture_state,
-    describe=lambda p: (f"a picture showing {_caption(s[0])}" if (s := picture_snapshots(p.program))
-                        else "a picture"),
+    # the caption says what the diagram's shapes show; it is never written on screen (a critic reading "the picture
+    # moves on: <caption>" took captions for text notes and capped those beats at 4 of 10)
+    describe=lambda p: (f"a diagram drawing {_caption(s[0])} (in shapes; the caption isn't written on screen)"
+                        if (s := picture_snapshots(p.program)) else "a diagram"),
     actions={
-        "show": ActionSpec("Show the snapshot with this name (the change from what is on screen animates). Two or "
-                           "three show calls in one beat play one after another.", ShowArgs,
+        "show": ActionSpec("Show the snapshot with this name (the change from what is on screen animates). One show "
+                           "per line: a line that walks through two steps shows two, never more.", ShowArgs,
                            check=_check_show, reveals=True,
-                           says=lambda s, a: f"the picture moves on: {_caption(s['snaps'][s['at']])}"),
+                           says=lambda s, a: f"the diagram moves on to {_caption(s['snaps'][s['at']])} (in shapes)"),
         "step": ActionSpec("Show the next snapshot in the program's order.", NoArgs,
                            check=_check_step, reveals=True,
-                           says=lambda s, a: f"the picture moves on: {_caption(s['snaps'][s['at']])}"),
+                           says=lambda s, a: f"the diagram moves on to {_caption(s['snaps'][s['at']])} (in shapes)"),
     },
     example=[
         ["""p = Picture(program=["a = cells('a', [5, 2, 7])", "snap('three numbers', name='start')", """
