@@ -95,15 +95,15 @@ s.remove(key).
   - grid(name, rows, row_names=None, col_names=None, title=None, matrix=False): a table of up to 8 rows and 8 \
 columns (a DP table, a truth table, a database table, an adjacency matrix), or with matrix=True a matrix in \
 brackets; rows is a list of lists, each entry at most 6 characters (None: blank). About 3.7 units across in all, \
-so short entries when there are many columns. g[r][c] reads and writes an entry; g.row(r), g.col(c), g.rows, \
+so short entries when there are many columns (a table too wide across is drawn on its side). g[r][c] reads and writes an entry; g.row(r), g.col(c), g.rows, \
 g.cols; g.mark(r, c, style), g.mark_row(r, style), g.mark_col(c, style), g.unmark(r=None, c=None).
   - flow(name, direction='down', title=None): labelled boxes joined by arrows, in layers ('down': top to bottom; \
 'right': left to right): a flowchart, a pipeline, a system's parts, a state machine with named states, a call or \
 parse tree with words. f.box(key, text=None, shape='box', style=None, layer=None) (up to 2 lines of 14 \
-characters, '\\n' between; shapes: box, round, diamond for a decision, circle, double for an accepting state, \
+characters: a longer line wraps at its spaces; shapes: box, round, diamond for a decision, circle, double for an accepting state, \
 cylinder for a database, document, cloud, and with a pictogram beside the text: person, chip for a CPU, monitor \
-for a computer, lock, server); f.text(key, text); f.arrow(a, b, label=None, style=None) (a label of at most 8 \
-characters; a == b draws a loop); f.unarrow(a, b), f.restyle(a, b, style) colours an arrow, f.mark(key, style), \
+for a computer, lock, server); f.text(key, text); f.arrow(a, b, label=None, style=None) (a label of a word or \
+two; a == b draws a loop); f.unarrow(a, b), f.restyle(a, b, style) colours an arrow, f.mark(key, style), \
 f.unmark(key=None), f.remove(key). At most 12 boxes; about two 8-character boxes side by side and 5 layers fit. \
 An arrow label with no clear room is left out, so keep labels to a word.
   - timeline(name, lanes, t=None, step=None, title=None): up to 6 lanes (names at most 8 characters) along a \
@@ -112,13 +112,14 @@ label written inside when it fits), tl.marker(key, t, label=None) a line at time
 tl.remove(key). For CPU schedules, Gantt charts, pipelines, anything over time.
   - sequence(name, actors, title=None): 2-4 actors side by side (names at most 8 characters), each with a \
 lifeline; s.message(key, a, b, label=None, style=None, dashed=False) an arrow from a to b below the messages \
-before it (a == b: to itself; dashed for a reply; a label of at most 14 characters), s.mark(key, style), \
-s.remove(key). Up to 10 messages. For protocols, a client and a server, threads and locks.
+before it (a == b: to itself; dashed for a reply; a short label, longer than 22 characters is left out), \
+s.mark(key, style), s.remove(key). About 7 messages fit the whole frame, 5 beside a formula. For protocols, a client and a server, threads and locks.
   - circuit(name, title=None): a logic circuit drawn top to bottom, every wire showing the value code works \
 out (1 lit). c.input(key, value=0, label=None), c.gate(key, kind, inputs) (AND OR NOT NAND NOR XOR XNOR BUF, its \
 inputs made before it), c.output(key, source, label=None) (labels at most 4 characters); c.set(key, value) \
 changes an input, c.value(key) returns a computed value, c.mark(key, style). At most 14 parts; about 3 levels of \
-gates fit.
+gates fit, and a circuit of 3 levels (a full adder) takes the whole frame: draw it as the only view, with no \
+formula in the video, and let the lines give the truth table.
   - memory(name, title=None): stack frames down the left, heap objects down the right, each a list of fields. \
 m.frame(key, title=None) (a call: 'main()', 'f(3)'), m.obj(key, title=None) (titles at most 10 characters), \
 m.set(box, name, value) (a value of at most 6 characters, None for blank, or m.ref(key) for an arrow to that heap \

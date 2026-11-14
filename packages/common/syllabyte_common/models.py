@@ -45,6 +45,11 @@ class CourseCorpus(BaseModel):
                 for slide in deck.slides:
                     if slide.slide_number == slide_number:
                         return slide
+                # a handout prints several slides on a page, and the KU cites the number printed on the slide
+                # (runs/p5: slide 25 of a 5-page deck): the page that prints that number on a line of its own
+                for slide in deck.slides:
+                    if any(line.strip() == str(slide_number) for line in slide.text.splitlines()):
+                        return slide
         return None
 
 

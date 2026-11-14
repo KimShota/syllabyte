@@ -493,9 +493,34 @@ def test_diagram_mistakes_are_sent_back_with_a_reason(source, why):
 
 
 def test_a_table_too_wide_for_the_frame_is_refused_with_the_reason():
-    snaps = run("g = grid('g', [['abcdef'] * 8]); snap()")
+    snaps = run("g = grid('g', [['abcdef'] * 8] * 8); snap()")
     with pytest.raises(PictureError, match="wide"):
         L.plan(snaps, *FULL)
+
+
+def test_a_table_too_wide_across_but_not_on_its_side_is_turned():
+    # runs/p5: house painting's DP table, 7 columns of two-digit numbers and three named rows, was 4.6 units wide
+    src = ("t = grid('t', [[10, 9, 13, 20, 30, 25, 18], [10, 19, 23, 39, 53, 64, 71], ['P', 'S', 'P', 'P', 'S', 'P', 'P']], "
+           "row_names=['pf', 'OPT', 'ch'], col_names=[1, 2, 3, 4, 5, 6, 7])\nt.mark(1, 6, 'found')\nsnap()")
+    lay = L.plan(run(src), *FULL).math["t"]
+    assert lay.transposed and len(lay.y) == 7 and len(lay.x) == 3
+    view = DL.transpose(run(src)[0]["views"]["t"])
+    assert view["values"][6][1] == "71" and view["marks"] == {"6,1": "found"} and view["col_names"][0] == "pf"
+
+
+def test_a_label_too_long_is_left_out_and_a_long_box_text_wraps():
+    snaps = run("s = sequence('s', ['A', 'B'])\ns.message('m', 'A', 'B', 'SYN ISN=Y ACK X+1, then a lot more')\n"
+                "f = flow('f')\nf.box('a', 'accept the connection')\nf.box('b')\nf.arrow('a', 'b', 'a label far too long')\nsnap()")
+    v = snaps[0]["views"]
+    assert v["s"]["messages"]["m"]["label"] is None and v["f"]["arrows"][0][3] is None
+    assert v["f"]["boxes"]["a"]["text"] == "accept the\nconnection"
+
+
+def test_seven_messages_fit_the_whole_frame():
+    pairs = [("client", "server") if k % 2 == 0 else ("server", "client") for k in range(7)]
+    src = "s = sequence('s', ['client', 'server'])\n" + "".join(
+        f"s.message('m{k}', '{a}', '{b}', 'SYN {k}')\n" for k, (a, b) in enumerate(pairs)) + "snap()"
+    L.plan(run(src), *FULL)
 
 
 def test_a_long_arrow_passes_the_layers_between_at_a_slot_of_its_own():

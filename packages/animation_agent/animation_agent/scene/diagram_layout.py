@@ -40,7 +40,7 @@ def text_w(text: str, k: float = 1.0) -> float:
 
 # ---- grid (a table or a matrix) -------------------------------------------------------------------------
 
-ROW_H = 0.46
+ROW_H = 0.42
 MIN_COL = 0.46
 HEAD_H = 0.36
 BRACKET = 0.16  # a matrix's bracket, each side
@@ -49,6 +49,7 @@ BRACKET = 0.16  # a matrix's bracket, each side
 @dataclass
 class GridLayout:
     k: float  # the scale: 1 at the minimum font
+    transposed: bool  # drawn on its side (rows as columns): too wide for the frame, not too tall
     x: list[float]  # each column's centre
     w: list[float]  # each column's width
     y: list[float]  # each row's centre
@@ -72,7 +73,7 @@ def _grid_size(views: list[dict]) -> tuple[list[float], float, float, float]:
     texts = [max((text_w(r[c]) for v in views for r in v["values"]), default=0.0) for c in range(cols)]
     if first["col_names"]:
         texts = [max(w, text_w(h)) for w, h in zip(texts, first["col_names"])]
-    widths = [max(MIN_COL, w + 0.18) for w in texts]
+    widths = [max(MIN_COL, w + 0.14) for w in texts]
     names = (max(text_w(n) for n in first["row_names"]) + 0.16) if first["row_names"] else 0.0
     head = HEAD_H if first["col_names"] else 0.0
     return widths, names, head, ROW_H * len(first["values"])
@@ -83,7 +84,24 @@ def _grid_width(views):
     return sum(widths) + names + (2 * BRACKET + 0.1 if views[0]["matrix"] else 0.0)
 
 
+def transpose(view: dict) -> dict:
+    """A table on its side: row r, column c drawn at row c, column r (its names swap too)."""
+    return {**view, "values": [list(col) for col in zip(*view["values"])], "row_names": view["col_names"],
+            "col_names": view["row_names"], "marks": {f"{k.split(',')[1]},{k.split(',')[0]}": s
+                                                      for k, s in view["marks"].items()}}
+
+
+def _turned(views: list[dict], width: float) -> list[dict]:
+    """The table as drawn: on its side when it is too wide for the frame across but not on its side (the frame is
+    tall: runs/p5's 7-column DP table was 4.6 units wide and 3.8 fit)."""
+    if _grid_width(views) <= width - 0.1 or views[0]["matrix"]:
+        return views
+    turned = [transpose(v) for v in views]
+    return turned if _grid_width(turned) < _grid_width(views) else views
+
+
 def grid_heights(views: list[dict], width: float, title: float) -> tuple[float, float]:
+    views = _turned(views, width)
     _widths, _names, head, body = _grid_size(views)
     k = max(1.0, min(MAX_GROW, (width - 0.1) / _grid_width(views)))
     return title + head + body + 0.08, title + (head + body) * k + 0.08
@@ -91,6 +109,9 @@ def grid_heights(views: list[dict], width: float, title: float) -> tuple[float, 
 
 def grid_layout(views: list[dict], region) -> GridLayout:
     title = _title(views)
+    turned = _turned(views, region.w)
+    transposed = turned is not views
+    views = turned
     widths, names, head, body = _grid_size(views)
     total = _grid_width(views)
     room_h = region.h - title - 0.08
@@ -107,7 +128,7 @@ def grid_layout(views: list[dict], region) -> GridLayout:
     top = region.top - title - (room_h - (head + body) * k) / 2 - head * k
     h = ROW_H * k
     ys = [top - h * (i + 0.5) for i in range(len(views[0]["values"]))]
-    return GridLayout(k, xs, w, ys, h, top + head * k / 2 if head else None,
+    return GridLayout(k, transposed, xs, w, ys, h, top + head * k / 2 if head else None,
                       left - names * k / 2 if names else None, left, left + sum(w), top, top - h * len(ys))
 
 
@@ -666,8 +687,8 @@ def timeline_layout(views: list[dict], region) -> TimelineLayout:
 # ---- sequence (messages between actors) --------------------------------------------------------------------
 
 ACTOR_H = 0.48
-MSG_ROW = 0.62  # a message's row: its label above its arrow
-MAX_MSG_ROW = 0.95
+MSG_ROW = 0.5  # a message's row: its label above its arrow
+MAX_MSG_ROW = 0.8
 
 
 @dataclass

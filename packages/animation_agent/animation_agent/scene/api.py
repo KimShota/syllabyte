@@ -1018,14 +1018,25 @@ def grid(name, rows, row_names=None, col_names=None, title=None, matrix=False):
 SHAPES = ("box", "round", "diamond", "circle", "double", "cylinder", "document", "cloud", "person", "chip",
           "monitor", "lock", "server")
 MAX_BOXES = 12
+MAX_ARROW_LABEL = 14  # longer arrow labels are left out; one too long to fit beside its arrow is too
 MAX_BOX_TEXT = 14  # characters in a line of a box's text (two lines at most)
 
 
 def _box_text(text) -> str:
-    lines = str(text).split("\n")
+    """A box's text on at most 2 lines of MAX_BOX_TEXT characters: a longer line wraps at its spaces."""
+    lines = []
+    for line in str(text).split("\n"):
+        cur = ""
+        for word in line.split():
+            if cur and len(cur) + 1 + len(word) > MAX_BOX_TEXT:
+                lines.append(cur)
+                cur = word
+            else:
+                cur = f"{cur} {word}" if cur else word
+        lines.append(cur)
     if len(lines) > 2 or any(len(line) > MAX_BOX_TEXT for line in lines):
         raise PictureError(f"a box's text {str(text)!r} is more than 2 lines of {MAX_BOX_TEXT} characters")
-    return "\n".join(line.strip() for line in lines)
+    return "\n".join(lines)
 
 
 class Flow(_View):
@@ -1066,8 +1077,8 @@ class Flow(_View):
     def arrow(self, a, b, label=None, style=None):
         self._need(a), self._need(b)
         label = None if label is None or not str(label).strip() else str(label).strip()
-        if label is not None and len(label) > MAX_MATH_LABEL:
-            raise PictureError(f"an arrow's label {label!r} is longer than {MAX_MATH_LABEL} characters")
+        if label is not None and len(label) > MAX_ARROW_LABEL:
+            label = None  # left out, not refused (the lines say it): a refused label lost whole pictures in P4/P5
         self._arrows[(str(a), str(b))] = {"label": label, "style": _style(style)}
 
     def unarrow(self, a, b):
@@ -1139,8 +1150,9 @@ class Timeline(_View):
         key = str(key)
         if key not in self._items and len(self._items) >= MAX_BLOCKS:
             raise PictureError(f"{self.name}: at most {MAX_BLOCKS} blocks and markers")
-        label = None if label is None or not str(label).strip() else _word(str(label).strip(), MAX_MATH_LABEL,
-                                                                             "a label")
+        label = None if label is None or not str(label).strip() else str(label).strip()
+        if label is not None and len(label) > 12:
+            label = None  # left out, not refused (a block's label is also left out when it doesn't fit inside)
         self._items[key] = {**item, "style": _style(style), "label": label}
 
     def block(self, key, lane, start, end, label=None, style=None):
@@ -1172,7 +1184,7 @@ def timeline(name, lanes, t=None, step=None, title=None):
 
 MAX_ACTORS = 4
 MAX_MESSAGES = 10
-MAX_MESSAGE_LABEL = 14
+MAX_MESSAGE_LABEL = 22  # a longer label is left out: runs/p5's 'SYN ISN=Y ACK X+1' refused the whole picture
 
 
 class Sequence(_View):
@@ -1213,7 +1225,7 @@ class Sequence(_View):
             row = old["row"]
         label = None if label is None or not str(label).strip() else str(label).strip()
         if label is not None and len(label) > MAX_MESSAGE_LABEL:
-            raise PictureError(f"a message's label {label!r} is longer than {MAX_MESSAGE_LABEL} characters")
+            label = None
         self._messages[key] = {"a": self._actor(a), "b": self._actor(b), "label": label, "style": _style(style),
                                "dashed": bool(dashed), "row": row}
 

@@ -73,7 +73,17 @@ def gather_source_material(corpus: CourseCorpus, ku: KnowledgeUnit) -> tuple[str
         if slide.image_path and Path(slide.image_path).exists():
             image_blocks.append(image_block(slide.image_path))
 
+    if not text_parts:
+        # none of its slides resolve (numbering the deck doesn't share): a short cited deck stands in whole, so
+        # the video is made from the right lecture rather than not at all
+        for deck in corpus.decks:
+            if deck.name in {r.deck_name for r in ku.source_refs} and len(deck.slides) <= MAX_WHOLE_DECK:
+                for slide in deck.slides:
+                    text_parts.append(f"[{deck.name} — page {slide.slide_number}]\n{slide.text}")
     return "\n\n".join(text_parts), image_blocks
+
+
+MAX_WHOLE_DECK = 12
 
 
 MAX_KEY_TERMS = 4

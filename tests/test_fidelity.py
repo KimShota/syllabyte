@@ -89,3 +89,20 @@ def test_a_segment_spoken_wholly_from_the_line_cache_is_still_written(tmp_path):
     out = tmp_path / "new" / "seg_0.wav"  # its folder doesn't exist yet
     durations, _words = tts._synthesize_beats(Never(), seg, out, ["v", "v"], [0.1, 0.1])
     assert out.exists() and len(durations) == 2
+
+
+def test_a_handout_slide_number_finds_the_page_that_prints_it():
+    # runs/p5: a 5-page handout (4 slides a page) and a KU citing slide 25 crashed the video before it started
+    from syllabyte_common.models import CourseCorpus, KnowledgeUnit, Slide, SlideDeck, SlideRef
+    from script_generation_agent.script_writer import gather_source_material
+
+    pages = [Slide(deck_name="os", slide_number=i + 1, text=f"{6 * i + 1}\nslide text {i}") for i in range(5)]
+    pages[4].text = "25\nExample of RR with Time Quantum = 20\nP1 53"
+    corpus = CourseCorpus(course_name="OS", syllabus_path="s.pdf", syllabus_text="",
+                          decks=[SlideDeck(name="os", source_path="os.pdf", slides=pages)])
+    ku = KnowledgeUnit.model_construct(id="ku-rr", source_refs=[SlideRef(deck_name="os", slide_number=25)])
+    text, _images = gather_source_material(corpus, ku)
+    assert "Time Quantum = 20" in text and "slide text 0" not in text
+    ku = KnowledgeUnit.model_construct(id="ku-x", source_refs=[SlideRef(deck_name="os", slide_number=99)])
+    text, _images = gather_source_material(corpus, ku)
+    assert text.count("[os — page") == 5  # nothing resolves: the short deck stands in whole

@@ -470,6 +470,8 @@ class PictureRunner:
 
     def _grid(self, name, view, region, out):
         lay: D.GridLayout = self.layout.math[name]
+        if lay.transposed:
+            view = D.transpose(view)
         font = max(FONT, lay.font)
         for r, row in enumerate(view["values"]):
             for c, text in enumerate(row):
