@@ -304,6 +304,17 @@ planner, and speaking lines while the writer is still writing.
   at font 30): a flat 0.18 ran 'SYN-ACK 300' 0.6 units short. All 11 examples render with no layout findings;
   723 tests pass. Not done: an LLM run on the areas never tested (operating systems, networks, databases,
   architecture, compilers, theory of computation, linear algebra, security).
+- **P5 LLM check (2026-11-14, runs/p5, $2.95):** one video per new view, from 5 public decks (MIT 18.404 and 18.06,
+  Michigan EECS 489, LSU CSC 4103, Cambridge Digital Electronics) and COS 226. The planner chose the intended
+  view on all 7. First round: flow (DFA) VA 6, axes vectors (eigenvectors) VA 6, memory (call stack) VA 5; the
+  sequence, grid and circuit pictures were lost to fit limits, and round robin crashed on a 4-up handout deck.
+  Fixed (a7310484): long labels left out instead of refused, tighter rows, wide tables drawn on their side,
+  handout slide numbers found on their page. Second round: handshake VA 5, round robin VA 4 (the slide's own
+  bursts, finish times computed), house painting VA 6. The full adder was paired with its truth table (9.2 units
+  of 4.7) and a slide-example false alarm read rows like 011 as numbers; fixed (a bit row matches its digits
+  written apart; a view that needs most of the frame is told to stand alone), and the third try drew the
+  circuit with every wire computed (VA 3: the lines promise an 8-row table the picture never shows). All 7 views
+  now draw in real videos. Cost ran over the estimates: extraction $0.80, videos $0.18 each with redraws.
 - **P3:** layer 2 (checked codegen on primitives), icon set, miss log.
 - **P4:** benchmark; templates kept only where they beat the grammar.
 - **Head-to-head (2026-11-13, runs/h2h, $2.11):** 10 topics (5 CS, 5 math, none used to tune the grammar), each

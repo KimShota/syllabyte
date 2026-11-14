@@ -149,6 +149,16 @@ def _digits(text: str) -> set[str]:
     return {m.group(0).rstrip("0").rstrip(".") if "." in m.group(0) else m.group(0) for m in _NUMBER.finditer(text)}
 
 
+def _bits_in(n: str, text: str) -> bool:
+    """A row of bits ('011') written apart in a truth table ('0 1 1', '0, 1, 1', '0 | 1 | 1'): runs/p5's full adder
+    declared its rows as 000, 001..., the slide printed them a digit a column, and the check sent back a right
+    plan."""
+    n = n.strip()
+    if not re.fullmatch(r"[01]{2,}", n):
+        return False
+    return re.search(r"(?<!\d)" + r"[\s,|]+".join(n) + r"(?!\d)", text) is not None
+
+
 def _pictures(segments) -> list[str]:
     """The programs of the plan's Picture calls."""
     from animation_agent.visuals.calls import CallError, parse_call
@@ -190,9 +200,9 @@ def example_problem(declared: SlideExample | None, segments, slide_text: str):
     used = _digits(everything)
     for n in declared.numbers:
         digits = _digits(n)
-        if digits and not digits <= on_slides:
+        if digits and not digits <= on_slides and not _bits_in(n, slide_text):
             why.append(f"{n} is not on the slides")
-        elif digits and not digits <= used:
+        elif digits and not digits <= used and not _bits_in(n, everything):
             why.append(f"the slide's {n} is not in the picture")
     if not why:
         return None

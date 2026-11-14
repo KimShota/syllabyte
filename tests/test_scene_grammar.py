@@ -618,3 +618,10 @@ def test_a_vector_is_labelled_past_its_tip_and_a_grid_is_sent_through_its_matrix
 
 def test_text_widths_count_capitals_wider_than_small_letters():
     assert M2.text_width("SYN-ACK") > M2.text_width("syn-ack") > M2.text_width("iiiiiii")
+
+
+def test_a_view_that_needs_the_frame_alone_is_told_to_stand_alone():
+    adder = DIAGRAM_PROGRAMS["adder"].split("for bits")[0]
+    table = "t = grid('t', [[a, b, c] for a in (0, 1) for b in (0, 1) for c in (0, 1)], col_names=['A', 'B', 'Cin'])\n"
+    with pytest.raises(PictureError, match="the circuit needs .* by itself, so it can't share the frame"):
+        L.plan(run(table + adder + "snap()"), *FULL)

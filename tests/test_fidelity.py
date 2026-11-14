@@ -106,3 +106,11 @@ def test_a_handout_slide_number_finds_the_page_that_prints_it():
     ku = KnowledgeUnit.model_construct(id="ku-x", source_refs=[SlideRef(deck_name="os", slide_number=99)])
     text, _images = gather_source_material(corpus, ku)
     assert text.count("[os — page") == 5  # nothing resolves: the short deck stands in whole
+
+
+def test_a_truth_table_row_written_a_digit_a_column_is_on_the_slides():
+    from script_generation_agent.fidelity import _bits_in
+
+    assert _bits_in("011", "a b cin cout\n0 1 1 1\n")
+    assert _bits_in("101", "t = grid('t', [[1, 0, 1]])")
+    assert not _bits_in("011", "0110") and not _bits_in("25", "2 5")

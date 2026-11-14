@@ -168,6 +168,15 @@ def plan_regions(snaps: list[dict], width: float, height: float, top: float) -> 
             except PictureError:
                 raise
         need = ", ".join(f"{_WHAT[kinds[b[0]]]} {x:.1f}" for b, x in zip(bands, h))
+        # a view that needs most of the frame by itself can't share it (runs/p5: a full adder's circuit with its
+        # truth table, twice, and the video lost its picture): say so plainly
+        alone = [(b, x) for b, x in zip(bands, h) if x > 0.7 * height]
+        if alone and len(bands) > 1:
+            band, x = max(alone, key=lambda bx: bx[1])  # the biggest: the one the rest must give way to
+            what = _WHAT[kinds[band[0]]]
+            raise PictureError(f"{what} needs {x:.1f} of the {height:.1f} units by itself, so it can't share the "
+                               f"frame: draw {what} as the only view and let the lines say what the others would "
+                               f"show (they need {need})")
         raise PictureError(f"these views don't fit on screen together: they need {sum(h):.1f} units of the "
                            f"{height:.1f} ({need}); use fewer or smaller ones")
     main = [i for i, band in enumerate(bands) if any(kinds[n] in MAIN_KINDS for n in band)]
