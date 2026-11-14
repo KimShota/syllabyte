@@ -72,6 +72,7 @@ def test_the_picture_is_planned_then_the_lines_are_written_to_it(monkeypatch):
 
 
 def test_lines_the_dialogue_checks_reject_are_written_once_more(monkeypatch):
+    monkeypatch.setenv("SYLLABYTE_BEATS", "planned")  # written for the beats the planner places
     plan = storyboard.skeleton(2)
     long = lines_board(plan)
     long.deliver_1.b3_explainer_feedback.narration = "word " * 60
@@ -94,6 +95,7 @@ def _first_stage(monkeypatch) -> list[str]:
 
     monkeypatch.setattr(storyboard, "structured", fake)
     monkeypatch.setattr(storyboard_plan, "structured", fake)
+    monkeypatch.setattr("script_generation_agent.snapshot_beats.structured", fake)
     monkeypatch.setattr("script_generation_agent.script_writer.gather_source_material", lambda c, k: ("slides", []))
     try:
         storyboard.write_storyboard(KU, None, level=2, picture=PICTURE, example=None)
@@ -104,6 +106,9 @@ def _first_stage(monkeypatch) -> list[str]:
 
 def test_plan_then_write_is_the_default_and_one_call_can_be_chosen(monkeypatch):
     monkeypatch.delenv("SYLLABYTE_STORYBOARD", raising=False)
+    monkeypatch.delenv("SYLLABYTE_BEATS", raising=False)
+    assert _first_stage(monkeypatch) == ["storyboard_program_l2"]  # a program, its snapshots then the beats
+    monkeypatch.setenv("SYLLABYTE_BEATS", "planned")
     assert _first_stage(monkeypatch) == ["storyboard_plan_l2"]
     monkeypatch.setenv("SYLLABYTE_STORYBOARD", "one_call")
     assert _first_stage(monkeypatch) == ["storyboard_l2"]

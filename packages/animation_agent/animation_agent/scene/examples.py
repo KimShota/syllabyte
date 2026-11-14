@@ -474,4 +474,41 @@ a.polygon('p', [(0, 0), (1, 0), (0.5, 0.8)], style='visited', label='T')
 snap('a rose, a circle and a triangle', name='all')
 '''
 
-DIAGRAM_PROGRAMS = {"lcs": LCS, "matmul": MATMUL, "process": PROCESS_STATES, "web": WEB_REQUEST, "dfa": DFA, "rr": ROUND_ROBIN, "tcp": TCP_HANDSHAKE, "adder": FULL_ADDER, "linked": LINKED_LIST, "eigen": EIGENVECTOR, "polar": POLAR}
+# A whole video's program (plan/snapshot-led-beats-plan.md): every snapshot names the part of the video it belongs
+# to, and each gets its own line. A raw string here, so the TeX's backslashes reach the program as written.
+GEOMETRIC = r'''
+a = axes('a', x=(0, 5), y=(0, 2.4), title='partial sums')
+f = formula('f')
+f.add(r'S = 1 + \frac{1}{2} + \frac{1}{4} + \cdots')
+snap('the endless sum S = 1 + 1/2 + 1/4 + ...', name='sum', part='prepare')
+sums = []
+s = Fraction(0)
+for k in range(4):
+    s += Fraction(1, 2 ** k)
+    sums.append(s)
+names = ['S1', 'S2', 'S3', 'S4']
+a.bars('s', [float(x) for x in sums[:2]], labels=names[:2])
+snap('the first two partial sums, 1 and 1.5', name='first', part='prepare')
+a.line('two', (0, 2), (5, 2), style='grey', label='2')
+snap('a line at height 2: where the sums are heading', name='goal', part='initiate')
+a.bars('s', [float(x) for x in sums], labels=names)
+snap('four partial sums: 1, 1.5, 1.75, 1.875', name='four', part='deliver_1')
+a.line('wrong', (0.5, 1.2), (4.5, 2.4), style='red', label='forever')
+snap('the wrong idea: the sums keep growing, past 2', name='wrong', part='deliver_1', wrong=True)
+a.remove('wrong')
+f.add(r'2 - S_n = \frac{1}{2^{n-1}}')
+snap('each gap to 2 is half the one before: 1, 1/2, 1/4, 1/8', name='gap', part='deliver_1')
+a.mark('s', 'found')
+snap('so every partial sum stays under 2', name='under', part='deliver_1')
+f.set(0, r'S = 1 + \frac{1}{2} S')
+snap('the trick: S is 1 plus half of S itself', name='trick', part='deliver_2')
+f.set(1, r'S - \frac{1}{2} S = 1')
+snap('take half of S from both sides: S - S/2 = 1', name='half', part='deliver_2')
+f.add('S = ' + str(1 / (1 - Fraction(1, 2))))
+f.box(2)
+snap('so S = 2, the line the bars approach', name='total', part='deliver_2')
+a.mark('two', 'found')
+snap('an endless sum with a finite value: 2', name='idea', part='end')
+'''
+
+DIAGRAM_PROGRAMS = {"lcs": LCS, "matmul": MATMUL, "process": PROCESS_STATES, "web": WEB_REQUEST, "dfa": DFA, "rr": ROUND_ROBIN, "tcp": TCP_HANDSHAKE, "adder": FULL_ADDER, "linked": LINKED_LIST, "eigen": EIGENVECTOR, "polar": POLAR, "geometric": GEOMETRIC}

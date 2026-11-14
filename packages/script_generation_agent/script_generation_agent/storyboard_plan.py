@@ -440,48 +440,70 @@ def write_storyboard_planned(
     ku_prompt = build_script_prompt(ku, text_context)
     head = ku_prompt.replace("Write the 5-segment CLT-bLM script for this Knowledge Unit now.", "")
 
-    # 1. The picture, planned (once more if it strays from the traced example or a creation call is refused).
-    system = planner_system_prompt(level, prereq_titles, explainer=explainer, peer=peer,
-                                   templates=picture.templates, family=picture.family,
-                                   example=planner_example(level, picture.family, explainer=explainer, peer=peer))
-    prompt = head + "Plan the pictures for this Knowledge Unit now: every beat's calls, then its point."
-    if example is not None:
-        prompt += trace_brief(example)
-    feedback = ""
-    for attempt in range(2):
-        board = structured(schema=plan_model(plan, slide_example=grammar), content=[text_block(prompt + feedback),
-                                                                                  *image_blocks],
-                           system=system, stage=f"{PLAN_STAGE}_l{level}", ku_id=ku.id, model=writer_model,
-                           effort=STORYBOARD_EFFORT, max_tokens=12000, manifest=manifest)
-        if dump := os.environ.get("SYLLABYTE_PLAN_DUMP"):  # every planned board, to trace what later steps change
-            Path(dump).mkdir(parents=True, exist_ok=True)
-            (Path(dump) / f"{ku.id}-plan{attempt}.json").write_text(board.model_dump_json(indent=1))
-        script = plan_to_script(board, plan, ku)
-        _log(ku.id, [f"planned: {_picture_calls(script_segments_of(script))}"])
-        script, off_trace = _traced(script, example, ku.id)
-        refused = []
-        if attempt == 0:
-            from animation_agent.visuals.calls import check_script, script_segments
+    # 1-2 (snapshot-led, plan/snapshot-led-beats-plan.md): the program alone, and the beats built from its
+    # snapshots with every show call made by code; a program that can't be drawn falls back to the steps below.
+    built = None
+    if grammar:
+        from script_generation_agent.snapshot_beats import beats_mode, plan_by_snapshots
 
-            segs = script_segments(script)
-            refused = [p for p in check_script(segs, None, allowed)
-                       if p.kind in ("other", "wrong_template") and p.call is not None
-                       and _CREATES.match(segs[p.segment][p.beat - 1][p.call])]
-            if (thin := _thin_picture(segs)) is not None:
-                refused.append(thin)
-            if grammar and (stray := example_problem(getattr(board, "slide_example", None), segs,
-                                                     text_context)) is not None:
-                refused.append(stray)
-        if not (off_trace or refused):
-            break
-        _log(ku.id, [f"the plan is drawn again: {'; '.join(p.message for p in off_trace + refused)[:400]}"])
-        feedback = _redo_feedback(off_trace + refused)
+        if beats_mode() == "snapshots":
+            built = plan_by_snapshots(ku, head=head, image_blocks=image_blocks, text_context=text_context,
+                                      level=level, prereq_titles=prereq_titles, explainer=explainer, peer=peer,
+                                      model=writer_model, manifest=manifest)
+    if built is not None:
+        from animation_agent.visuals.calls import check_script
 
-    # 2. Settled as it will render, and described.
-    segments = settle_picture(script, ku_id=ku.id, model=model, manifest=manifest, system=system, allowed=allowed,
-                              main=picture.main, trace=example, keep_echo=True)
-    said = describe_script(segments)
-    _log(ku.id, [f"settled: {_picture_calls(segments)}"])
+        from script_generation_agent.storyboard import _drop_broken
+
+        script, segments, plan = built
+        # code made every call, so nothing should be refused; whatever is still goes, as settle_picture would
+        if broken := [p for p in check_script(segments, None, allowed) if p.call is not None]:
+            _log(ku.id, [f"refused: {p.message[:160]}" for p in broken])
+            segments = _drop_broken(segments, None, allowed)
+        said = describe_script(segments)
+    if built is None:
+        # 1. The picture, planned (once more if it strays from the traced example or a creation call is refused).
+        system = planner_system_prompt(level, prereq_titles, explainer=explainer, peer=peer,
+                                       templates=picture.templates, family=picture.family,
+                                       example=planner_example(level, picture.family, explainer=explainer, peer=peer))
+        prompt = head + "Plan the pictures for this Knowledge Unit now: every beat's calls, then its point."
+        if example is not None:
+            prompt += trace_brief(example)
+        feedback = ""
+        for attempt in range(2):
+            board = structured(schema=plan_model(plan, slide_example=grammar), content=[text_block(prompt + feedback),
+                                                                                      *image_blocks],
+                               system=system, stage=f"{PLAN_STAGE}_l{level}", ku_id=ku.id, model=writer_model,
+                               effort=STORYBOARD_EFFORT, max_tokens=12000, manifest=manifest)
+            if dump := os.environ.get("SYLLABYTE_PLAN_DUMP"):  # every planned board, to trace what later steps change
+                Path(dump).mkdir(parents=True, exist_ok=True)
+                (Path(dump) / f"{ku.id}-plan{attempt}.json").write_text(board.model_dump_json(indent=1))
+            script = plan_to_script(board, plan, ku)
+            _log(ku.id, [f"planned: {_picture_calls(script_segments_of(script))}"])
+            script, off_trace = _traced(script, example, ku.id)
+            refused = []
+            if attempt == 0:
+                from animation_agent.visuals.calls import check_script, script_segments
+
+                segs = script_segments(script)
+                refused = [p for p in check_script(segs, None, allowed)
+                           if p.kind in ("other", "wrong_template") and p.call is not None
+                           and _CREATES.match(segs[p.segment][p.beat - 1][p.call])]
+                if (thin := _thin_picture(segs)) is not None:
+                    refused.append(thin)
+                if grammar and (stray := example_problem(getattr(board, "slide_example", None), segs,
+                                                         text_context)) is not None:
+                    refused.append(stray)
+            if not (off_trace or refused):
+                break
+            _log(ku.id, [f"the plan is drawn again: {'; '.join(p.message for p in off_trace + refused)[:400]}"])
+            feedback = _redo_feedback(off_trace + refused)
+
+        # 2. Settled as it will render, and described.
+        segments = settle_picture(script, ku_id=ku.id, model=model, manifest=manifest, system=system, allowed=allowed,
+                                  main=picture.main, trace=example, keep_echo=True)
+        said = describe_script(segments)
+        _log(ku.id, [f"settled: {_picture_calls(segments)}"])
 
     # 3. The lines, written to the pictures.
     wsystem = writer_system_prompt(level, prereq_titles, explainer=explainer, peer=peer, lexicon=lexicon_for_prompt(),

@@ -208,6 +208,28 @@ class PictureRunner:
             marker.move_to([left - 0.17, y, 0])
             out[f"{name}:marker"] = marker
 
+    def _formula(self, name, view, region, out):
+        """Each TeX line centred in its row, scaled down to fit the band (visuals/base.tex: a line LaTeX can't
+        compile falls back to plain text), its style colouring the line and its lit terms their own colour."""
+        from manim import SurroundingRectangle
+
+        from animation_agent.visuals.base import fit_width, tex
+
+        title = L.TITLE_H if view.get("title") else 0.0
+        for j, line in enumerate(view["lines"]):
+            terms = view["terms"].get(str(j), [])
+            colour = STYLE_COLOUR.get(view["styles"].get(str(j)), WHITE)
+            t = tex(line, col=colour, isolate=[term for term, _ in terms])
+            for term, style in terms:
+                t.set_color_by_tex(term, STYLE_COLOUR[style])
+            fit_width(t, region.w - 0.3)
+            if t.height > L.FORMULA_LINE_H * 0.86:
+                t.scale_to_fit_height(L.FORMULA_LINE_H * 0.86)
+            t.move_to([region.cx, region.top - title - L.FORMULA_LINE_H * (j + 0.5), 0])
+            out[f"{name}:formula:{j}"] = t
+            if j in view["boxed"]:
+                out[f"{name}:box:{j}"] = SurroundingRectangle(t, color=GREEN, buff=0.08, stroke_width=4)
+
     def _container(self, name, view, region, out):
         """Drawn to one scale with the other containers, the tallest filling its band (up to 3.2 units), all
         standing on one line, each with its title above it and its amount below."""
@@ -679,6 +701,13 @@ class PictureRunner:
                 self.on_screen[key] = new
             elif _same_parts(old, new):
                 anims.append(old.animate.become(new))
+            elif ":formula:" in key:  # a step rewritten: the symbols it keeps move to their new places
+                from manim import TransformMatchingShapes
+
+                anims.append(TransformMatchingShapes(old, new))
+                self._drop(old)
+                self._keep(new)
+                self.on_screen[key] = new
             elif ":item:" in key and not getattr(new, "syllabyte_solid", False):
                 # a math thing that changed shape (more rectangles, a new curve) morphs; a 3D solid (opaque faces in
                 # depth order) cross-fades instead, since its faces mid-morph would cut through each other

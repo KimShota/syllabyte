@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import copy
 import math
+import re
 from fractions import Fraction
 
 MAX_VIEWS = 3
@@ -1493,14 +1494,131 @@ def container(name, capacity, level=0, title=None):
     return Container(name, capacity, level, title)
 
 
-def snap(caption="", name=None):
-    """Records the picture as it is now: one state the storyboard can show, by its name (p.show(snap=name))."""
+MAX_FORMULA_LINES = 4
+MAX_TEX_SYMBOLS = 22  # as visuals/specs.py: a longer formula line is too small to read across the frame
+# what a plain string makes of a TeX command's backslash ('\frac' is a form feed and "rac"), put back
+_TEX_ESCAPES = {"\a": r"\a", "\b": r"\b", "\f": r"\f", "\n": r"\n", "\r": r"\r", "\t": r"\t", "\v": r"\v"}
+
+
+def tex_symbols(tex: str) -> int:
+    """Roughly how many symbols a TeX formula shows, as visuals/specs.tex_symbols (a command like \\lambda counts
+    as one, layout commands and braces as none). Copied: the sandbox loads this file alone."""
+    s = re.sub(r"\\(begin|end)\{[a-z*]+\}", "", tex)
+    s = re.sub(r"\\(left|right|,|;|!|quad|qquad|cdot|mathrm|text|operatorname)\b", "", s)
+    s = re.sub(r"\\[A-Za-z]+", "x", s)
+    return len(re.sub(r"[\s{}^_&\\]", "", s))
+
+
+def _tex(line, what: str = "formula line") -> str:
+    s = "".join(_TEX_ESCAPES.get(ch, ch) for ch in str(line)).strip()
+    if not s:
+        raise PictureError(f"a {what} is empty")
+    if (n := tex_symbols(s)) > MAX_TEX_SYMBOLS:
+        raise PictureError(f"the {what} {s!r} shows about {n} symbols; at most {MAX_TEX_SYMBOLS} stay readable, so "
+                           "split it over two lines")
+    return s
+
+
+class Formula(_View):
+    """Lines of TeX worked one step at a time: a line added or rewritten, a line coloured, a term lit, the result
+    boxed. A step of the working is then a snapshot like any other, with its own line
+    (plan/snapshot-led-beats-plan.md)."""
+
+    kind = "formula"
+
+    def __init__(self, name, lines=(), title=None):
+        super().__init__(name, title)
+        self.lines: list[str] = []
+        self.styles: dict[int, str] = {}
+        self.terms: dict[int, list[list[str]]] = {}
+        self.boxed: set[int] = set()
+        for line in lines:
+            self.add(line)
+
+    def _i(self, i) -> int:
+        i = int(i)
+        if i < 0:
+            i += len(self.lines)
+        if not 0 <= i < len(self.lines):
+            raise PictureError(f"{self.name} has no line {i} (it has {len(self.lines)})")
+        return i
+
+    def add(self, tex):
+        if len(self.lines) >= MAX_FORMULA_LINES:
+            raise PictureError(f"{self.name}: at most {MAX_FORMULA_LINES} formula lines; rewrite one (set) or "
+                               "remove one first")
+        self.lines.append(_tex(tex))
+        return len(self.lines) - 1
+
+    def set(self, i, tex):
+        i = self._i(i)
+        self.lines[i] = _tex(tex)
+        if kept := [t for t in self.terms.pop(i, []) if t[0] in self.lines[i]]:  # a lit term the step kept
+            self.terms[i] = kept
+
+    def mark(self, i, style="current"):
+        self.styles[self._i(i)] = _style(style)
+
+    def highlight(self, i, term, style="current"):
+        i, term = self._i(i), _tex(term, "term")
+        if term not in self.lines[i]:
+            raise PictureError(f"{term!r} isn't in line {i} of {self.name} ({self.lines[i]!r})")
+        self.terms[i] = [t for t in self.terms.get(i, []) if t[0] != term] + [[term, _style(style)]]
+
+    def box(self, i, on=True):
+        i = self._i(i)
+        if on:
+            self.boxed.add(i)
+        else:
+            self.boxed.discard(i)
+
+    def unmark(self, i=None):
+        if i is None:
+            self.styles.clear()
+            self.terms.clear()
+            self.boxed.clear()
+            return
+        i = self._i(i)
+        self.styles.pop(i, None)
+        self.terms.pop(i, None)
+        self.boxed.discard(i)
+
+    def remove(self, i):
+        i = self._i(i)
+        self.lines.pop(i)
+
+        def shift(d):
+            return {(k - 1 if k > i else k): v for k, v in d.items() if k != i}
+
+        self.styles, self.terms = shift(self.styles), shift(self.terms)
+        self.boxed = {k - 1 if k > i else k for k in self.boxed if k != i}
+
+    def state(self):
+        return {"kind": self.kind, "title": self.title, "lines": list(self.lines),
+                "styles": {str(k): v for k, v in self.styles.items()},
+                "terms": {str(k): copy.deepcopy(v) for k, v in self.terms.items()}, "boxed": sorted(self.boxed)}
+
+
+def formula(name, lines=(), title=None):
+    return Formula(name, lines, title)
+
+
+# the parts of the video a snapshot belongs to (storyboard.skeleton's segments), in order
+PARTS = ("prepare", "initiate", "deliver_1", "deliver_2", "end")
+
+
+def snap(caption="", name=None, part=None, wrong=False):
+    """Records the picture as it is now: one state the storyboard can show, by its name (p.show(snap=name)).
+    `part` is the part of the video it belongs to (PARTS), and `wrong` marks the wrong idea's state."""
     if len(_snaps) >= MAX_SNAPS:
         raise PictureError(f"at most {MAX_SNAPS} snapshots")
     name = str(len(_snaps)) if name is None else str(name)
     if any(s["name"] == name for s in _snaps):
         raise PictureError(f"two snapshots are named {name!r}; give each its own name")
-    _snaps.append({"caption": str(caption), "name": name, "views": {k: v.state() for k, v in _views.items()}})
+    if part is not None and part not in PARTS:
+        raise PictureError(f"snapshot {name!r}: part {part!r} is not one of {', '.join(PARTS)}")
+    _snaps.append({"caption": str(caption), "name": name, "part": part, "wrong": bool(wrong),
+                   "views": {k: v.state() for k, v in _views.items()}})
 
 
 MATH = {k: getattr(math, k) for k in ("sin", "cos", "tan", "asin", "acos", "atan", "atan2", "exp", "log", "log2",
@@ -1510,7 +1628,7 @@ MATH = {k: getattr(math, k) for k in ("sin", "cos", "tan", "asin", "acos", "atan
 EXPORTS = {"INF": float("inf"), "cells": cells, "nodes": nodes, "code": code, "container": container, "snap": snap,
            "axes": axes, "venn": venn, "geometry": geometry, "numberline": numberline, "surface": surface,
            "grid": grid, "flow": flow, "timeline": timeline, "sequence": sequence, "circuit": circuit,
-           "memory": memory, "derivative": derivative, "integral": integral, "root": root, "Fraction": Fraction,
+           "memory": memory, "formula": formula, "derivative": derivative, "integral": integral, "root": root, "Fraction": Fraction,
            "PictureError": PictureError, **MATH}
 
 

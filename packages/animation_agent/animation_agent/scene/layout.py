@@ -42,6 +42,7 @@ INDEX_H = 0.3
 POINTER_H = 0.32
 TITLE_H = 0.38
 CODE_LINE_H = 0.48
+FORMULA_LINE_H = 0.9  # a TeX line with a fraction at a readable size (EquationSteps pitch), with room for a box
 CODE_CHAR_W = 0.245  # Menlo at the minimum font (30), measured: about 15 characters across the frame
 CONTAINER_H = 2.0
 GAP = 0.14
@@ -93,6 +94,9 @@ def _heights(kind: str, views: list[dict], width: float) -> tuple[float, float]:
     if kind == "code":
         h = title + CODE_LINE_H * max(len(v["lines"]) for v in views)
         return h, h
+    if kind == "formula":
+        h = title + FORMULA_LINE_H * max(1, max(len(v["lines"]) for v in views))
+        return h, h
     if kind == "container":
         return title + CONTAINER_H, title + 0.1 + CONTAINER_LABEL_H + CONTAINER_MAX
     if kind in MATH_KINDS:
@@ -121,7 +125,7 @@ def _fill(h: list[float], most: list[float], which: list[int], spare: float) -> 
 _WHAT = {"cells": "an array", "code": "the code panel", "container": "a container", "nodes": "the diagram",
          "axes": "the axes", "venn": "the Venn diagram", "geometry": "the figure", "numberline": "the number line",
          "surface": "the 3D view", "grid": "the table", "flow": "the flow diagram", "timeline": "the timeline",
-         "sequence": "the message diagram", "circuit": "the circuit", "memory": "the memory diagram"}
+         "sequence": "the message diagram", "circuit": "the circuit", "memory": "the memory diagram", "formula": "the formula"}
 # views laid out by their own module (scene/math_layout.py, scene/diagram_layout.py): (heights, layout) each
 MATH_KINDS = ("axes", "venn", "geometry", "numberline", "surface", "grid", "flow", "timeline", "sequence", "circuit",
               "memory")

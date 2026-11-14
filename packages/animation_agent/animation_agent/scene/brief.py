@@ -6,6 +6,7 @@ from __future__ import annotations
 from animation_agent.scene.examples import DIAGRAM_PROGRAMS, MATH_PROGRAMS, PROGRAMS
 
 _EXAMPLE_TOPICS = {
+    "geometric": "a whole video: why 1 + 1/2 + 1/4 + ... adds up to 2 (partial sums, then the algebra)",
     "union_find": "quick-union (union-find): the id[] array, the forest it encodes and the code line, kept in step",
     "llrb": "inserting S E A R C H X M into a left-leaning red-black BST: each insert, then its rotations and flips",
     "water_jugs": "the water-jug puzzle: measure 4 gallons with a 3 and a 5",
@@ -30,18 +31,10 @@ _EXAMPLE_TOPICS = {
 BRIEF = """\
 This idea's picture
 Draw it with Picture: you write a short Python program that runs the idea on the views below and calls \
-snap('caption', name='...') after every state the viewer should see. Code runs the program, lays everything out \
-and animates each change, so every step shown is the real algorithm's. Create the Picture in the first beat with \
-the whole program (p = Picture(program=[...]), one string per line); it opens on the first snapshot. Then a beat \
-shows a snapshot by its name, p.show(snap='swap1'), on the line that talks about it: one snapshot per line, and \
-the line says what that snapshot shows, its numbers included (a line that walks through two steps may show two, \
-never more; code keeps only the last two). Show the snapshots in the program's order the first time: the \
-objective line keeps the picture or shows the first step, never the result (code drops a show that jumps ahead of \
-a snapshot the video shows later, since it gives the answer away). Plan the program from the beats: write the beats' points first, then give \
-each point-making beat the snapshot it talks about, named for it (10-25 in all), so the picture changes on most \
-beats from the first segment to the last. A question or predict line \
-keeps the picture as it is ([]); the line that answers shows the answer. Every name you show must be one the \
-program snaps.
+snap('caption', name='...', part='...') after every state the viewer should see. Code runs the program, lays \
+everything out and animates each change, so every step shown is the real algorithm's. The video is built from \
+your snapshots: each one gets its own line, in the program's order, and is on screen while that line is spoken, \
+so the picture moves on every line that makes a point.
 
 Views (at most 3, stacked top to bottom in the order the program makes them; a title is at most 18 characters, \
 and it gives way to the picture when room is short, so the lines say what it names). The main picture (every view but \
@@ -116,13 +109,13 @@ tl.remove(key). For CPU schedules, Gantt charts, pipelines, anything over time.
   - sequence(name, actors, title=None): 2-4 actors side by side (names at most 8 characters), each with a \
 lifeline; s.message(key, a, b, label=None, style=None, dashed=False) an arrow from a to b below the messages \
 before it (a == b: to itself; dashed for a reply; a short label, longer than 22 characters is left out), \
-s.mark(key, style), s.remove(key). About 7 messages fit the whole frame, 5 beside a formula. For protocols, a client and a server, threads and locks.
+s.mark(key, style), s.remove(key). About 7 messages fit the whole frame, 5 above a formula. For protocols, a client and a server, threads and locks.
   - circuit(name, title=None): a logic circuit drawn top to bottom, every wire showing the value code works \
 out (1 lit). c.input(key, value=0, label=None), c.gate(key, kind, inputs) (AND OR NOT NAND NOR XOR XNOR BUF, its \
 inputs made before it), c.output(key, source, label=None) (labels at most 4 characters); c.set(key, value) \
 changes an input, c.value(key) returns a computed value, c.mark(key, style). At most 14 parts; about 3 levels of \
-gates fit, and a circuit of 3 levels (a full adder) takes the whole frame: draw it as the only view, with no \
-formula in the video, and let the lines give the truth table.
+gates fit, and a circuit of 3 levels (a full adder) takes the whole frame: draw it as the only view, and let \
+the lines give the truth table.
   - memory(name, title=None): stack frames down the left, heap objects down the right, each a list of fields. \
 m.frame(key, title=None) (a call: 'main()', 'f(3)'), m.obj(key, title=None) (titles at most 10 characters), \
 m.set(box, name, value) (a value of at most 6 characters, None for blank, or m.ref(key) for an arrow to that heap \
@@ -132,6 +125,14 @@ name=None, style). At most 4 frames and 4 objects of 5 fields; about 3 objects o
 style=None, fill=True, label=None); a.curve(key, fx, fy, t=(0, 1)) the curve (fx(t), fy(t)); a.polar(key, r, \
 t=(0, 2*pi)) the curve r = r(theta); a.grid(key, matrix=None, step=1) the grid lines, sent through a 2x2 matrix \
 when given (what a linear map does to the plane; draw it again with the matrix and it moves).
+  - formula(name, lines=(), title=None): up to 4 lines of TeX, worked one step at a time, each at most about 22 \
+symbols. f.add(tex) writes the next line (returns its index); f.set(i, tex) rewrites line i (a step of the \
+working); f.mark(i, style) colours a line; f.highlight(i, term, style='current') colours one term of line i, \
+written as it is in the line; f.box(i) boxes a result; f.unmark(i=None); f.remove(i). Write the TeX in raw \
+strings (r'\\frac{1}{2}'), and put computed numbers in with + and str(), not an f-string (its braces clash with \
+TeX's). It takes a band under the picture like a code panel (about 0.9 units a line), so a formula the lines work \
+through (a sum, a recurrence, a cost such as O(1) x deg(u) summed to O(|E|)) is a view, and each of its steps a \
+snapshot with its own line.
   - Which view: an array or a string -> cells; trees, graphs, heaps -> nodes; a table, a matrix, dynamic \
 programming, a truth table, rows of data -> grid; a process, a pipeline, layers, an architecture, a state machine, \
 a flowchart, a call tree with words -> flow; a schedule -> timeline; messages between parties -> sequence; logic \
@@ -141,9 +142,11 @@ sets -> venn; shapes and angles -> geometry; integers and intervals -> numberlin
 pi e factorial comb perm gcd; derivative(f, x), integral(f, a, b), root(f, a, b) (f(a), f(b) of opposite signs); \
 Fraction(p, q) for exact probabilities (str(Fraction(3, 10)) is '3/10'). A probability tree is nodes() with each \
 link's label its probability.
-  - snap(caption, name=None): records every view as it is now, under a short unique name (in a loop, build it: \
-name='pass' + str(k)). The caption says in a few plain words what this state shows, with its values ("relax \
-0->2: distTo[2] is now 5"): the line writer reads it as what the picture shows, so make it exact and complete.
+  - snap(caption, name=None, part=None, wrong=False): records every view as it is now, under a short unique name \
+(in a loop, build it: name='pass' + str(k)), as a state of one part of the video (part='prepare', 'initiate', \
+'deliver_1', 'deliver_2' or 'end'; wrong=True for the wrong idea's state). The caption says in a few plain words \
+what this state shows, with its values ("relax 0->2: distTo[2] is now 5"): the line writer reads it as what the \
+picture shows, so make it exact and complete.
 Styles are words: current (yellow: being looked at), visited (teal), found (green: final, done, sorted), compare \
 (orange: two things compared), red (a red link, or the wrong idea), grey (out of play), new (just added), blue.
 
@@ -153,18 +156,16 @@ orders, areas, slopes, probabilities); never type a result.
   - Plain Python: def, class, loops, lists, dicts, f-strings. No imports, no names starting with _, no print. \
 Write the program's strings in single quotes (each line sits inside double quotes in the call). At most 80 lines.
   - What fits: about 8 nodes or cells across, 10 bars, a tree about 4 levels deep below one other view, a graph of 8 \
-nodes and about 16 weighted links above an array (the whole frame). The Picture has the whole frame only while nothing else is on \
-screen: with a formula or note anywhere in the video it gets two thirds of the frame, where a big graph won't \
-fit. A picture that needs the whole frame wins: code then removes the formulas and notes, so for a big graph \
-plan none and let the lines say the formula. Draw the slide's own \
+nodes and about 16 weighted links above an array (the whole frame). Every view shares the frame, a formula \
+too, so a big graph goes without one and the lines say the formula. Draw the slide's own \
 example exactly (its functions, numbers, graph, region): declare it in slide_example, and the checker compares \
 your program with it. Only when it can't fit, make one of your own (own=true) and let the lines say so. If the program fails or doesn't fit, the \
 checker says why and you fix it.
-  - The wrong idea is a snapshot of the wrong state (a wrong value in a cell marked red, the wrong order); the \
-next snapshot shows what holds instead.
-  - Formulas (EquationSteps) and short notes (Note) can sit beside the Picture.
+  - The wrong idea is a snapshot of the wrong state, snap(..., wrong=True) (a wrong value in a cell marked red, \
+the wrong order, a red line); the next snapshot shows what holds instead.
 
-Worked examples (programs for other ideas):
+Worked examples (programs for other ideas; the first is a whole video's, every snapshot tagged with its part, and \
+the others show the views at work):
 """
 
 
