@@ -13,7 +13,7 @@ import type {
   WatchRecord,
 } from "../types";
 import { joinAnd } from "../util";
-import { droppedEarly, replayedMany } from "./engagement";
+import { droppedEarly } from "./engagement";
 import { lecturesInOrder } from "./lectures";
 import { orderByPrerequisites, prerequisiteNotes } from "./prereq";
 
@@ -87,7 +87,7 @@ export function buildEntries(input: BuildInput): PlaylistEntry[] {
   const byTag: Record<Exclude<PlaylistTag, "you_added">, Video[]> = { gap: [], new: [], refresher: [] };
   for (const v of candidates) {
     const isWatched = Boolean(watched[v.id]);
-    const weak = levelOf(v) === 1 || missedVideo(v, responses) || replayedMany(watched[v.id], course.config);
+    const weak = levelOf(v) === 1 || missedVideo(v, responses);
     if (!isWatched && levelOf(v) === 1) byTag.gap.push(v);
     else if (!isWatched && (v.lecture_n === upcoming || dropped(v))) byTag.new.push(v);
     else if (isWatched && weak) byTag.refresher.push(v);

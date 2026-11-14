@@ -1,8 +1,9 @@
 import { mockApi, questionBankLectures, questionNeedsNow, syncPlaylistWithVideos } from "@syllabyte/core/api/mock";
 import { FIX, currentCourseId, setFixtures } from "@syllabyte/core/fixtures";
-import { setEventEnv, track } from "@syllabyte/core/events";
-import { freshState, getEventVersion, getState, getVersion, mutate, replaceState } from "@syllabyte/core/store";
+import { setEventEnv, trackReceived, type EventMeta } from "@syllabyte/core/events";
+import { freshState, getEventVersion, getQuietVersion, getState, getVersion, mutate, now, replaceState } from "@syllabyte/core/store";
 import { startOfWeek } from "@syllabyte/core/logic/time";
+import { uid } from "@syllabyte/core/util";
 import type { DemoState, Fixtures, QuestionNeed } from "@syllabyte/core/types";
 import type { Db } from "./db";
 import type { User } from "./auth";
@@ -55,6 +56,7 @@ export class StateRunner {
     replaceState(this.load(user, courseId));
     const v = getVersion();
     const e = getEventVersion();
+    const q = getQuietVersion();
     // a video made since their last request joins their playlist (core's syncPlaylistWithVideos); after the versions
     // are noted, so the change is saved
     if (course) syncPlaylistWithVideos();
@@ -70,7 +72,7 @@ export class StateRunner {
       if (course && this.opts.needs) this.opts.needs(user.id, questionNeedsNow(openedSitting), questionBankLectures(openedSitting));
       return out;
     } finally {
-      if (getVersion() !== v || getEventVersion() !== e) this.save(user.id, courseId);
+      if (getVersion() !== v || getEventVersion() !== e || getQuietVersion() !== q) this.save(user.id, courseId);
     }
   }
 
@@ -111,7 +113,7 @@ export class StateRunner {
     const live = getState();
     const part = (d: Partial<DemoState>): Omit<CourseExport, "course_id" | "code" | "name" | "active"> => ({
       profile: { levels: d.levels ?? {}, made: d.made ?? {}, sittings: d.sittings ?? {} },
-      responses: d.responses ?? [], notes: d.notes ?? [], self_explanations: d.self_explanations ?? [],
+      learning_sessions: d.learning_sessions ?? {}, responses: d.responses ?? [], notes: d.notes ?? [], self_explanations: d.self_explanations ?? [],
     });
     const out: CourseExport[] = courseIds.flatMap((id) => {
       const named = describe(id);
@@ -141,6 +143,7 @@ export interface CourseExport {
   responses: DemoState["responses"];
   notes: DemoState["notes"];
   self_explanations: DemoState["self_explanations"];
+  learning_sessions: DemoState["learning_sessions"];
 }
 
 /** Methods a student may call: the whole `Api` except the ones that read across students. */
@@ -162,24 +165,66 @@ export interface ClientEvent {
   orientation?: "portrait" | "landscape";
   /** the course on screen when it happened (the phone stamps it: events arrive in batches, after a student may have switched) */
   course_id?: string | null;
+  /** the phone's id for it, kept across retries */
+  event_id?: string;
+  /** when it happened, by the phone's clock (ms) */
+  occurred_at?: number;
+}
+
+const EVENT_ID = /^[A-Za-z0-9_-]{1,100}$/;
+/** The longest a phone may hold an event and still have its time trusted. */
+const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * When a phone event happened, by the server's clock (the study clock, so it lines up with the student's other events).
+ * The phone's own clock may be wrong, so its time is not used directly: the event's age on that clock (`sentAt` minus
+ * `occurred_at`, both the phone's) is taken from the receipt time, and a wrong phone clock cancels out. An impossible
+ * age (negative, or held for over a month) is flagged and the receipt time used.
+ */
+export function eventTime(ev: ClientEvent, sentAt: number | undefined, receivedAt: number): Pick<EventMeta, "timestamp" | "clock_anomaly" | "legacy"> {
+  if (typeof ev.occurred_at !== "number" || !Number.isFinite(ev.occurred_at)) return { timestamp: new Date(receivedAt).toISOString(), legacy: true };
+  const age = typeof sentAt === "number" && Number.isFinite(sentAt) ? sentAt - ev.occurred_at : receivedAt - ev.occurred_at;
+  if (!(age >= 0 && age <= MAX_AGE_MS)) return { timestamp: new Date(receivedAt).toISOString(), clock_anomaly: true };
+  return { timestamp: new Date(receivedAt - age).toISOString() };
 }
 
 /**
- * Logs the phone's own events (play, seek, sheets) through the core's `track`, so each carries the server's condition, week
- * and code. An event's course is the one the phone says it happened in, if the student is in it (`isMember`); otherwise the
+ * Logs the phone's own events (play, seek, sheets) through the core, so each carries the server's condition, week and
+ * code. An event's course is the one the phone says it happened in, if the student is in it (`isMember`); otherwise the
  * course this request runs on. The course never carries over to the next event, or to the API calls after these.
+ *
+ * Each event is stored once: one whose id the student's log already has (a retried batch) is skipped. Phone events are
+ * research telemetry, so they are stored only while the student's consent is "research", checked now, when they arrive:
+ * a packet that arrives after the student withdrew (and perhaps deleted their past events) restores nothing. Returns
+ * the ids the phone may forget: every event with a valid id, stored now, stored before, or not stored at all, since
+ * sending it again would change nothing.
  */
-export function trackClientEvents(events: ClientEvent[], isMember: (courseId: string) => boolean = () => false): void {
+export function trackClientEvents(
+  events: ClientEvent[],
+  isMember: (courseId: string) => boolean = () => false,
+  sentAt?: number,
+): string[] {
+  const seen = new Set(getState().events.map((e) => e.id));
+  const acked: string[] = [];
+  const receivedAt = now();
+  const consented = getState().consent === "research";
   try {
     for (const ev of events) {
+      const id = typeof ev.event_id === "string" && EVENT_ID.test(ev.event_id) ? ev.event_id : null;
+      if (id) acked.push(id);
+      if (!consented || (id && seen.has(id))) continue;
       const claimed = typeof ev.course_id === "string" && isMember(ev.course_id) ? ev.course_id : null;
       setEventEnv({
         screen: () => ev.screen ?? "", device: () => ev.device ?? "mobile", orientation: () => ev.orientation ?? "portrait",
         course: () => claimed ?? currentCourseId(),
       });
-      track(ev.verb as never, ev.object, ev.result);
+      trackReceived(ev.verb as never, ev.object, ev.result, {
+        id: id ?? uid("ev"), received_at: new Date(receivedAt).toISOString(), ...eventTime(ev, sentAt, receivedAt),
+      });
+      if (id) seen.add(id);
     }
   } finally {
     setEventEnv({ course: currentCourseId });
   }
+  return acked;
 }

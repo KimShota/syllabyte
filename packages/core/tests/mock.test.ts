@@ -183,7 +183,8 @@ describe.skipIf(!haveFixtures)("mock API with the real fixtures", () => {
     const vid = FIX.videos[0];
     const item = FIX.items.find((i) => i.id === vid.checkpoint.item_id)!;
     const res = await api.postCheckpointAnswer({ videoId: vid.id, choice: item.correct_index, confidence: "guess", hintUsed: false, latencyMs: 900 });
-    expect(res).toEqual({ correct: true, queuedForTomorrow: true });
+    expect(res).toMatchObject({ correct: true, queuedForTomorrow: true });
+    expect(res.responseId).toEqual(expect.any(String));
     await api.markWatched(vid.id);
     await api.postJol(vid.id, "maybe");
     expect(await api.getNextSession()).toBeNull(); // not due yet

@@ -43,12 +43,17 @@ describe("calibration (plan Q35)", () => {
     const b = calibrationBlock1(rs);
     expect(b.ready).toBe(true);
     expect(b.rows.find((r) => r.confidence === "certain")).toMatchObject({ right: 2, n: 3 });
-    expect(b.sentences[0]).toBe("Your “Certain” answers were right 2 times in 3, no better than “Pretty sure”.");
-    expect(b.sentences[1]).toMatch(/guesses were honest/);
+    expect(b.sentences).toEqual([
+      "When you selected “Certain”, 2 of 3 answers were correct.",
+      "When you selected “Pretty sure”, 2 of 2 answers were correct.",
+      "When you selected “Guessing”, 0 of 2 answers were correct.",
+    ]);
   });
-  it("block 1 says confidence matches when nothing is off", () => {
+  it("block 1 only describes counts: it never concludes that confidence matches results", () => {
     const rs = [cp("certain", 1), cp("certain", 1), cp("pretty", 1), cp("pretty", 0), cp("guess", 0), cp("guess", 1)];
-    expect(calibrationBlock1(rs).sentences).toEqual(["Your confidence matches your results well."]);
+    const { sentences } = calibrationBlock1(rs);
+    expect(sentences).toHaveLength(3);
+    expect(sentences.join(" ")).not.toMatch(/matches|honest|better/);
   });
   it("block 2 pairs a guess with the next-day result and summarises after 3 pairs", () => {
     const vids = [video("a", "t1", 1, 6), video("b", "t2", 1, 10), video("c", "t3", 2, 18)];

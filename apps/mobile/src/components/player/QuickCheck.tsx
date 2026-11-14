@@ -1,3 +1,6 @@
+import type { LearningContext } from "@syllabyte/core/learning";
+import { uid } from "@syllabyte/core/util";
+import { LearningFeedback } from "./LearningFeedback";
 import { QuestionText } from "../QuestionText";
 import { questionLabel } from "@syllabyte/core/questionContent";
 import { useEffect, useRef, useState } from "react";
@@ -24,12 +27,14 @@ const CONF: { value: Confidence; label: string }[] = [
  */
 export function QuickCheck({
   variant,
+  learning,
   topInset,
   onAnswered,
   onContinue,
   onRewatch,
 }: {
   variant: VariantView;
+  learning: LearningContext;
   /** room for the player's top bar */
   topInset: number;
   onAnswered: () => void;
@@ -39,9 +44,14 @@ export function QuickCheck({
   const item = variant.checkpoint_item;
   const [choice, setChoice] = useState<number | null>(null);
   const [conf, setConf] = useState<Confidence | null>(null);
-  const [result, setResult] = useState<{ correct: boolean; queued: boolean } | null>(null);
+  const [result, setResult] = useState<{ correct: boolean; queued: boolean; responseId: string } | null>(null);
   const shownAt = useRef(0);
   const sent = useRef(false);
+  const [attemptId] = useState(() => uid("attempt"));
+  const [retry, setRetry] = useState(0);
+  const [error, setError] = useState(false);
+  const latency = useRef<number | null>(null);
+  const locked = conf !== null;
 
   useEffect(() => {
     shownAt.current = Date.now();
@@ -51,13 +61,15 @@ export function QuickCheck({
   useEffect(() => {
     if (choice === null || conf === null || sent.current) return;
     sent.current = true;
+    setError(false);
+    latency.current ??= Date.now() - shownAt.current;
     void api
-      .postCheckpointAnswer({ videoId: variant.video.id, choice, confidence: conf, hintUsed: false, latencyMs: Date.now() - shownAt.current })
+      .postCheckpointAnswer({ attemptId, learning, videoId: variant.video.id, choice, confidence: conf, hintUsed: false, latencyMs: latency.current })
       .then((r) => {
-        setResult({ correct: r.correct, queued: r.queuedForTomorrow });
+        setResult({ correct: r.correct, queued: r.queuedForTomorrow, responseId: r.responseId });
         onAnswered();
-      });
-  }, [choice, conf, variant.video.id, onAnswered]);
+      }).catch(() => { setError(true); });
+  }, [choice, conf, variant.video.id, onAnswered, learning, attemptId, retry]);
 
   const revealed = result !== null;
 
@@ -80,9 +92,9 @@ export function QuickCheck({
                 <Pressable
                   key={i}
                   accessibilityRole="radio"
-                  accessibilityState={{ selected: choice === i, disabled: revealed }}
+                  accessibilityState={{ selected: choice === i, disabled: revealed || locked }}
                   accessibilityLabel={`${LETTERS[i]}. ${questionLabel(o)}${state === "correct" ? ", right answer" : state === "wrong" ? ", your answer, not right" : ""}`}
-                  disabled={revealed}
+                  disabled={revealed || locked}
                   onPress={() => setChoice(i)}
                   style={({ pressed }) => [styles.option, styles[state], pressed && { opacity: 0.85 }]}
                 >
@@ -113,7 +125,8 @@ export function QuickCheck({
                   <Pressable
                     key={c.value}
                     accessibilityRole="radio"
-                    accessibilityState={{ selected: conf === c.value }}
+                    disabled={locked}
+                    accessibilityState={{ selected: conf === c.value, disabled: locked }}
                     onPress={() => setConf(c.value)}
                     style={[styles.segment, conf === c.value && styles.segmentOn]}
                   >
@@ -125,6 +138,11 @@ export function QuickCheck({
               </View>
             </View>
           ) : null}
+
+          {error ? <View style={{ gap: 8 }}>
+            <T color={colors.errorSoft} accessibilityLiveRegion="polite">Your answer could not be saved. Retry to continue; your answer will only be counted once.</T>
+            <Button label="Retry saving answer" onPress={() => { sent.current = false; setRetry((r) => r + 1); }} />
+          </View> : locked && !revealed ? <T color={P.textMuted}>Saving your answer…</T> : null}
 
           {revealed ? (
             <View style={{ gap: 8 }} accessibilityLiveRegion="polite">
@@ -150,10 +168,7 @@ export function QuickCheck({
                   </T>
                 </View>
               ) : null}
-              <View style={{ gap: 10, marginTop: 8 }}>
-                <Button label="Continue video" icon="play-arrow" onPress={onContinue} />
-                {!result.correct ? <Button label="Rewatch this part" icon="replay" kind="secondary" onPress={onRewatch} /> : null}
-              </View>
+              <LearningFeedback learning={learning} responseId={result.responseId} correct={result.correct} confidence={conf} onContinue={onContinue} onRewatch={onRewatch} />
             </View>
           ) : (
             <T variant="caption" color={P.textMuted} style={{ fontSize: 12 }}>

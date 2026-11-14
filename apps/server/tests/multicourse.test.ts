@@ -252,6 +252,7 @@ describe("research events say which course they happened in", () => {
     await addSyllabus(ann, OTHER);
     await work(s);
     const b = (await ann.json("/api/courses/mine")).course.id as string; // the one they are in now
+    await ann.rpc("postConsent", true); // phone events are research telemetry: stored only with research consent
     // sent in one batch, after they switched to B: the first two happened while they were in A
     const res = await ann.post("/api/events", { events: [play(a), play(b), play("not-their-course"), play(undefined), play(a, "consent_given")] });
     expect(res.status).toBe(200);
@@ -264,7 +265,7 @@ describe("research events say which course they happened in", () => {
   });
 
   it("never let one event's course carry over to the next event, or to the API calls after", () => {
-    replaceState(freshState());
+    replaceState({ ...freshState(), consent: "research" });
     setFixtures({ ...FIX, course: { ...FIX.course, id: "course-now" } });
     try {
       trackClientEvents([play("course-other")] as never, (id) => id === "course-other");
@@ -320,7 +321,7 @@ describe("the student's data download", () => {
     await addSyllabus(ann, OTHER);
     await work(s);
     const data = await ann.rpc<Download>("exportMyData");
-    for (const c of data.courses) expect(Object.keys(c).sort()).toEqual(["active", "code", "course_id", "name", "notes", "profile", "responses", "self_explanations"]);
+    for (const c of data.courses) expect(Object.keys(c).sort()).toEqual(["active", "code", "course_id", "learning_sessions", "name", "notes", "profile", "responses", "self_explanations"]);
     const text = JSON.stringify(data);
     expect(text).not.toContain("syllabus_text");
     expect(text).not.toContain("syllabus_path");

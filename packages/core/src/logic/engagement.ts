@@ -16,7 +16,10 @@ export function droppedEarly(progress: ProgressRecord | undefined, watched: bool
   return progress.max_t / progress.duration_s < cfg.refresher_dropoff_fraction;
 }
 
-/** Watched `refresher_replay_count` times or more: a sign it did not stick, so it is queued as a refresher. */
+/**
+ * Watched `refresher_replay_count` times or more. Not used to queue refreshers any more: a replay alone is not evidence the
+ * material did not stick (plan/engagement-feedback-implementation-plan.md). Kept for the shared course config.
+ */
 export function replayedMany(watch: WatchRecord | undefined, cfg: CourseConfig): boolean {
   return (watch?.views ?? 0) >= cfg.refresher_replay_count;
 }

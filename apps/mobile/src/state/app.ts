@@ -17,7 +17,8 @@ import { setEventEnv } from "@syllabyte/core/events";
 import { flush, getState, getVersion, hydrate, isHydrated, resetState, startVisit, subscribe, touch, type StorageAdapter } from "@syllabyte/core/store";
 import { REMOTE } from "@/data/backend";
 import { COURSE } from "@/data/course";
-import { currentVisit, endBackendSession, flushEvents, loadSession, startNewVisit, useSession } from "./session";
+import { currentVisit, endBackendSession, flushEvents, getSession, loadSession, startNewVisit, useSession } from "./session";
+import { startLearningOutbox } from "./learningOutbox";
 
 const STATE_KEY = "syllabyte.demo.v2";
 const PREFS_KEY = "syllabyte.mobile.prefs.v1";
@@ -141,6 +142,8 @@ export function startApp(): Promise<void> {
     ).then(() => {
       ready = true;
       emitPrefs();
+      // learning writes an earlier run could not send (state/learningOutbox.ts)
+      startLearningOutbox(() => getSession().status === "signedIn");
     });
     // write a pending change before the app is suspended; coming back from the background is a new visit, so what was
     // put off with "Not now" is offered again ("inactive" is a system sheet over the app, such as the file picker: not

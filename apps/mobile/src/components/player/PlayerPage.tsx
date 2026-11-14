@@ -19,19 +19,27 @@ import type { Ku } from "@/data/types";
 import { SPEEDS, speedLabel, useQuery, type Speed } from "@/state/app";
 import { colors, fonts, radius, shadow } from "@/theme/tokens";
 
-/** Watched once this share of the video has played. */
-const WATCHED_AT = 0.9;
+import type { LearningContext } from "@syllabyte/core/learning";
+import { useLearningPlayback } from "./useLearningPlayback";
+
+/** Something the feed asks the page on screen to do (an automatic prompt's action); `id` makes each one new. */
+export type PlayerCommand = { id: number; videoId: string; kind: "seek"; t: number } | { id: number; videoId: string; kind: "pause" };
 
 export function PlayerPage({
   ku,
+  learning,
   eyebrow,
   height,
   active,
   speed,
   onSpeed,
   onBlockSwipe,
+  command,
 }: {
   ku: Ku;
+  learning: LearningContext;
+  /** for the page on screen only */
+  command?: PlayerCommand | null;
   eyebrow: string;
   height: number;
   active: boolean;
@@ -51,23 +59,29 @@ export function PlayerPage({
   const pb = usePlayback(ku, { active, hold: checkOpen, rate: speed });
   const cp = variant?.video.checkpoint;
   const checkDue = !!variant && !variant.checkpoint_answered && !!cp;
-  if (check === "waiting" && checkDue && pb.time >= cp!.t) setCheck("open");
+  if (active && check === "waiting" && checkDue && pb.time >= cp!.t) setCheck("open");
   const markAnswered = useCallback(() => setAnswered(true), []);
   const blocked = active && checkOpen && !answered;
   useEffect(() => {
     if (active) onBlockSwipe(blocked);
   }, [active, blocked, onBlockSwipe]);
+  // once per opening: keyed on the item, not the checkpoint object, which a refetch of the variant replaces
+  const shownItem = checkOpen ? cp?.item_id : undefined;
   useEffect(() => {
-    if (checkOpen && cp) track("checkpoint_shown", { type: "item", id: cp.item_id });
-  }, [checkOpen, cp]);
+    if (shownItem) track("checkpoint_shown", { type: "item", id: shownItem });
+  }, [shownItem]);
 
-  // a view counts once per visit to this page, the first time it passes WATCHED_AT
-  const counted = useRef(false);
+  const playbackSave = useLearningPlayback(learning, videoId, pb.measurement, pb.restartMeasurement, active && !checkOpen);
+
+  const { seek, pause } = pb;
+  const done = useRef(0);
   useEffect(() => {
-    if (!videoId || counted.current || pb.time < ku.durationS * WATCHED_AT) return;
-    counted.current = true;
-    void api.markWatched(videoId);
-  }, [pb.time, ku.durationS, videoId]);
+    // a command waits for its own video: "rewatch" scrolls back first, then seeks
+    if (!command || command.id === done.current || command.videoId !== videoId) return;
+    done.current = command.id;
+    if (command.kind === "seek") seek(command.t);
+    else pause();
+  }, [command, seek, pause, videoId]);
 
   // how far in the student got (drives "pick up where you left off"), saved when they swipe away or leave
   const reached = useRef(0);
@@ -77,7 +91,7 @@ export function PlayerPage({
   useEffect(() => {
     if (!active || !videoId) return;
     return () => {
-      if (reached.current > 0) void api.recordProgress(videoId, reached.current, ku.durationS);
+      if (reached.current > 0) void api.recordProgress(videoId, reached.current, ku.durationS).catch(() => {});
     };
   }, [active, videoId, ku.durationS]);
 
@@ -147,9 +161,16 @@ export function PlayerPage({
         </Animated.View>
       </Pressable>
 
+      {playbackSave.failed && !checkOpen ? (
+        <Pressable accessibilityRole="button" onPress={() => { void playbackSave.flush(); }} style={{ position: "absolute", top: insets.top + 72, left: 16, right: 16, padding: 12, backgroundColor: "#18181b" }}>
+          <T color="#fff">Playback progress could not be saved. Tap to retry.</T>
+        </Pressable>
+      ) : null}
+
       {checkOpen && variant ? (
         <QuickCheck
           variant={variant}
+          learning={learning}
           topInset={insets.top + 72}
           onAnswered={markAnswered}
           onContinue={() => setCheck("closed")}

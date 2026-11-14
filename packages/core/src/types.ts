@@ -1,3 +1,4 @@
+import type { LearningSession } from "./learning";
 /**
  * Shared types. The "fixture" half mirrors packages/common/syllabyte_common/learner.py
  * (keep both in sync); the rest are app-state and view models. From Phase 1 the API
@@ -243,6 +244,8 @@ export interface QuestionNeed {
 // ------------------------------------------------------------ app state
 
 export interface ResponseRecord {
+  attempt_id?: string;
+  learning_session_id?: string;
   id: string;
   item_id: string;
   topic_id: string;
@@ -439,7 +442,14 @@ export interface AppEvent {
      */
     course_id?: string | null;
   };
+  /** when it happened: the phone's clock for its own events (sent later in batches), else the server's */
   timestamp: string;
+  /** when the server received a phone event; absent on events logged where they happened */
+  received_at?: string;
+  /** the phone's clock was implausible (ahead of the server, or long behind): `timestamp` is the receipt time instead */
+  clock_anomaly?: boolean;
+  /** a phone event from before events carried their own id and time: `timestamp` is when it was received */
+  legacy?: boolean;
 }
 
 export interface DemoState {
@@ -463,6 +473,7 @@ export interface DemoState {
   /** demo override: the lecture treated as upcoming (null = from the schedule) */
   upcoming_lecture: number | null;
   responses: ResponseRecord[];
+  learning_sessions: Record<string, LearningSession>;
   playlist: PlaylistState;
   watched: Record<string, WatchRecord>;
   next_session: NextSessionTask[];

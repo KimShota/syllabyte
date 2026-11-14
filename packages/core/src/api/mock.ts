@@ -1,3 +1,4 @@
+import { learningApi, validateLearningContext } from "./learning";
 import { INSTRUMENTS_VERSION } from "../content/instruments";
 import { track } from "../events";
 import { fixtures, itemById, lectureByN, slideText, slideUrl, topicById, videoById } from "../fixtures";
@@ -344,6 +345,7 @@ function precheck(): PrecheckView | null {
 // --------------------------------------------------------------------- api
 
 export const mockApi: Api = {
+  ...learningApi((videoId) => mockApi.markWatched(videoId)),
   async getMe() {
     levelNewKus();
     const s = S();
@@ -779,14 +781,22 @@ export const mockApi: Api = {
   },
 
   async postCheckpointAnswer(a) {
+    if (a.learning) validateLearningContext(a.learning);
+    const previous = a.attemptId ? S().responses.find((r) => r.attempt_id === a.attemptId) : undefined;
+    if (previous) {
+      if (previous.video_id !== a.videoId || previous.choice !== a.choice || previous.confidence !== a.confidence || previous.hint_used !== a.hintUsed || previous.learning_session_id !== a.learning?.sessionId) throw new Error("Checkpoint attempt changed");
+      return { correct: previous.correct === true, queuedForTomorrow: previous.correct === true && previous.confidence === "guess", responseId: previous.id };
+    }
     const video = videoById(a.videoId);
     const item = itemById(video.checkpoint.item_id);
+    if (!Number.isInteger(a.choice) || a.choice < 0 || a.choice >= item.options.length || !["certain", "pretty", "guess"].includes(a.confidence) || !Number.isFinite(a.latencyMs) || a.latencyMs < 0) throw new Error("Invalid checkpoint answer");
     const correct = a.choice === item.correct_index;
-    addResponse(item, a.choice, { confidence: a.confidence, hintUsed: a.hintUsed, latencyMs: a.latencyMs });
+    const response = addResponse(item, a.choice, { confidence: a.confidence, hintUsed: a.hintUsed, latencyMs: a.latencyMs });
+    mutate(() => { response.attempt_id = a.attemptId; response.learning_session_id = a.learning?.sessionId; response.video_id = video.id; });
     const queued = correct && a.confidence === "guess";
     if (queued) mutate((s) => { s.flags[`guess:${a.videoId}`] = true; });
     track("checkpoint_answered", { type: "item", id: item.id }, { correct, confidence: a.confidence, hint_used: a.hintUsed, latency_ms: a.latencyMs });
-    return { correct, queuedForTomorrow: queued };
+    return { correct, queuedForTomorrow: queued, responseId: response.id };
   },
 
   async skipCheckpoint(videoId) {
@@ -950,7 +960,7 @@ export const mockApi: Api = {
     return {
       profile: { levels: s.levels, made: s.made, sittings: s.sittings, overall_level: overall(), consent: s.consent, condition: s.condition },
       responses: s.responses, events: s.events, notes: s.notes, self_explanations: s.self_explanations, settings: s.settings,
-      study: s.study,
+      study: s.study, learning_sessions: s.learning_sessions,
     };
   },
 

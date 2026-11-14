@@ -1,3 +1,4 @@
+import type { DriftAnswer, LearningContext, LearningPlaybackInput, LearningCheckInInput, LearningCheckIn, LearningPrompt, LearningReflection, FeedbackAction, PromptAction, SessionEndReason, SessionSummary } from "../learning";
 import type { Instrument } from "../content/instruments";
 import type {
   AppSettings, BatteryRecord, CalibrationView, Choice, Condition, Confidence, Course, CourseMapView, DemoState, Difficulty, Item,
@@ -42,6 +43,8 @@ export interface BatteryView {
 }
 
 export interface CheckpointAnswerInput {
+  attemptId?: string;
+  learning?: LearningContext;
   videoId: string;
   choice: number;
   confidence: Confidence;
@@ -50,6 +53,26 @@ export interface CheckpointAnswerInput {
 }
 
 export interface Api {
+  /** Saves a playback snapshot (cumulative, so retries and reordering are harmless). `completedNow`: this one made the video
+   *  count as watched (90% unique coverage), so screens should refresh. */
+  recordLearningPlayback(input: LearningPlaybackInput): Promise<{ completedNow: boolean }>;
+  postLearningCheckIn(input: LearningCheckInInput): Promise<LearningCheckIn>;
+  recordLearningFeedbackAction(context: LearningContext, checkInId: string, action: FeedbackAction): Promise<void>;
+  getLearningReflection(context: LearningContext): Promise<LearningReflection>;
+  /** The student came back to the app after `seconds` away, on `videoId` (null: not on a video). */
+  recordLearningAway(context: LearningContext, input: { id: string; seconds: number; videoId: string | null }): Promise<void>;
+  /** The feed is still open with the app in front (sent about once a minute): the session must not end as idle. Says
+   *  whether it had already ended (e.g. no keep-alive got through for 10 minutes), so the phone can start a new one. */
+  keepLearningSessionOpen(context: LearningContext): Promise<{ ended: boolean }>;
+  /** A decision point (moved to the next video, came back to the app): the prompt to offer now, if any. Call it after the
+   *  playback saves of the page left behind have been acknowledged. */
+  evaluateLearningBoundary(context: LearningContext, input: { reason: "next_video" | "return"; videoId: string }): Promise<LearningPrompt | null>;
+  respondToLearningPrompt(context: LearningContext, promptId: string, response: { answer?: DriftAnswer; action?: PromptAction }): Promise<void>;
+  /** Ends a session; returns the reflection to show, or null when there is nothing worth reflecting on. */
+  finishLearningSession(context: LearningContext, reason: SessionEndReason): Promise<SessionSummary | null>;
+  /** The latest session reflection not yet seen (ending sessions left idle for 10 minutes first), or null. */
+  getPendingReflection(): Promise<SessionSummary | null>;
+  dismissReflection(sessionId: string): Promise<void>;
   // session / first run
   getMe(): Promise<Me>;
   postConsent(research: boolean): Promise<void>;
@@ -97,7 +120,7 @@ export interface Api {
 
   // player
   getVariant(videoId: string): Promise<VariantView>;
-  postCheckpointAnswer(a: CheckpointAnswerInput): Promise<{ correct: boolean; queuedForTomorrow: boolean }>;
+  postCheckpointAnswer(a: CheckpointAnswerInput): Promise<{ correct: boolean; queuedForTomorrow: boolean; responseId: string }>;
   skipCheckpoint(videoId: string): Promise<void>;
   markWatched(videoId: string): Promise<void>;
   /** How far into the video the student has got; drives "pick up where you left off" (D13). */

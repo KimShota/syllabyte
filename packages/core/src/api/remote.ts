@@ -38,6 +38,8 @@ export interface BackendOptions {
 
 /** Methods that only read (the rest may change data, so the screens refetch after them). */
 const READS = /^(get|list|export)[A-Z]/;
+/** Writes that no screen shows straight away (a playing video's observations, every few seconds): no refetch after them. */
+const QUIET = new Set(["recordLearningPlayback", "recordLearningAway", "evaluateLearningBoundary", "respondToLearningPrompt", "keepLearningSessionOpen"]);
 
 export interface SignedIn {
   token: string;
@@ -137,7 +139,7 @@ export function createBackend(o: BackendOptions) {
       if (typeof method !== "string" || method === "then") return undefined;
       return async (...args: unknown[]) => {
         const data = await request(`/api/rpc/${method}`, { args }, true);
-        if (!READS.test(method)) o.onChanged();
+        if (!READS.test(method) && !QUIET.has(method)) o.onChanged();
         return data.result;
       };
     },
@@ -173,8 +175,11 @@ export function createBackend(o: BackendOptions) {
       }
       return (await res.json()) as { email: string; role: SignedIn["role"]; participant_code: string; study_participant?: boolean };
     },
-    async sendEvents(events: ClientEvent[]): Promise<void> {
-      await request("/api/events", { events }, true);
+    /** Sends a batch of the phone's events; resolves with the ids the server acknowledged (stored now or before), or
+     *  undefined from an older server that names none (it took the whole batch, and resending would store it twice). */
+    async sendEvents(events: ClientEvent[]): Promise<string[] | undefined> {
+      const data = await request("/api/events", { events, sent_at: Date.now() }, true);
+      return Array.isArray(data.ids) ? data.ids.filter((id): id is string => typeof id === "string") : undefined;
     },
     /** The student's uploaded course and its slides (plan/slide-uploads-plan.md). */
     courses: {
@@ -218,50 +223,126 @@ export function createBackend(o: BackendOptions) {
 
 export type Backend = ReturnType<typeof createBackend>;
 
+/** Where the event queue keeps what is waiting, so a closed app or a long time offline loses nothing (AsyncStorage on the phone). */
+export interface QueueStorage {
+  load(): Promise<string | null>;
+  save(raw: string): Promise<void>;
+}
+
 /**
- * Collects UI events and sends them in batches: when `max` are waiting, or `delayMs` after the first one. A batch
- * that fails goes back in the queue (up to `keep` events), so a dropped connection loses nothing short of that.
+ * Collects UI events and sends them in batches: when `max` are waiting, or `delayMs` after the first one
+ * (plan/engagement-feedback-implementation-plan.md, "Reliable delivery"). Each event carries an id made when it happened;
+ * an event leaves the queue only once the server acknowledges that id (`send` resolves with them), so a lost answer
+ * means a resend, and the server stores a resent event once. With `storage` the queue survives the app closing. A batch
+ * that fails is retried after a growing delay, and up to `keep` events wait; beyond that the oldest go, counted in
+ * `dropped` (missing data the analysis should know about).
+ *
+ * `send` resolving with nothing (an older server) counts as acknowledging the whole batch.
  */
-export function createEventQueue(send: (events: ClientEvent[]) => Promise<void>, o: { max?: number; delayMs?: number; keep?: number } = {}) {
+export function createEventQueue(
+  send: (events: ClientEvent[]) => Promise<string[] | void>,
+  o: { max?: number; delayMs?: number; keep?: number; storage?: QueueStorage; retryMs?: number[] } = {},
+) {
   const max = o.max ?? 20;
   const delayMs = o.delayMs ?? 4000;
   const keep = o.keep ?? 500;
+  const retryMs = o.retryMs ?? [5_000, 15_000, 60_000, 300_000];
   let queue: ClientEvent[] = [];
   let timer: ReturnType<typeof setTimeout> | null = null;
-  let sending = false;
+  let sending: Promise<void> | null = null;
+  let failures = 0;
+  let dropped = 0;
+  let loaded: Promise<void> | null = null;
+
+  const load = () =>
+    (loaded ??= (o.storage?.load() ?? Promise.resolve(null)).then(
+      (raw) => {
+        try {
+          const saved = raw ? (JSON.parse(raw) as ClientEvent[]) : [];
+          if (Array.isArray(saved)) queue = trim([...saved, ...queue]);
+        } catch {
+          /* unreadable: start empty */
+        }
+      },
+      () => {},
+    ));
+  const persist = () => o.storage?.save(JSON.stringify(queue)).catch(() => {});
+  function trim(q: ClientEvent[]): ClientEvent[] {
+    if (q.length <= keep) return q;
+    dropped += q.length - keep;
+    return q.slice(-keep);
+  }
+  function schedule(ms: number) {
+    if (timer) return;
+    timer = setTimeout(() => {
+      timer = null;
+      void flush();
+    }, ms);
+  }
 
   async function flush(): Promise<void> {
     if (timer) {
       clearTimeout(timer);
       timer = null;
     }
-    if (sending || !queue.length) return;
-    sending = true;
-    const batch = queue.slice(0, 200);
-    queue = queue.slice(batch.length);
-    try {
-      await send(batch);
-    } catch {
-      queue = [...batch, ...queue].slice(-keep);
-    } finally {
-      sending = false;
-    }
-    if (queue.length >= max) void flush();
+    if (sending) return sending;
+    sending = (async () => {
+      await load();
+      while (queue.length) {
+        const batch = queue.slice(0, 200);
+        let acked: Set<string> | null;
+        try {
+          const ids = await send(batch);
+          acked = ids ? new Set(ids) : null;
+        } catch {
+          failures += 1;
+          schedule(retryMs[Math.min(failures - 1, retryMs.length - 1)]);
+          return;
+        }
+        // drop what the server acknowledged (all of the batch for an older server that names none); anything else in
+        // the batch stays for the next try
+        const sent = new Set(batch);
+        queue = queue.filter((ev) => {
+          if (!sent.has(ev)) return true; // came in while this batch was out
+          if (acked === null || !ev.event_id) return false; // an older server, or an event it can't name: sent is all there is
+          return !acked.has(ev.event_id); // kept until the server has it
+        });
+        void persist();
+        if (acked && batch.every((ev) => ev.event_id && !acked!.has(ev.event_id))) {
+          // nothing of it was acknowledged: back off as for a failure, rather than resending every few seconds
+          failures += 1;
+          schedule(retryMs[Math.min(failures - 1, retryMs.length - 1)]);
+          return;
+        }
+        failures = 0;
+        if (queue.length < max) break;
+      }
+      if (queue.length) schedule(delayMs);
+    })().finally(() => {
+      sending = null;
+    });
+    return sending;
   }
 
   return {
     push(ev: ClientEvent): void {
-      queue.push(ev);
+      queue = trim([...queue, ev]);
+      void persist();
       if (queue.length >= max) void flush();
-      else if (!timer) timer = setTimeout(() => void flush(), delayMs);
+      else schedule(delayMs);
     },
     flush,
+    /** Sends what an earlier run of the app left (call once at launch). */
+    restore: (): Promise<void> => load().then(() => (queue.length ? flush() : undefined)),
     /** forget what is waiting (sign-out: the next student must not receive them) */
     clear(): void {
       queue = [];
       if (timer) clearTimeout(timer);
       timer = null;
+      void persist();
     },
     size: () => queue.length,
+    /** events lost because more than `keep` were waiting */
+    dropped: () => dropped,
   };
 }

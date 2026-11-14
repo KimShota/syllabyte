@@ -21,15 +21,9 @@ export function calibrationBlock1(responses: ResponseRecord[]): Block1 {
   });
   const sentences: string[] = [];
   if (rated.length >= MIN_RATED) {
-    const by = Object.fromEntries(rows.map((r) => [r.confidence, r])) as Record<Confidence, (typeof rows)[number]>;
-    const rate = (x: { right: number; n: number }) => (x.n ? x.right / x.n : 0);
-    if (by.certain.n >= 2 && by.pretty.n >= 2 && rate(by.certain) <= rate(by.pretty)) {
-      sentences.push(`Your “Certain” answers were right ${by.certain.right} times in ${by.certain.n}, no better than “Pretty sure”.`);
+    for (const row of rows) {
+      if (row.n > 0) sentences.push(`When you selected “${row.label}”, ${row.right} of ${row.n} answers were correct.`);
     }
-    if (by.guess.n >= 2 && rate(by.guess) < 0.5) {
-      sentences.push("Your guesses were honest: you were usually wrong when you said so.");
-    }
-    if (sentences.length === 0) sentences.push("Your confidence matches your results well.");
   }
   return { ready: rated.length >= MIN_RATED, rated: rated.length, rows, sentences };
 }
