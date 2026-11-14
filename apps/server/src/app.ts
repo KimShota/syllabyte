@@ -67,6 +67,8 @@ export interface Deps {
 type Env = { Variables: { user: User; token: string } };
 
 const MAX_EVENTS = 200;
+/** one event, as JSON: a larger one is refused (an event is a verb, an object and a small result) */
+const MAX_EVENT_BYTES = 4096;
 const isObject = (x: unknown): x is Record<string, unknown> => typeof x === "object" && x !== null && !Array.isArray(x);
 
 async function json(c: Context): Promise<Record<string, unknown>> {
@@ -212,14 +214,18 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
 
   /** The phone's own interaction events (play, seek, sheets), in batches. */
   app.post("/api/events", async (c) => {
-    const { events } = await json(c);
+    const { events, sent_at } = await json(c);
     if (!Array.isArray(events) || events.length > MAX_EVENTS) return c.json({ error: "events must be an array of at most 200" }, 400);
     const good = events.filter(
-      (e): e is ClientEvent => isObject(e) && typeof e.verb === "string" && isObject(e.object) && typeof (e.object as { type?: unknown }).type === "string",
+      (e): e is ClientEvent => isObject(e) && typeof e.verb === "string" && isObject(e.object) && typeof (e.object as { type?: unknown }).type === "string"
+        && JSON.stringify(e).length <= MAX_EVENT_BYTES,
     );
+    // a malformed event can never be stored, so its id is acknowledged too: the phone would otherwise send it forever
+    const malformed = events.filter((e) => !good.includes(e as ClientEvent) && isObject(e) && typeof e.event_id === "string").map((e) => (e as { event_id: string }).event_id);
     const mine = new Set(courses.coursesOf(c.get("user").id));
-    await runner.run(c.get("user"), c.req.header("X-Visit") ?? null, () => trackClientEvents(good, (id) => mine.has(id)));
-    return c.json({ accepted: good.length });
+    const acked = await runner.run(c.get("user"), c.req.header("X-Visit") ?? null,
+      () => trackClientEvents(good, (id) => mine.has(id), typeof sent_at === "number" ? sent_at : undefined));
+    return c.json({ accepted: good.length, ids: [...acked, ...malformed] });
   });
 
   /** The study questionnaire export (plan/study-instruments-plan.md I12): researchers only, every consenting participant. */

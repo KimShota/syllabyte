@@ -23,6 +23,17 @@ export class PlaybackMeter {
 
   boundary() { this.previous = null; }
 
+  /**
+   * Starts counting afresh (a new learning session began while this video stayed on screen): what played so far belongs
+   * to the old session's snapshot, so the new one must not count it again. Playback in progress carries on.
+   */
+  restart() {
+    this.intervals = [];
+    this.elapsed = 0;
+    this.exposure = 0;
+    this.sequence = 0;
+  }
+
   sample(position: number, at: number, running: boolean, rate: number) {
     if (!Number.isFinite(position) || !Number.isFinite(at) || !Number.isFinite(rate) || rate <= 0) {
       this.boundary();

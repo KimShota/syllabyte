@@ -113,12 +113,61 @@ describe("events", () => {
         { nonsense: true },
       ],
     });
-    expect(await res.json()).toEqual({ accepted: 2 });
+    expect(await res.json()).toEqual({ accepted: 2, ids: [] }); // events from an older phone carry no ids to acknowledge
     const data = await ann.rpc<{ events: { verb: string; context: { screen: string; participant_code: string; device: string } }[] }>("exportMyData");
     const play = data.events.find((e) => e.verb === "video_play")!;
     expect(play.context.screen).toBe("/player/v1");
     expect(play.context.participant_code).toMatch(/^S-/);
     expect(play.context.device).toBe("mobile");
+  });
+
+  it("stores a resent event once, acknowledges it by id, and times it by the event's age on the phone's own clock", async () => {
+    const s = makeServer();
+    const ann = await s.signIn("ann@nyu.edu");
+    await ann.rpc("postConsent", true);
+    // the phone's clock is a day behind: only the age (sent_at - occurred_at = 30 s) is used
+    const phoneNow = Date.now() - 86_400_000;
+    const batch = {
+      sent_at: phoneNow,
+      events: [
+        { verb: "video_play", object: { type: "video", id: "v1" }, screen: "/p", event_id: "ev-a1", occurred_at: phoneNow - 30_000 },
+        { verb: "video_pause", object: { type: "video", id: "v1" }, screen: "/p", event_id: "ev-a2", occurred_at: phoneNow + 60_000 }, // after it was sent: impossible
+        { verb: "video_seek", object: { type: "video", id: "v1" }, screen: "/p" }, // an older phone's
+        { nonsense: true, event_id: "ev-bad" },
+      ],
+    };
+    const first = await (await ann.post("/api/events", batch)).json();
+    expect(first).toEqual({ accepted: 3, ids: ["ev-a1", "ev-a2", "ev-bad"] });
+    // the answer was lost and the phone sends the batch again: nothing is stored twice
+    const again = (await (await ann.post("/api/events", { ...batch, events: batch.events.slice(0, 2) })).json()) as { ids: string[] };
+    expect(again.ids).toEqual(["ev-a1", "ev-a2"]);
+    type Ev = { id: string; verb: string; timestamp: string; received_at?: string; clock_anomaly?: boolean; legacy?: boolean };
+    const events = (await ann.rpc<{ events: Ev[] }>("exportMyData")).events;
+    expect(events.filter((e) => e.id === "ev-a1")).toHaveLength(1);
+    const play = events.find((e) => e.id === "ev-a1")!;
+    const age = Date.parse(play.received_at!) - Date.parse(play.timestamp);
+    expect(age).toBeGreaterThanOrEqual(29_000);
+    expect(age).toBeLessThanOrEqual(31_000);
+    expect(events.find((e) => e.id === "ev-a2")).toMatchObject({ clock_anomaly: true });
+    expect(events.find((e) => e.verb === "video_seek")).toMatchObject({ legacy: true });
+  });
+
+  it("acknowledges but does not store the events of a student who declined research, so late packets restore nothing", async () => {
+    const s = makeServer();
+    const ann = await s.signIn("ann@nyu.edu");
+    await ann.rpc("postConsent", false);
+    const res = (await (await ann.post("/api/events", { sent_at: Date.now(), events: [{ verb: "video_play", object: { type: "video" }, event_id: "ev-x", occurred_at: Date.now() }] })).json()) as { ids: string[] };
+    expect(res.ids).toEqual(["ev-x"]);
+    const events = (await ann.rpc<{ events: { id: string }[] }>("exportMyData")).events;
+    expect(events.some((e) => e.id === "ev-x")).toBe(false);
+  });
+
+  it("refuses an oversized event", async () => {
+    const s = makeServer();
+    const ann = await s.signIn("ann@nyu.edu");
+    await ann.rpc("postConsent", true);
+    const big = { verb: "video_play", object: { type: "video" }, result: { blob: "x".repeat(5000) }, event_id: "ev-big", occurred_at: Date.now() };
+    expect(await (await ann.post("/api/events", { events: [big] })).json()).toEqual({ accepted: 0, ids: ["ev-big"] });
   });
 
   it("refuses a huge batch", async () => {

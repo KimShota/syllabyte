@@ -15,10 +15,28 @@ const SAVE_EVERY_MS = 5000;
  * plays); screens are woken when a save completes the video or when the page stops being the one playing, so the
  * reflection and the playlist see what was watched.
  */
-export function useLearningPlayback(learning: LearningContext, videoId: string | null, measurement: () => PlaybackSnapshot, active: boolean) {
-  const [playbackId] = useState(() => uid("playback"));
+export function useLearningPlayback(
+  learning: LearningContext,
+  videoId: string | null,
+  measurement: () => PlaybackSnapshot,
+  restartMeasurement: () => void,
+  active: boolean,
+) {
+  // one visit id per session: a new session (the old one ended while this page stayed mounted) is a new visit
+  const [visit, setVisit] = useState(() => ({ sessionId: learning.sessionId, playbackId: uid("playback") }));
+  if (visit.sessionId !== learning.sessionId) setVisit({ sessionId: learning.sessionId, playbackId: uid("playback") });
+  const playbackId = visit.playbackId;
   const [failed, setFailed] = useState(false);
   const acknowledged = useRef(-1);
+  // After the old session's last snapshot was taken (the cleanup below runs first, with the old session), count afresh,
+  // so the new session doesn't count again what played before it.
+  const counting = useRef(learning.sessionId);
+  useEffect(() => {
+    if (counting.current === learning.sessionId) return;
+    counting.current = learning.sessionId;
+    restartMeasurement();
+    acknowledged.current = -1;
+  }, [learning.sessionId, restartMeasurement]);
   const flush = useCallback(async (wake = false) => {
     const snapshot = measurement();
     // the first save goes even with nothing played: a video swiped straight past is a visit too (moving on early)

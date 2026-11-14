@@ -65,6 +65,17 @@ describe("PlaybackMeter", () => {
     expect(m.snapshot().exposure_s).toBe(0);
   });
 
+  it("restart() starts a fresh count without losing playback in progress", () => {
+    const m = new PlaybackMeter(60, "video");
+    const at = play(m, 0, 10, 0);
+    const before = m.snapshot();
+    m.restart();
+    expect(m.snapshot()).toMatchObject({ sequence: 0, intervals: [], exposure_s: 0, elapsed_s: 0, position_s: 10 });
+    m.sample(10.25, at + 250, true, 1); // the video kept playing across the restart
+    expect(m.snapshot().intervals).toEqual([[10, 10.25]]);
+    expect(before.exposure_s).toBeCloseTo(10, 5);
+  });
+
   it("ignores a rate change mid-step and non-finite input", () => {
     const m = new PlaybackMeter(60, "video");
     m.sample(0, 0, true, 1);

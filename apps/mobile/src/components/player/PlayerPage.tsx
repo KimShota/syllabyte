@@ -65,11 +65,13 @@ export function PlayerPage({
   useEffect(() => {
     if (active) onBlockSwipe(blocked);
   }, [active, blocked, onBlockSwipe]);
+  // once per opening: keyed on the item, not the checkpoint object, which a refetch of the variant replaces
+  const shownItem = checkOpen ? cp?.item_id : undefined;
   useEffect(() => {
-    if (checkOpen && cp) track("checkpoint_shown", { type: "item", id: cp.item_id });
-  }, [checkOpen, cp]);
+    if (shownItem) track("checkpoint_shown", { type: "item", id: shownItem });
+  }, [shownItem]);
 
-  const playbackSave = useLearningPlayback(learning, videoId, pb.measurement, active && !checkOpen);
+  const playbackSave = useLearningPlayback(learning, videoId, pb.measurement, pb.restartMeasurement, active && !checkOpen);
 
   const { seek, pause } = pb;
   const done = useRef(0);

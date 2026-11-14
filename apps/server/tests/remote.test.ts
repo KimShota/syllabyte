@@ -205,6 +205,101 @@ describe("the event queue", () => {
     expect(q.size()).toBe(0);
   });
 
+  const withId = (n: number): ClientEvent => ({ ...ev(n), event_id: `ev-${n}`, occurred_at: 1000 + n });
+
+  it("keeps an event until the server acknowledges its id", async () => {
+    const sent: string[][] = [];
+    let ack = (batch: ClientEvent[]) => batch.map((e) => e.event_id!).filter((id) => id !== "ev-2"); // ev-2 not acknowledged
+    const q = createEventQueue(async (batch) => {
+      sent.push(batch.map((e) => e.event_id!));
+      return ack(batch);
+    }, { delayMs: 10_000, retryMs: [10_000] });
+    [1, 2, 3].forEach((n) => q.push(withId(n)));
+    await q.flush();
+    expect(q.size()).toBe(1);
+    ack = (batch) => batch.map((e) => e.event_id!);
+    await q.flush();
+    expect(sent).toEqual([["ev-1", "ev-2", "ev-3"], ["ev-2"]]);
+    expect(q.size()).toBe(0);
+  });
+
+  it("survives the app closing: a new queue restores what the old one stored and sends it", async () => {
+    let raw: string | null = null;
+    const storage = { load: async () => raw, save: async (r: string) => { raw = r; } };
+    const offline = createEventQueue(async () => { throw new Error("offline"); }, { storage, delayMs: 10_000, retryMs: [60_000] });
+    offline.push(withId(1));
+    offline.push(withId(2));
+    await offline.flush();
+    offline.clear = () => {}; // the app was closed, not signed out
+    const sent: ClientEvent[] = [];
+    const next = createEventQueue(async (batch) => { sent.push(...batch); return batch.map((e) => e.event_id!); }, { storage });
+    await next.restore();
+    expect(sent.map((e) => e.event_id)).toEqual(["ev-1", "ev-2"]);
+    expect(JSON.parse(raw!)).toEqual([]);
+  });
+
+  it("retries a failed batch by itself after a delay, without waiting for the next event", async () => {
+    vi.useFakeTimers();
+    let up = false;
+    const sent: ClientEvent[] = [];
+    const q = createEventQueue(async (batch) => {
+      if (!up) throw new Error("offline");
+      sent.push(...batch);
+      return batch.map((e) => e.event_id!);
+    }, { delayMs: 1000, retryMs: [5000] });
+    q.push(withId(1));
+    await vi.advanceTimersByTimeAsync(1001);
+    expect(sent).toEqual([]);
+    up = true;
+    await vi.advanceTimersByTimeAsync(5001);
+    expect(sent.map((e) => e.event_id)).toEqual(["ev-1"]);
+    vi.useRealTimers();
+  });
+
+  it("an older server that names no ids took the whole batch: nothing is resent", async () => {
+    const sent: ClientEvent[][] = [];
+    const q = createEventQueue(async (batch) => { sent.push(batch); return undefined; }, { delayMs: 10_000 });
+    q.push(withId(1));
+    q.push(withId(2));
+    await q.flush();
+    await q.flush();
+    expect(sent).toHaveLength(1);
+    expect(q.size()).toBe(0);
+  });
+
+  it("a batch the server answers but acknowledges none of backs off like a failure, growing the delay", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const q = createEventQueue(async () => { calls += 1; return []; }, { delayMs: 1000, retryMs: [5000, 20_000, 60_000] });
+    q.push(withId(1));
+    await vi.advanceTimersByTimeAsync(1001); // first try
+    await vi.advanceTimersByTimeAsync(5001); // retry after 5 s
+    await vi.advanceTimersByTimeAsync(5001); // not yet: the next wait is 20 s
+    expect(calls).toBe(2);
+    await vi.advanceTimersByTimeAsync(15_001);
+    expect(calls).toBe(3);
+    q.clear();
+    vi.useRealTimers();
+  });
+
+  it("an older server's answer to sendEvents names no ids", async () => {
+    const fetchOld = (async () => new Response(JSON.stringify({ accepted: 1 }), { status: 200 })) as unknown as typeof fetch;
+    const backend = createBackend({ base: "http://old", token: () => "t", visit: () => "v", onUnauthorized: () => {}, onChanged: () => {}, onConnection: () => {}, fetch: fetchOld });
+    expect(await backend.sendEvents([withId(1)])).toBeUndefined();
+  });
+
+  it("the phone's events reach the server once even when a batch is resent", async () => {
+    const s = makeServer();
+    const p = phone(s);
+    await p.signIn("ann@nyu.edu");
+    await p.backend.api.postConsent(true);
+    const batch = [withId(7)].map((e) => ({ ...e, occurred_at: Date.now() }));
+    expect(await p.backend.sendEvents(batch)).toEqual(["ev-7"]);
+    expect(await p.backend.sendEvents(batch)).toEqual(["ev-7"]);
+    const data = (await p.backend.api.exportMyData()) as { events: { id: string }[] };
+    expect(data.events.filter((e) => e.id === "ev-7")).toHaveLength(1);
+  });
+
   it("drops the oldest beyond its cap, and forgets everything on clear", async () => {
     const q = createEventQueue(async () => { throw new Error("offline"); }, { max: 1000, keep: 3, delayMs: 10_000 });
     for (let i = 1; i <= 5; i++) {

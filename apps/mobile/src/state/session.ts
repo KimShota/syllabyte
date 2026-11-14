@@ -89,7 +89,13 @@ const backend = BACKEND_BASE
 /** The course and upload calls (plan/slide-uploads-plan.md); null without a backend. */
 export const courseCalls = backend?.courses ?? null;
 
-const events = backend ? createEventQueue(backend.sendEvents) : null;
+const EVENTS_KEY = "syllabyte.eventQueue.v1";
+// research events wait in storage until the server acknowledges them, so a closed app or a dead connection loses none
+const events = backend
+  ? createEventQueue(backend.sendEvents, {
+      storage: { load: () => AsyncStorage.getItem(EVENTS_KEY), save: (raw) => AsyncStorage.setItem(EVENTS_KEY, raw) },
+    })
+  : null;
 if (backend && events) {
   setApi(backend.api);
   setEventSink(events.push);
@@ -126,10 +132,14 @@ export async function loadSession(): Promise<void> {
   try {
     const who = await backend.session();
     setSession({ status: "signedIn", email: who.email });
+    void events?.restore();
     await ensureConsent(who.study_participant);
   } catch (e) {
     // 401 already signed them out. If the server just can't be reached, keep the token and let them retry.
-    if (e instanceof ApiError && e.status === 0) setSession({ status: "signedIn", email: null });
+    if (e instanceof ApiError && e.status === 0) {
+      setSession({ status: "signedIn", email: null });
+      void events?.restore();
+    }
   }
 }
 

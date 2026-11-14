@@ -442,7 +442,14 @@ export interface AppEvent {
      */
     course_id?: string | null;
   };
+  /** when it happened: the phone's clock for its own events (sent later in batches), else the server's */
   timestamp: string;
+  /** when the server received a phone event; absent on events logged where they happened */
+  received_at?: string;
+  /** the phone's clock was implausible (ahead of the server, or long behind): `timestamp` is the receipt time instead */
+  clock_anomaly?: boolean;
+  /** a phone event from before events carried their own id and time: `timestamp` is when it was received */
+  legacy?: boolean;
 }
 
 export interface DemoState {
