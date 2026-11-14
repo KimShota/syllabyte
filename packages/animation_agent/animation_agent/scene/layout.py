@@ -96,10 +96,7 @@ def _heights(kind: str, views: list[dict], width: float) -> tuple[float, float]:
     if kind == "container":
         return title + CONTAINER_H, title + 0.1 + CONTAINER_LABEL_H + CONTAINER_MAX
     if kind in MATH_KINDS:
-        from animation_agent.scene import math_layout as M
-
-        return {"axes": M.axes_heights, "venn": M.venn_heights, "geometry": M.geometry_heights,
-                "numberline": M.numberline_heights, "surface": M.surface_heights}[kind](views, width, title)
+        return _view_layouts()[kind][0](views, width, title)
     if views[0]["layout"] == "graph":
         return title + LEVEL_H, title + width  # about square at most: taller only stretches the links
     _unit, _gap, levels = _tree_shape(views, width)
@@ -123,9 +120,25 @@ def _fill(h: list[float], most: list[float], which: list[int], spare: float) -> 
 
 _WHAT = {"cells": "an array", "code": "the code panel", "container": "a container", "nodes": "the diagram",
          "axes": "the axes", "venn": "the Venn diagram", "geometry": "the figure", "numberline": "the number line",
-         "surface": "the 3D view"}
-MATH_KINDS = ("axes", "venn", "geometry", "numberline", "surface")
+         "surface": "the 3D view", "grid": "the table", "flow": "the flow diagram", "timeline": "the timeline",
+         "sequence": "the message diagram", "circuit": "the circuit", "memory": "the memory diagram"}
+# views laid out by their own module (scene/math_layout.py, scene/diagram_layout.py): (heights, layout) each
+MATH_KINDS = ("axes", "venn", "geometry", "numberline", "surface", "grid", "flow", "timeline", "sequence", "circuit",
+              "memory")
 MAIN_KINDS = ("nodes", "container") + MATH_KINDS  # what gets the room first
+
+
+def _view_layouts() -> dict:
+    from animation_agent.scene import diagram_layout as D
+    from animation_agent.scene import math_layout as M
+
+    return {"axes": (M.axes_heights, M.axes_layout), "venn": (M.venn_heights, M.venn_layout),
+            "geometry": (M.geometry_heights, M.geometry_layout),
+            "numberline": (M.numberline_heights, M.numberline_layout),
+            "surface": (M.surface_heights, M.surface_layout), "grid": (D.grid_heights, D.grid_layout),
+            "flow": (D.flow_heights, D.flow_layout), "timeline": (D.timeline_heights, D.timeline_layout),
+            "sequence": (D.sequence_heights, D.sequence_layout), "circuit": (D.circuit_heights, D.circuit_layout),
+            "memory": (D.memory_heights, D.memory_layout)}
 
 
 def plan_regions(snaps: list[dict], width: float, height: float, top: float) -> dict[str, Region]:
@@ -149,6 +162,11 @@ def plan_regions(snaps: list[dict], width: float, height: float, top: float) -> 
     most = [max(hi for _, hi in band) for band in sizes]
     spare = height - sum(h) - GAP * (len(bands) - 1)
     if spare < -1e-6:
+        if len(names) == 1 and kinds[names[0]] in MATH_KINDS:  # one view too big: its own reason says what to cut
+            try:
+                _view_layouts()[kinds[names[0]]][1](by_name[names[0]], Region(0.0, top, width, height))
+            except PictureError:
+                raise
         need = ", ".join(f"{_WHAT[kinds[b[0]]]} {x:.1f}" for b, x in zip(bands, h))
         raise PictureError(f"these views don't fit on screen together: they need {sum(h):.1f} units of the "
                            f"{height:.1f} ({need}); use fewer or smaller ones")
@@ -776,10 +794,7 @@ def _plan(snaps: list[dict], width: float, height: float, top: float) -> Picture
                         raise PictureError(f"a link label can't be placed clear of the tree in snapshot {i + 1}; "
                                            "use shorter labels or fewer nodes")
             elif kind in MATH_KINDS:
-                from animation_agent.scene import math_layout as M
-
-                maths[name] = {"axes": M.axes_layout, "venn": M.venn_layout, "geometry": M.geometry_layout,
-                               "numberline": M.numberline_layout, "surface": M.surface_layout}[kind](views, region)
+                maths[name] = _view_layouts()[kind][1](views, region)
             elif kind == "cells":
                 cell[name] = cell_size(views, region)
             elif kind == "code":

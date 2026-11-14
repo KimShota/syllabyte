@@ -48,6 +48,9 @@ from manim import (
 
 from animation_agent.frame import scene_safe_size
 from animation_agent.layout_audit import BACKGROUND_ATTR
+from manim import DashedLine, RoundedRectangle
+
+from animation_agent.scene import diagram_layout as D
 from animation_agent.scene import layout as L
 from animation_agent.scene import math_layout as M
 
@@ -242,7 +245,8 @@ class PictureRunner:
     def _colour(self, it: dict, order: int):
         if it.get("style"):
             return STYLE_COLOUR[it["style"]]
-        return CURVE_COLOURS[order % len(CURVE_COLOURS)] if it["type"] in ("curve", "area", "rects") else WHITE
+        return CURVE_COLOURS[order % len(CURVE_COLOURS)] if it["type"] in ("curve", "area", "rects", "vector",
+                                                                           "polygon") else WHITE
 
     def _label(self, name, key, text, at, colour, out):
         out[f"{name}:label:{key}"] = Text(M.pretty(text), font_size=FONT, color=colour).move_to([at[0], at[1], 0])
@@ -286,6 +290,19 @@ class PictureRunner:
             elif t == "area":
                 pts = [(min(max(x, x0), x1), min(max(y, y0), y1)) for x, y in M.item_polylines(it, lay)[0][:-1]]
                 part = Polygon(*[[x, y, 0] for x, y in pts], stroke_width=0, fill_color=colour, fill_opacity=FILL)
+            elif t == "polygon":
+                pts = [(min(max(x, x0), x1), min(max(y, y0), y1)) for x, y in M.item_polylines(it, lay)[0][:-1]]
+                part = Polygon(*[[x, y, 0] for x, y in pts], stroke_width=3, color=colour, fill_color=colour,
+                               fill_opacity=FILL if it.get("fill", True) else 0)
+            elif t == "vector":
+                (ax, ay), (bx, by) = M.item_polylines(it, lay)[0]
+                part = Arrow([ax, ay, 0], [bx, by, 0], buff=0, stroke_width=5, color=colour, tip_length=0.16,
+                             max_tip_length_to_length_ratio=0.35)
+            elif t == "grid":
+                # a coordinate grid (the plane before or after a linear map): a background, thin and faint
+                lines = [VMobject(stroke_width=1.5, color=colour).set_points_as_corners([[x, y, 0] for x, y in piece])
+                         for line in M.item_polylines(it, lay) for piece in M.clip_polyline(line, lo, hi)]
+                part = _bg(VGroup(*lines)) if lines else None
             elif t in ("rects", "bars"):
                 rects = []
                 for poly in M.item_polylines(it, lay):
@@ -445,7 +462,205 @@ class PictureRunner:
             faces = [Polygon(*[[x, y, 0] for x, y in corners], stroke_width=1.5, stroke_color=colour,
                              fill_color=interpolate_color(BLACK, colour, 0.2 + 0.55 * light), fill_opacity=1)
                      for corners, _depth, light in M.surface_faces(it, lay)]
-            out[f"{name}:item:{key}"] = _bg(VGroup(*faces))
+            solid = _bg(VGroup(*faces))
+            solid.syllabyte_solid = True
+            out[f"{name}:item:{key}"] = solid
+
+    # ---- diagrams --------------------------------------------------------------------------------------
+
+    def _grid(self, name, view, region, out):
+        lay: D.GridLayout = self.layout.math[name]
+        font = max(FONT, lay.font)
+        for r, row in enumerate(view["values"]):
+            for c, text in enumerate(row):
+                style = view["marks"].get(f"{r},{c}")
+                colour = STYLE_COLOUR[style]
+                x, y, w, h = lay.x[c], lay.y[r], lay.w[c], lay.h
+                if not view["matrix"]:
+                    out[f"{name}:cell:{r},{c}"] = Rectangle(width=w, height=h, stroke_color=GREY_B, stroke_width=2,
+                                                            fill_color=BLACK, fill_opacity=1).move_to([x, y, 0])
+                if text:
+                    out[f"{name}:val:{r},{c}"] = Text(text, font_size=font, color=colour).move_to([x, y, 0])
+                if style:  # inside the cell, so it never covers a neighbour's border
+                    out[f"{name}:mark:{r},{c}"] = Rectangle(width=w - 0.08, height=h - 0.08, stroke_color=colour,
+                                                            stroke_width=4, fill_opacity=0).move_to([x, y, 0])
+        if view["matrix"]:  # square brackets either side
+            lip = 0.1
+            for side, x in (("l", lay.left - 0.06), ("r", lay.right + 0.06)):
+                t = 1 if side == "l" else -1
+                out[f"{name}:bracket:{side}"] = VMobject(stroke_width=3, color=WHITE).set_points_as_corners(
+                    [[x + t * lip, lay.top, 0], [x, lay.top, 0], [x, lay.bottom, 0], [x + t * lip, lay.bottom, 0]])
+        for r, text in enumerate(view["row_names"] or []):
+            if text:
+                out[f"{name}:rowname:{r}"] = Text(text, font_size=font, color=GREY_B).move_to([lay.name_x, lay.y[r], 0])
+        for c, text in enumerate(view["col_names"] or []):
+            if text:
+                out[f"{name}:colname:{c}"] = Text(text, font_size=font, color=GREY_B).move_to([lay.x[c], lay.head_y, 0])
+
+    @staticmethod
+    def _lines(text: str, font: int, colour) -> VGroup:
+        lines = [Text(line, font_size=font, color=colour) for line in text.split("\n") if line] or [
+            Text(" ", font_size=font, color=colour)]
+        return VGroup(*lines).arrange(np.array([0, -1, 0]), buff=0.06)
+
+    def _flow(self, name, view, region, out):
+        lay: D.FlowLayout = self.layout.math[name]
+        k = lay.k
+        font = max(FONT, round(FONT * k))
+        for key, b in view["boxes"].items():
+            c, w, h = lay.boxes[key]
+            style = b["style"]
+            colour = STYLE_COLOUR[style]
+            shape = _flow_shape(b["shape"], c, w, h, colour, 5 if style else 3, k)
+            text = self._lines(b["text"], font, colour)
+            if b["shape"] in D.ICON_SHAPES:
+                icon_x = c[0] - w / 2 + D.BOX_PAD_X * k + D.ICON_H * k / 2
+                shape.add(_icon(b["shape"], icon_x, c[1], D.ICON_H * k, colour))
+                text_x = (icon_x + D.ICON_H * k / 2 + 0.06 * k + c[0] + w / 2) / 2
+                text.move_to([text_x, c[1], 0])
+            else:
+                text.move_to([c[0], c[1] - (0.08 * k if b["shape"] == "cylinder" else 0.03 * k if b["shape"] ==
+                                            "document" else 0.0), 0])
+            out[f"{name}:box:{key}"] = VGroup(shape, text)
+        for a, b, style, label in view["arrows"]:
+            colour = STYLE_COLOUR[style] if style else GREY_B
+            width = 5 if style else 3
+            if a == b:
+                if f"{a}>{a}" not in lay.loops:
+                    continue
+                centre, d = lay.loops[f"{a}>{a}"]
+                back = float(np.arctan2(-d[1], -d[0]))  # toward the box: the gap the loop leaves there
+                arc = Arc(radius=D.LOOP_R, start_angle=back + 0.95, angle=2 * np.pi - 1.9,
+                          arc_center=[centre[0], centre[1], 0], stroke_width=width, color=colour)
+                arc.add_tip(tip_length=0.12, tip_width=0.12)
+                out[f"{name}:arrow:{a}>{b}"] = arc
+            else:
+                path = lay.arrows.get(f"{a}>{b}")
+                if path is None:
+                    continue
+                out[f"{name}:arrow:{a}>{b}"] = _path_arrow(path, colour, width)
+            spot = lay.labels.get((f"{a}>{b}", label)) if label else None
+            if spot is not None:
+                out[f"{name}:arrowlabel:{a}>{b}"] = Text(label, font_size=FONT, color=colour if style else GREY_B
+                                                         ).move_to([spot[0], spot[1], 0])
+
+    def _timeline(self, name, view, region, out):
+        lay: D.TimelineLayout = self.layout.math[name]
+        for i, lane in enumerate(view["lanes"]):
+            t = Text(lane, font_size=FONT, color=GREY_B)
+            out[f"{name}:lane:{i}"] = t.move_to([lay.name_x - t.width / 2, lay.lane_y[i], 0])
+        out[f"{name}:axis"] = Line([lay.x0, lay.axis_y, 0], [lay.x1, lay.axis_y, 0], stroke_width=2, color=GREY_B)
+        for v, text, c in lay.ticks:
+            x = lay.at(v)
+            out[f"{name}:tick:{text}"] = VGroup(
+                Line([x, lay.axis_y - 0.05, 0], [x, lay.axis_y + 0.05, 0], stroke_width=2, color=GREY_B),
+                Text(text, font_size=FONT, color=GREY_B).move_to([c[0], c[1], 0]))
+        bh = lay.lane_h * 0.76
+        for key, it in view["items"].items():
+            colour = STYLE_COLOUR[it.get("style")] if it.get("style") else BLUE_C
+            if it["type"] == "block":
+                a, b = lay.at(it["a"]), lay.at(it["b"])
+                y = lay.lane_y[it["lane"]]
+                out[f"{name}:item:{key}"] = Rectangle(width=b - a, height=bh, stroke_color=colour, stroke_width=3,
+                                                      fill_color=colour, fill_opacity=FILL).move_to([(a + b) / 2, y, 0])
+                if it.get("label") and (key, it["label"]) in lay.shown_labels:
+                    out[f"{name}:label:{key}"] = Text(it["label"], font_size=FONT, color=WHITE).move_to(
+                        [(a + b) / 2, y, 0])
+            else:
+                x = lay.at(it["t"])
+                out[f"{name}:item:{key}"] = DashedLine([x, lay.top + 0.04, 0], [x, lay.axis_y, 0], stroke_width=3,
+                                                       color=colour, dash_length=0.08)
+                spot = lay.mark_spots.get((key, it.get("label")))
+                if spot is not None:
+                    out[f"{name}:label:{key}"] = Text(it["label"], font_size=FONT, color=colour).move_to(
+                        [spot[0], spot[1], 0])
+
+    def _sequence(self, name, view, region, out):
+        lay: D.SequenceLayout = self.layout.math[name]
+        for i, actor in enumerate(view["actors"]):
+            x = lay.x[i]
+            box = Rectangle(width=lay.box_w, height=D.ACTOR_H, stroke_color=WHITE, stroke_width=3, fill_color=BLACK,
+                            fill_opacity=1).move_to([x, lay.top - D.ACTOR_H / 2, 0])
+            out[f"{name}:actor:{i}"] = VGroup(box, Text(actor, font_size=FONT, color=WHITE).move_to(box))
+            # broken round any label it would cross (a long label spans the lifelines between its ends)
+            y, pieces = lay.top - D.ACTOR_H, []
+            for g0, g1 in sorted(lay.gaps.get(i, []), key=lambda g: -g[1]):
+                if g1 < y - 0.05:
+                    pieces.append(DashedLine([x, y, 0], [x, g1, 0], stroke_width=2, color=GREY_B, dash_length=0.1))
+                y = min(y, g0)
+            if y - lay.bottom > 0.05:
+                pieces.append(DashedLine([x, y, 0], [x, lay.bottom, 0], stroke_width=2, color=GREY_B, dash_length=0.1))
+            out[f"{name}:life:{i}"] = VGroup(*pieces)
+        for key, m in view["messages"].items():
+            colour = STYLE_COLOUR[m.get("style")] if m.get("style") else WHITE
+            y = lay.rows[m["row"]]
+            a, b = lay.x[m["a"]], lay.x[m["b"]]
+            if m["a"] == m["b"]:
+                path = [(a, y + 0.12), (a + lay.self_w, y + 0.12), (a + lay.self_w, y - 0.12), (a, y - 0.12)]
+            else:
+                path = [(a, y), (b, y)]
+            out[f"{name}:item:{key}"] = _path_arrow([np.array(p) for p in path], colour, 3, dashed=m["dashed"])
+            if key in lay.labels:
+                c = lay.labels[key]
+                out[f"{name}:label:{key}"] = Text(m["label"], font_size=FONT, color=colour).move_to([c[0], c[1], 0])
+
+    def _circuit(self, name, view, region, out):
+        lay: D.CircuitLayout = self.layout.math[name]
+        values = view["values"]
+        on, off = YELLOW, GREY_B
+        for key, path in lay.wires.items():
+            src = key.split(">")[0]
+            out[f"{name}:wire:{key}"] = VMobject(stroke_width=4 if values[src] else 3,
+                                                 color=on if values[src] else off).set_points_as_corners(
+                [[x, y, 0] for x, y in path])
+        for key, p in view["parts"].items():
+            c, (w, h) = lay.pos[key], lay.size[key]
+            style = p.get("style")
+            if p["type"] == "gate":
+                colour = STYLE_COLOUR[style] if style else WHITE
+                body = _gate(p["gate"], c, w, h, colour, 5 if style else 3)
+                n = len(p["inputs"])
+                pins = [Line([px, c[1] + h / 2, 0], [px, py, 0], stroke_width=3, color=colour)
+                        for px, py in (D._port(lay.pos, lay.size, view["parts"], key, j) for j in range(n))]
+                ox, oy = D._port(lay.pos, lay.size, view["parts"], key)
+                pins.append(Line([ox, c[1] - h / 2, 0], [ox, oy, 0], stroke_width=3, color=colour))
+                out[f"{name}:part:{key}"] = VGroup(*pins, body)
+            else:
+                v = values[key]
+                colour = STYLE_COLOUR[style] if style else (on if v else off)
+                box = Square(side_length=D.TERM, stroke_color=colour, stroke_width=4, fill_color=BLACK, fill_opacity=1)
+                box.move_to([c[0], c[1], 0])
+                out[f"{name}:part:{key}"] = VGroup(box, Text(str(v), font_size=FONT, color=colour).move_to(box))
+                nc = lay.names[key]
+                out[f"{name}:name:{key}"] = Text(p["label"], font_size=FONT, color=WHITE).move_to([nc[0], nc[1], 0])
+
+    def _memory(self, name, view, region, out):
+        lay: D.MemoryLayout = self.layout.math[name]
+        for key, b in view["boxes"].items():
+            left, top, w, h = lay.boxes[key]
+            colour = STYLE_COLOUR[b["style"]] if b["style"] else WHITE
+            frame = Rectangle(width=w, height=h, stroke_color=colour, stroke_width=5 if b["style"] else 3,
+                              fill_color=BLACK, fill_opacity=1).move_to([left + w / 2, top - h / 2, 0])
+            rule = Line([left, top - D.BOX_TITLE_H, 0], [left + w, top - D.BOX_TITLE_H, 0], stroke_width=2,
+                        color=GREY_B)
+            split = Line([left + lay.name_w[key], top - D.BOX_TITLE_H, 0], [left + lay.name_w[key], top - h, 0],
+                         stroke_width=2, color=GREY_B)
+            title = Text(b["title"], font_size=FONT, color=GREY_B if b["area"] == "heap" else colour).move_to(
+                [left + w / 2, top - D.BOX_TITLE_H / 2, 0])
+            out[f"{name}:box:{key}"] = VGroup(frame, rule, split, title)
+            fields = {f[0]: f for f in b["fields"]}
+            for fname, y in D.memory_rows(view, lay, key):
+                _n, text, ref, fstyle = fields[fname]
+                fc = STYLE_COLOUR[fstyle] if fstyle else WHITE
+                parts = [Text(fname, font_size=FONT, color=GREY_B).move_to([left + lay.name_w[key] / 2, y, 0])]
+                vx = left + lay.name_w[key] + (w - lay.name_w[key]) / 2
+                if ref:
+                    parts.append(Dot([vx, y, 0], radius=D.REF_DOT, color=BLUE_C))
+                elif text:
+                    parts.append(Text(text, font_size=FONT, color=fc).move_to([vx, y, 0]))
+                out[f"{name}:field:{key}.{fname}"] = VGroup(*parts)
+        for key, path in D.memory_arrows(view, lay).items():
+            out[f"{name}:item:ref:{key}"] = _path_arrow([np.array(p) for p in path], BLUE_C, 3)
 
     # ---- showing ---------------------------------------------------------------------------------------
 
@@ -462,7 +677,7 @@ class PictureRunner:
                 self.on_screen[key] = new
             elif _same_parts(old, new):
                 anims.append(old.animate.become(new))
-            elif ":item:" in key and not getattr(new, BACKGROUND_ATTR, False):
+            elif ":item:" in key and not getattr(new, "syllabyte_solid", False):
                 # a math thing that changed shape (more rectangles, a new curve) morphs; a 3D solid (opaque faces in
                 # depth order) cross-fades instead, since its faces mid-morph would cut through each other
                 anims.append(ReplacementTransform(old, new))
@@ -492,3 +707,130 @@ class PictureRunner:
     def show(self, i: int, seconds: float) -> None:
         if anims := self.changes(i):
             self.scene.play(*anims, run_time=max(seconds, 0.1))
+
+
+# ---- shapes the diagrams draw ----------------------------------------------------------------------------
+
+
+def _path_arrow(path, colour, width, dashed: bool = False) -> VGroup:
+    """A polyline ending in an arrowhead (solid, or dashed for a reply)."""
+    pts = [np.array([p[0], p[1], 0.0]) for p in path]
+    end, before = pts[-1], pts[-2]
+    d = (end - before) / (float(np.linalg.norm(end - before)) or 1e-9)
+    tip_l = min(0.16, float(np.linalg.norm(end - before)) * 0.5)
+    base = end - d * tip_l
+    normal = np.array([-d[1], d[0], 0.0])
+    tip = Polygon(end, base + normal * tip_l * 0.45, base - normal * tip_l * 0.45, stroke_width=0, fill_color=colour,
+                  fill_opacity=1)
+    body = pts[:-1] + [base]
+    if dashed:
+        lines = [DashedLine(p, q, stroke_width=width, color=colour, dash_length=0.08) for p, q in zip(body, body[1:])
+                 if np.linalg.norm(q - p) > 1e-6]
+    else:
+        lines = [VMobject(stroke_width=width, color=colour).set_points_as_corners(body)]
+    return VGroup(*lines, tip)
+
+
+def _curve(points, colour, width, fill: bool = True) -> VMobject:
+    m = VMobject(stroke_width=width, color=colour).set_points_as_corners([[x, y, 0] for x, y in points])
+    if fill:
+        m.set_fill(BLACK, opacity=1)
+    return m
+
+
+def _flow_shape(shape: str, c, w: float, h: float, colour, width: float, k: float) -> VGroup:
+    x, y = float(c[0]), float(c[1])
+    if shape in ("box",):
+        body = Rectangle(width=w, height=h)
+    elif shape in ("round",) + D.ICON_SHAPES:
+        body = RoundedRectangle(width=w, height=h, corner_radius=min(0.16, h / 3))
+    elif shape == "diamond":
+        body = Polygon([x, y + h / 2, 0], [x + w / 2, y, 0], [x, y - h / 2, 0], [x - w / 2, y, 0])
+        return VGroup(body.set_stroke(colour, width).set_fill(BLACK, 1))
+    elif shape in ("circle", "double"):
+        group = VGroup(Circle(radius=w / 2).set_stroke(colour, width).set_fill(BLACK, 1).move_to([x, y, 0]))
+        if shape == "double":
+            group.add(Circle(radius=w / 2 - 0.08 * k).set_stroke(colour, width).move_to([x, y, 0]))
+        return group
+    elif shape == "cylinder":
+        ry = 0.08 * k
+        top, bottom, x0, x1 = y + h / 2, y - h / 2, x - w / 2, x + w / 2
+        t = np.linspace(0, np.pi, 24)
+        outline = ([(x0, top - ry), (x0, bottom + ry)] + [(x - np.cos(a) * w / 2, bottom + ry - np.sin(a) * ry)
+                                                            for a in t] + [(x1, top - ry)]
+                   + [(x + np.cos(a) * w / 2, top - ry + np.sin(a) * ry) for a in t])
+        rim = [(x - np.cos(a) * w / 2, top - ry - np.sin(a) * ry) for a in t]
+        return VGroup(_curve(outline + outline[:1], colour, width), _curve(rim, colour, width, fill=False))
+    elif shape == "document":
+        x0, x1, top, bottom = x - w / 2, x + w / 2, y + h / 2, y - h / 2
+        wave = [(x1 - (x1 - x0) * i / 24, bottom + 0.05 * k * np.sin(2 * np.pi * i / 24)) for i in range(25)]
+        return VGroup(_curve([(x0, top), (x1, top)] + wave + [(x0, top)], colour, width))
+    elif shape == "cloud":
+        t = np.linspace(0, 2 * np.pi, 97)
+        r = 0.9 + 0.1 * np.abs(np.cos(4 * t))
+        return VGroup(_curve(list(zip(x + w / 2 * r * np.cos(t), y + h / 2 * r * np.sin(t))), colour, width))
+    else:
+        body = Rectangle(width=w, height=h)
+    return VGroup(body.set_stroke(colour, width).set_fill(BLACK, 1).move_to([x, y, 0]))
+
+
+def _icon(shape: str, x: float, y: float, size: float, colour) -> VGroup:
+    """A pictogram `size` tall centred at (x, y), in outline: what the box stands for."""
+    s = size / 2
+    if shape == "person":
+        return VGroup(Circle(radius=s * 0.36).set_stroke(colour, 3).move_to([x, y + s * 0.5, 0]),
+                      Arc(radius=s * 0.62, start_angle=0, angle=np.pi, arc_center=[x, y - s * 0.75, 0],
+                          stroke_width=3, color=colour))
+    if shape == "chip":
+        body = Square(side_length=s * 1.1).set_stroke(colour, 3).move_to([x, y, 0])
+        pins = VGroup()
+        for t in (-0.3, 0.0, 0.3):
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                p = np.array([x + dx * s * 0.55 + dy * t * s * 1.6, y + dy * s * 0.55 + dx * t * s * 1.6, 0])
+                pins.add(Line(p, p + np.array([dx, dy, 0]) * s * 0.3, stroke_width=2, color=colour))
+        return VGroup(body, pins)
+    if shape == "monitor":
+        screen = Rectangle(width=s * 1.7, height=s * 1.2).set_stroke(colour, 3).move_to([x, y + s * 0.25, 0])
+        return VGroup(screen, Line([x, y - s * 0.35, 0], [x, y - s * 0.75, 0], stroke_width=3, color=colour),
+                      Line([x - s * 0.45, y - s * 0.8, 0], [x + s * 0.45, y - s * 0.8, 0], stroke_width=3, color=colour))
+    if shape == "lock":
+        body = Rectangle(width=s * 1.3, height=s * 1.0).set_stroke(colour, 3).move_to([x, y - s * 0.4, 0])
+        return VGroup(body, Arc(radius=s * 0.42, start_angle=0, angle=np.pi, arc_center=[x, y + s * 0.1, 0],
+                                stroke_width=3, color=colour))
+    if shape == "server":
+        out = VGroup()
+        for j in range(3):
+            cy = y + s * (0.62 - 0.62 * j)
+            out.add(Rectangle(width=s * 1.6, height=s * 0.5).set_stroke(colour, 3).move_to([x, cy, 0]))
+            out.add(Dot([x + s * 0.55, cy, 0], radius=0.025, color=colour))
+        return out
+    return VGroup()
+
+
+def _gate(kind: str, c, w: float, h: float, colour, width: float) -> VGroup:
+    """A logic gate pointing down (inputs along the top, the output at the bottom): AND's flat back and round
+    front, OR's curved shield, XOR's extra back curve, a buffer's triangle, and a bubble for each inverted one."""
+    x, y = float(c[0]), float(c[1])
+    bubble = 0.05 if kind in ("NOT", "NAND", "NOR", "XNOR") else 0.0
+    top, bottom = y + h / 2, y - h / 2 + 2 * bubble
+    t = np.linspace(0, np.pi, 25)
+    base = {"AND": "AND", "NAND": "AND", "OR": "OR", "NOR": "OR", "XOR": "OR", "XNOR": "OR"}.get(kind, "BUF")
+    if base == "AND":
+        mid = (top + bottom) / 2
+        pts = ([(x - w / 2, top), (x + w / 2, top), (x + w / 2, mid)]
+               + [(x + np.cos(a) * w / 2, mid - np.sin(a) * (mid - bottom)) for a in t] + [(x - w / 2, top)])
+    elif base == "OR":  # a concave back, sides curving in to a point
+        dip = 0.08
+        right = [(x + w / 2 * (1 - (u ** 1.6)), top - (top - bottom) * u) for u in np.linspace(0, 1, 13)]
+        left = [(x - w / 2 * (1 - (u ** 1.6)), top - (top - bottom) * u) for u in np.linspace(1, 0, 13)]
+        back = [(x - w / 2 + w * u, top - dip * np.sin(np.pi * u)) for u in np.linspace(0, 1, 13)]
+        pts = back + right[1:] + left[1:]
+    else:  # BUF / NOT: a triangle
+        pts = [(x - w / 2, top), (x + w / 2, top), (x, bottom), (x - w / 2, top)]
+    group = VGroup(_curve(pts, colour, width))
+    if kind in ("XOR", "XNOR"):
+        group.add(_curve([(x - w / 2 + w * u, top + 0.07 - 0.08 * np.sin(np.pi * u)) for u in np.linspace(0, 1, 13)],
+                         colour, width, fill=False))
+    if bubble:
+        group.add(Circle(radius=bubble).set_stroke(colour, width).set_fill(BLACK, 1).move_to([x, y - h / 2 + bubble, 0]))
+    return group

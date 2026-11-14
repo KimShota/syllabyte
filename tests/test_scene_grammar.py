@@ -452,3 +452,144 @@ def test_a_fix_call_that_breaks_the_picture_keeps_the_calls_from_before_it(monke
     assert sent == ["storyboard_fix"]
     assert out[2][0] and out[2][0][0].startswith("p = Picture(") and "a.mark(0" in out[2][0][0]
     assert "p.show(snap='s1')" in [c for calls in out[2] for c in calls]
+
+
+# ---- P5: diagrams (tables, flows, timelines, messages, circuits, memory) and vectors -------------------------
+
+from animation_agent.scene import diagram_layout as DL  # noqa: E402
+from animation_agent.scene import math_layout as M2  # noqa: E402
+from animation_agent.scene.examples import DIAGRAM_PROGRAMS  # noqa: E402
+from animation_agent.visuals.specs import _dialogue_area  # noqa: E402
+
+FULL = _dialogue_area("full")
+
+
+def test_every_diagram_example_lays_out_in_the_dialogue_frame():
+    for name, source in DIAGRAM_PROGRAMS.items():
+        L.plan(run(source), *FULL)
+
+
+def test_a_dp_table_and_a_matrix_product_are_computed():
+    assert _captions(DIAGRAM_PROGRAMS["lcs"])["done"] == "the LCS has length 3"
+    last = run(DIAGRAM_PROGRAMS["matmul"])[-1]["views"]["C"]
+    assert last["values"] == [["19", "22"], ["43", "50"]] and last["matrix"]
+
+
+@pytest.mark.parametrize("source, why", [
+    ("g = grid('g', [[1234567]]); snap()", "longer than 6"),
+    ("g = grid('g', [[1, 2], [3]]); snap()", "same number"),
+    ("g = grid('g', [[1]]); g[2][0] = 1", "no entry"),
+    ("f = flow('f'); f.box('a', shape='star')", "unknown shape"),
+    ("f = flow('f'); f.box('a'); f.arrow('a', 'b')", "no box 'b'"),
+    ("c = circuit('c'); c.input('a'); c.gate('g', 'NAND', ['a'])", "two or more inputs"),
+    ("c = circuit('c'); c.gate('g', 'AND', ['x', 'y'])", "not an input or gate"),
+    ("m = memory('m'); m.frame('f'); m.set('f', 'p', m.ref('f')); snap()", "not a heap object"),
+    ("s = sequence('s', ['a']); snap()", "2-4 actors"),
+    ("t = timeline('t', ['cpu']); t.block('b', 'gpu', 0, 1)", "no lane 'gpu'"),
+])
+def test_diagram_mistakes_are_sent_back_with_a_reason(source, why):
+    result = run_program(source)
+    assert not result.ok and why in result.error, result.error
+
+
+def test_a_table_too_wide_for_the_frame_is_refused_with_the_reason():
+    snaps = run("g = grid('g', [['abcdef'] * 8]); snap()")
+    with pytest.raises(PictureError, match="wide"):
+        L.plan(snaps, *FULL)
+
+
+def test_a_long_arrow_passes_the_layers_between_at_a_slot_of_its_own():
+    snaps = run(DIAGRAM_PROGRAMS["process"])
+    lay = L.plan(snaps, *FULL).math["f"]
+    path = lay.arrows["waiting>ready"]
+    assert len(path) > 2  # waiting -> ready skips the layer of running: it bends round it
+    for key, (c, w, h) in lay.boxes.items():
+        if key not in ("waiting", "ready"):
+            assert not any(DL._rect_hit(p, q, c, w, h, margin=0.0) for p, q in zip(path, path[1:])), key
+
+
+def test_an_arrows_label_sits_nearer_its_own_arrow_than_any_other_and_clear_of_every_box():
+    for name in ("process", "web", "dfa"):
+        lay = L.plan(run(DIAGRAM_PROGRAMS[name]), *FULL).math["f"]
+        for (key, text), c in lay.labels.items():
+            half = DL.text_half(text) - M2.ROOM
+            for box, (bc, w, h) in lay.boxes.items():
+                assert not (abs(c[0] - bc[0]) < half[0] + w / 2 and abs(c[1] - bc[1]) < half[1] + h / 2), (name, text, box)
+            if key.split(">")[0] != key.split(">")[1]:
+                own = DL._path_dist(lay.arrows[key], c)
+                assert all(DL._path_dist(p, c) > own for k, p in lay.arrows.items() if k != key), (name, text)
+
+
+def test_a_state_machine_has_loops_and_an_accepting_state():
+    snaps = run(DIAGRAM_PROGRAMS["dfa"])
+    lay = L.plan(snaps, *FULL).math["f"]
+    assert set(lay.loops) == {"q0>q0", "q2>q2"}
+    assert snaps[0]["views"]["f"]["boxes"]["q0"]["shape"] == "double"
+    assert _captions(DIAGRAM_PROGRAMS["dfa"])["end"] == "110 is 6: accepted"
+
+
+def test_round_robin_is_computed_and_drawn_on_its_lanes():
+    caps = _captions(DIAGRAM_PROGRAMS["rr"])
+    finished = [c for c in caps.values() if "finishes" in c]
+    assert finished == ["P3 finishes at t = 5", "P2 finishes at t = 8", "P1 finishes at t = 9"]
+    lay = L.plan(run(DIAGRAM_PROGRAMS["rr"]), *FULL).math["tl"]
+    assert lay.t == (0.0, 9.0) and not lay.dropped
+
+
+def test_a_message_label_wider_than_its_lifelines_breaks_them_instead_of_crossing():
+    snaps = run("s = sequence('s', ['a', 'b', 'c'])\ns.message('m', 'a', 'c', 'a long label!')\nsnap()")
+    lay = L.plan(snaps, *FULL).math["s"]
+    c = lay.labels["m"]
+    half = DL.text_half("a long label!")
+    for i, x in enumerate(lay.x):
+        if c[0] - half[0] < x < c[0] + half[0]:
+            assert any(g0 <= c[1] - half[1] + M2.ROOM and c[1] + half[1] - M2.ROOM <= g1 for g0, g1 in lay.gaps[i])
+
+
+def test_a_full_adder_adds_every_row_of_its_truth_table():
+    for a in (0, 1):
+        for b in (0, 1):
+            for ci in (0, 1):
+                src = DIAGRAM_PROGRAMS["adder"].split("for bits")[0] + (
+                    f"c.set('A', {a}); c.set('B', {b}); c.set('Ci', {ci})\n"
+                    "snap(str(c.value('Co')) + str(c.value('S')), name='r')")
+                assert _captions(src)["r"] == format(a + b + ci, "02b")
+
+
+def test_no_circuit_wire_crosses_a_part_or_runs_along_another():
+    lay = L.plan(run(DIAGRAM_PROGRAMS["adder"]), *FULL).math["c"]
+    for key, path in lay.wires.items():
+        src, dst = key.split(">")[0], key.split(">")[1].split("#")[0]
+        for part, c in lay.pos.items():
+            if part in (src, dst):
+                continue
+            w, h = lay.size[part]
+            assert not any(DL._rect_hit(p, q, c, w, h, margin=0.0) for p, q in zip(path, path[1:])), (key, part)
+
+
+def test_a_circuit_too_deep_for_the_frame_is_refused_with_the_reason():
+    chain = "c = circuit('c')\nc.input('a')\nprev = 'a'\nfor k in range(9):\n    c.gate('g' + str(k), 'NOT', [prev])\n    prev = 'g' + str(k)\nc.output('y', prev)\nsnap()"
+    with pytest.raises(PictureError, match="levels"):
+        L.plan(run(chain), *FULL)
+
+
+def test_a_pointer_is_an_arrow_from_its_field_to_the_object():
+    snaps = run(DIAGRAM_PROGRAMS["linked"])
+    lay = L.plan(snaps, *FULL).math["m"]
+    last = snaps[-1]["views"]["m"]
+    arrows = DL.memory_arrows(last, lay)
+    assert set(arrows) == {"main.head", "n0.next", "n2.next"}
+    left, top, w, _h = lay.boxes["n2"]
+    assert arrows["main.head"][-1] == (left, top - DL.BOX_TITLE_H / 2)  # into the new node's title row
+
+
+def test_a_vector_is_labelled_past_its_tip_and_a_grid_is_sent_through_its_matrix():
+    snaps = run(DIAGRAM_PROGRAMS["eigen"])
+    lay = L.plan(snaps, *FULL).math["a"]
+    assert {t for _k, t in lay.labels} == {"v", "w", "Av", "Aw"}
+    before, after = (s["views"]["a"]["items"]["g"]["pieces"] for s in snaps)
+    assert after[0] == [[2 * p[0] + p[1], p[0] + 2 * p[1]] for p in before[0]]
+
+
+def test_text_widths_count_capitals_wider_than_small_letters():
+    assert M2.text_width("SYN-ACK") > M2.text_width("syn-ack") > M2.text_width("iiiiiii")

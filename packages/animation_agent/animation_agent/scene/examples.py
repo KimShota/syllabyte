@@ -279,3 +279,199 @@ snap(f'64 columns: {v:.3f}; the exact volume is {2 - 1/3 - 1/6:.3f}', name='n8')
 
 MATH_PROGRAMS = {"bar_chart": BAR_CHART, "division": DIVISION, "volume": VOLUME, "riemann": RIEMANN, "tangent": TANGENT, "level_curves": LEVEL_CURVES, "venn3": VENN3,
                  "triangle": TRIANGLE, "probability_tree": PROBABILITY_TREE}
+
+
+# ---- diagrams (P5): tables, boxes and arrows, timelines, messages, circuits, memory; vectors and maps ----
+
+LCS = '''
+a, b = 'ABCB', 'BDCB'
+t = grid('t', [[0] * (len(b) + 1) for r in range(len(a) + 1)], row_names=[''] + list(a), col_names=[''] + list(b),
+         title='LCS table')
+for i in range(1, len(a) + 1):
+    for j in range(1, len(b) + 1):
+        t[i][j] = None
+snap('row 0 and column 0 are 0', name='start')
+for i in range(1, len(a) + 1):
+    for j in range(1, len(b) + 1):
+        t.unmark()
+        if a[i - 1] == b[j - 1]:
+            t[i][j] = t[i - 1][j - 1] + 1
+            t.mark(i - 1, j - 1, 'compare')
+            why = f'{a[i - 1]} = {b[j - 1]}: diagonal + 1 = {t[i][j]}'
+        else:
+            t[i][j] = max(t[i - 1][j], t[i][j - 1])
+            t.mark(i - 1, j, 'compare'); t.mark(i, j - 1, 'compare')
+            why = f'{a[i - 1]} != {b[j - 1]}: max(up, left) = {t[i][j]}'
+        t.mark(i, j, 'current')
+        if j == len(b) or a[i - 1] == b[j - 1]:
+            snap(why, name=f'c{i}{j}')
+t.unmark(); t.mark(len(a), len(b), 'found')
+snap(f'the LCS has length {t[len(a)][len(b)]}', name='done')
+'''
+
+MATMUL = '''
+A = grid('A', [[1, 2], [3, 4]], matrix=True, title='A')
+B = grid('B', [[5, 6], [7, 8]], matrix=True, title='B')
+C = grid('C', [[None, None], [None, None]], matrix=True, title='C = AB')
+snap('A times B', name='start')
+for i in range(2):
+    for j in range(2):
+        A.unmark(); B.unmark(); C.unmark()
+        A.mark_row(i, 'compare'); B.mark_col(j, 'compare')
+        C[i][j] = sum(A[i][k] * B[k][j] for k in range(2))
+        C.mark(i, j, 'current')
+        snap(f'row {i + 1} of A times column {j + 1} of B: {A[i][0]}*{B[0][j]} + {A[i][1]}*{B[1][j]} = {C[i][j]}', name=f'c{i}{j}')
+A.unmark(); B.unmark(); C.unmark()
+snap('C = AB', name='done')
+'''
+
+PROCESS_STATES = '''
+f = flow('f', title='process states')
+for k in ('new', 'ready', 'running', 'waiting', 'done'):
+    f.box(k, k, shape='round')
+f.arrow('new', 'ready', 'admit')
+f.arrow('ready', 'running', 'dispatch')
+f.arrow('running', 'ready', 'timeout')
+f.arrow('running', 'waiting', 'I/O')
+f.arrow('waiting', 'ready', 'I/O done')
+f.arrow('running', 'done', 'exit')
+snap('five states a process moves through', name='all')
+path = [('new', 'ready'), ('ready', 'running'), ('running', 'waiting'), ('waiting', 'ready'), ('ready', 'running'), ('running', 'done')]
+for n, (a, b) in enumerate(path):
+    f.unmark(); f.mark(b, 'current'); f.restyle(a, b, 'current')
+    snap(f'{a} -> {b}', name=f's{n}')
+'''
+
+WEB_REQUEST = '''
+f = flow('f', title='loading a page')
+f.box('u', 'you', shape='person')
+f.box('b', 'browser', shape='monitor')
+f.box('d', 'DNS')
+f.box('s', 'server', shape='server')
+f.box('db', 'database', shape='cylinder')
+f.arrow('u', 'b', 'URL')
+f.arrow('b', 'd', 'name?')
+f.arrow('b', 's', 'GET')
+f.arrow('s', 'db', 'query')
+snap('the parts', name='all')
+for k in ('u', 'b', 'd', 's', 'db'):
+    f.unmark(); f.mark(k, 'current')
+    snap(k, name=k)
+'''
+
+DFA = '''
+f = flow('f', direction='right', title='multiples of 3')
+for k in range(3):
+    f.box(f'q{k}', f'q{k}', shape='double' if k == 0 else 'circle')
+for k in range(3):
+    for bit in (0, 1):
+        f.arrow(f'q{k}', f'q{(2 * k + bit) % 3}', str(bit))
+snap('remainder mod 3 after each bit', name='all')
+state = 0
+for n, bit in enumerate('110'):
+    nxt = (2 * state + int(bit)) % 3
+    f.unmark(); f.mark(f'q{nxt}', 'current'); f.restyle(f'q{state}', f'q{nxt}', 'current')
+    snap(f'read {bit}: q{state} -> q{nxt}', name=f'b{n}')
+    state = nxt
+f.unmark(); f.mark(f'q{state}', 'found' if state == 0 else 'red')
+snap('110 is 6: accepted' if state == 0 else 'rejected', name='end')
+'''
+
+ROUND_ROBIN = '''
+burst = {'P1': 5, 'P2': 3, 'P3': 1}
+q = 2
+tl = timeline('tl', list(burst), title='round robin, q = 2')
+left = dict(burst)
+queue = list(burst)
+t = 0
+n = 0
+while queue:
+    p = queue.pop(0)
+    run = min(q, left[p])
+    tl.block(f'b{n}', p, t, t + run, style='current')
+    for k in range(n):
+        tl.mark(f'b{k}', 'visited')
+    t += run
+    left[p] -= run
+    if left[p]:
+        queue.append(p)
+        snap(f'{p} runs {run} until t = {t}; {left[p]} left', name=f'r{n}')
+    else:
+        tl.marker(f'm{p}', t, label=f't={t}')
+        snap(f'{p} finishes at t = {t}', name=f'r{n}')
+    n += 1
+'''
+
+TCP_HANDSHAKE = '''
+s = sequence('s', ['client', 'server'], title='TCP handshake')
+snap('two hosts', name='start')
+s.message('syn', 'client', 'server', 'SYN seq=100')
+snap('SYN', name='syn')
+s.message('synack', 'server', 'client', 'SYN-ACK 300', dashed=True)
+snap('SYN-ACK', name='synack')
+s.message('ack', 'client', 'server', 'ACK 301')
+snap('ACK: connected', name='ack')
+s.message('get', 'client', 'server', 'GET /')
+s.message('ok', 'server', 'client', '200 OK', dashed=True)
+snap('data flows', name='data')
+'''
+
+FULL_ADDER = '''
+c = circuit('c', title='full adder')
+c.input('A'); c.input('B'); c.input('Ci', label='Cin')
+c.gate('x1', 'XOR', ['A', 'B'])
+c.gate('a1', 'AND', ['A', 'B'])
+c.gate('s', 'XOR', ['x1', 'Ci'])
+c.gate('a2', 'AND', ['x1', 'Ci'])
+c.gate('co', 'OR', ['a1', 'a2'])
+c.output('S', 's')
+c.output('Co', 'co', label='Cout')
+for bits in ((0, 0, 0), (1, 0, 0), (1, 1, 0), (1, 1, 1)):
+    c.set('A', bits[0]); c.set('B', bits[1]); c.set('Ci', bits[2])
+    hi, lo = c.value('Co'), c.value('S')
+    snap(f'{bits[0]} + {bits[1]} + {bits[2]} = {hi}{lo} in binary', name='r' + ''.join(str(b) for b in bits))
+'''
+
+LINKED_LIST = '''
+m = memory('m', title='a linked list')
+m.frame('main', 'main()')
+for k, v in enumerate((5, 8)):
+    m.obj(f'n{k}', 'Node')
+    m.set(f'n{k}', 'val', v)
+    m.set(f'n{k}', 'next', None)
+m.set('n0', 'next', m.ref('n1'))
+m.set('main', 'head', m.ref('n0'))
+snap('head points to the first node', name='list')
+m.frame('f', 'push(1)')
+m.obj('n2', 'Node')
+m.set('n2', 'val', 1)
+m.set('n2', 'next', m.ref('n0'))
+m.set('f', 'x', m.ref('n2'))
+snap('push makes a node pointing at the old head', name='new')
+m.set('main', 'head', m.ref('n2'))
+m.remove('f')
+snap('head now points to it', name='done')
+'''
+
+EIGENVECTOR = '''
+M = [[2, 1], [1, 2]]
+a = axes('a', x=(-4, 4), y=(-4, 4), equal=True, title='A = [[2,1],[1,2]]')
+a.grid('g')
+a.vector('v', 1, 1, style='found', label='v')
+a.vector('w', 1, 0, style='compare', label='w')
+snap('the plane before', name='before')
+a.grid('g', matrix=M)
+a.vector('v', M[0][0] + M[0][1], M[1][0] + M[1][1], style='found', label='Av')
+a.vector('w', M[0][0], M[1][0], style='compare', label='Aw')
+snap('Av = 3v stays on its line; Aw turns', name='after')
+'''
+
+POLAR = '''
+a = axes('a', x=(-1.5, 1.5), y=(-1.5, 1.5), equal=True)
+a.polar('r', lambda t: cos(2 * t))
+a.curve('c', lambda t: cos(t), lambda t: sin(t), t=(0, 2 * pi), style='grey')
+a.polygon('p', [(0, 0), (1, 0), (0.5, 0.8)], style='visited', label='T')
+snap('a rose, a circle and a triangle', name='all')
+'''
+
+DIAGRAM_PROGRAMS = {"lcs": LCS, "matmul": MATMUL, "process": PROCESS_STATES, "web": WEB_REQUEST, "dfa": DFA, "rr": ROUND_ROBIN, "tcp": TCP_HANDSHAKE, "adder": FULL_ADDER, "linked": LINKED_LIST, "eigen": EIGENVECTOR, "polar": POLAR}

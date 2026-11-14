@@ -3,7 +3,7 @@ and the hand-written programs (scene/examples.py) as worked examples. No Manim."
 
 from __future__ import annotations
 
-from animation_agent.scene.examples import MATH_PROGRAMS, PROGRAMS
+from animation_agent.scene.examples import DIAGRAM_PROGRAMS, MATH_PROGRAMS, PROGRAMS
 
 _EXAMPLE_TOPICS = {
     "union_find": "quick-union (union-find): the id[] array, the forest it encodes and the code line, kept in step",
@@ -18,6 +18,13 @@ _EXAMPLE_TOPICS = {
     "venn3": "three sets, their elements, and regions shaded one at a time",
     "triangle": "the angles of a triangle, measured and summed",
     "probability_tree": "two draws without replacement as a probability tree",
+    "lcs": "the longest common subsequence table filled cell by cell, each from its neighbours",
+    "process": "a process's states and the transitions between them, one path through them lit",
+    "tcp": "TCP's three-way handshake, then a request and its reply",
+    "rr": "round-robin scheduling with a quantum of 2, computed, as a timeline",
+    "adder": "a full adder's gates, with each row of inputs computed through them",
+    "linked": "a linked list in memory: pushing a node onto the front",
+    "eigen": "a 2x2 matrix acting on the plane: the grid and two vectors, before and after",
 }
 
 BRIEF = """\
@@ -34,8 +41,8 @@ keeps the picture as it is ([]); the line that answers shows the answer. Every n
 program snaps.
 
 Views (at most 3, stacked top to bottom in the order the program makes them; a title is at most 18 characters, \
-and it gives way to the picture when room is short, so the lines say what it names). The main picture (nodes, a \
-container, axes, a Venn diagram or a figure) gets the room, so every other view makes it smaller: a 3-line code panel takes a third of the frame. \
+and it gives way to the picture when room is short, so the lines say what it names). The main picture (every view but \
+cells and code) gets the room, so every other view makes it smaller: a 3-line code panel takes a third of the frame. \
 Use one only when the video is about the code's lines, and use the slide's own example over a smaller made-up one:
   - cells(name, values, title=None, index=True): a row of up to 8 cells, each value at most 2 characters (INF \
 or 'INF' shows as ∞). Use it like a list: a[i], a[i] = v, len(a), for v in a. a.mark(i, style), a.unmark(i=None), a.point(label, i) (a label \
@@ -85,6 +92,47 @@ a, b, label=None) an arc from a to b (a step of +7, a remainder), n.mark(key, st
 seen in 3D from one fixed angle. s.plot(key, f, n=12) the surface; s.columns(key, f, n=4) n x n boxes under it \
 (a double integral's sum), returning their total volume; s.point(key, x, y, z, label=None); s.mark(key, style), \
 s.remove(key).
+  - grid(name, rows, row_names=None, col_names=None, title=None, matrix=False): a table of up to 8 rows and 8 \
+columns (a DP table, a truth table, a database table, an adjacency matrix), or with matrix=True a matrix in \
+brackets; rows is a list of lists, each entry at most 6 characters (None: blank). About 3.7 units across in all, \
+so short entries when there are many columns. g[r][c] reads and writes an entry; g.row(r), g.col(c), g.rows, \
+g.cols; g.mark(r, c, style), g.mark_row(r, style), g.mark_col(c, style), g.unmark(r=None, c=None).
+  - flow(name, direction='down', title=None): labelled boxes joined by arrows, in layers ('down': top to bottom; \
+'right': left to right): a flowchart, a pipeline, a system's parts, a state machine with named states, a call or \
+parse tree with words. f.box(key, text=None, shape='box', style=None, layer=None) (up to 2 lines of 14 \
+characters, '\\n' between; shapes: box, round, diamond for a decision, circle, double for an accepting state, \
+cylinder for a database, document, cloud, and with a pictogram beside the text: person, chip for a CPU, monitor \
+for a computer, lock, server); f.text(key, text); f.arrow(a, b, label=None, style=None) (a label of at most 8 \
+characters; a == b draws a loop); f.unarrow(a, b), f.restyle(a, b, style) colours an arrow, f.mark(key, style), \
+f.unmark(key=None), f.remove(key). At most 12 boxes; about two 8-character boxes side by side and 5 layers fit. \
+An arrow label with no clear room is left out, so keep labels to a word.
+  - timeline(name, lanes, t=None, step=None, title=None): up to 6 lanes (names at most 8 characters) along a \
+time axis (t=(lo, hi), or fitted): tl.block(key, lane, start, end, label=None, style=None) a block in a lane (its \
+label written inside when it fits), tl.marker(key, t, label=None) a line at time t, tl.mark(key, style), \
+tl.remove(key). For CPU schedules, Gantt charts, pipelines, anything over time.
+  - sequence(name, actors, title=None): 2-4 actors side by side (names at most 8 characters), each with a \
+lifeline; s.message(key, a, b, label=None, style=None, dashed=False) an arrow from a to b below the messages \
+before it (a == b: to itself; dashed for a reply; a label of at most 14 characters), s.mark(key, style), \
+s.remove(key). Up to 10 messages. For protocols, a client and a server, threads and locks.
+  - circuit(name, title=None): a logic circuit drawn top to bottom, every wire showing the value code works \
+out (1 lit). c.input(key, value=0, label=None), c.gate(key, kind, inputs) (AND OR NOT NAND NOR XOR XNOR BUF, its \
+inputs made before it), c.output(key, source, label=None) (labels at most 4 characters); c.set(key, value) \
+changes an input, c.value(key) returns a computed value, c.mark(key, style). At most 14 parts; about 3 levels of \
+gates fit.
+  - memory(name, title=None): stack frames down the left, heap objects down the right, each a list of fields. \
+m.frame(key, title=None) (a call: 'main()', 'f(3)'), m.obj(key, title=None) (titles at most 10 characters), \
+m.set(box, name, value) (a value of at most 6 characters, None for blank, or m.ref(key) for an arrow to that heap \
+object), m.get(box, name), m.unset(box, name), m.remove(key) pops a frame or frees an object, m.mark(box, \
+name=None, style). At most 4 frames and 4 objects of 5 fields; about 3 objects of 2 fields fit beside a frame.
+  - Axes also draw: a.vector(key, x, y, origin=(0, 0), style=None, label=None) an arrow; a.polygon(key, points, \
+style=None, fill=True, label=None); a.curve(key, fx, fy, t=(0, 1)) the curve (fx(t), fy(t)); a.polar(key, r, \
+t=(0, 2*pi)) the curve r = r(theta); a.grid(key, matrix=None, step=1) the grid lines, sent through a 2x2 matrix \
+when given (what a linear map does to the plane; draw it again with the matrix and it moves).
+  - Which view: an array or a string -> cells; trees, graphs, heaps -> nodes; a table, a matrix, dynamic \
+programming, a truth table, rows of data -> grid; a process, a pipeline, layers, an architecture, a state machine, \
+a flowchart, a call tree with words -> flow; a schedule -> timeline; messages between parties -> sequence; logic \
+gates -> circuit; pointers, references, the call stack -> memory; functions, data, vectors, linear maps -> axes; \
+sets -> venn; shapes and angles -> geometry; integers and intervals -> numberline; z = f(x, y) -> surface.
   - Math you can call: sin cos tan asin acos atan atan2 exp log log2 log10 sqrt floor ceil hypot radians degrees \
 pi e factorial comb perm gcd; derivative(f, x), integral(f, a, b), root(f, a, b) (f(a), f(b) of opposite signs); \
 Fraction(p, q) for exact probabilities (str(Fraction(3, 10)) is '3/10'). A probability tree is nodes() with each \
@@ -119,5 +167,5 @@ Worked examples (programs for other ideas):
 def brief() -> str:
     parts = [BRIEF]
     for name, topic in _EXAMPLE_TOPICS.items():
-        parts.append(f"# {topic}\n{({**PROGRAMS, **MATH_PROGRAMS})[name].strip()}\n")
+        parts.append(f"# {topic}\n{({**PROGRAMS, **MATH_PROGRAMS, **DIAGRAM_PROGRAMS})[name].strip()}\n")
     return "\n".join(parts) + "\n"

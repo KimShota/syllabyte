@@ -52,9 +52,36 @@ def pretty(label: str) -> str:
     return out.replace("*", "·").replace("sqrt ", "√").replace("sqrt", "√")
 
 
-def text_half(text: str, font: int = LABEL_FONT) -> np.ndarray:
+_NARROW = set("iljI.,:;'|!()[] ")
+
+
+def text_width(text: str, font: int = LABEL_FONT) -> float:
+    """A text's width at a font size, from measured character widths at 30 (capitals 0.26, digits 0.2, lowercase
+    0.17, i and l 0.1, M and W 0.37), with 4% to spare: a flat 0.18 a character ran 'SYN-ACK 300' 0.6 short."""
+    w = 0.0
+    for ch in text:
+        if ch in "MWmw@%":
+            w += 0.34 if ch.islower() else 0.38
+        elif ch in _NARROW:
+            w += 0.1
+        elif ch.isupper():
+            w += 0.265
+        elif ch.isdigit():
+            w += 0.2
+        elif ch.isalpha():
+            w += 0.17
+        else:
+            w += 0.19
+    return w * 1.04 * font / LABEL_FONT
+
+
+def text_half(text: str, font: int = LABEL_FONT, exact: bool = False) -> np.ndarray:
+    """Half a label's box, with ROOM round it: by a flat CHAR_W a character (the math views were tuned on it), or
+    with exact=True by measured widths (the diagrams, whose labels are words with capitals)."""
     k = font / LABEL_FONT
-    return np.array([CHAR_W * k * len(pretty(text)) / 2, TEXT_H * k / 2]) + ROOM
+    shown = pretty(text)
+    w = text_width(shown, font) if exact else CHAR_W * k * len(shown)
+    return np.array([w / 2, TEXT_H * k / 2]) + ROOM
 
 
 # ---- geometry helpers ----------------------------------------------------------------------------------
@@ -170,7 +197,7 @@ class Request:
 
 
 def place(requests: list[Request], bounds: tuple, what: str, inline: set | None = None,
-          dropped: list | None = None) -> dict[tuple[str, str], np.ndarray]:
+          dropped: list | None = None, exact: bool = False) -> dict[tuple[str, str], np.ndarray]:
     """Each request gets the first candidate inside bounds (x0, x1, y0, y1), clear of its obstacles, its own line
     and the labels already placed that share a snapshot with it; failing that, a place on its own line (whose
     key then goes in `inline`: the line is drawn broken round it). The ones with fewest clear places go first.
@@ -183,7 +210,7 @@ def place(requests: list[Request], bounds: tuple, what: str, inline: set | None 
         return (c[0] - half[0] >= x0 and c[0] + half[0] <= x1 and c[1] - half[1] >= y0 and c[1] + half[1] <= y1
                 and r.obstacles.clear(c, half) and (on_line or r.own.clear(c, half)))
 
-    halves = {r.key: text_half(r.text) for r in requests}
+    halves = {r.key: text_half(r.text, exact=exact) for r in requests}
     counts = {r.key: sum(ok(c, halves[r.key], r) for c in r.candidates) + sum(
         ok(c, halves[r.key], r, True) for c in r.inline) for r in requests}
     out: dict[tuple[str, str], np.ndarray] = {}
@@ -223,15 +250,18 @@ def beside(points, half, fractions=(0.85, 0.7, 0.95, 0.55, 0.4, 0.25, 0.1)) -> l
     out = []
     n = len(points)
     for f in fractions:
-        i = min(n - 2, max(0, int(f * (n - 1))))
+        # the point a fraction f along the line (a two-point segment too, not just its middle)
+        at = f * (n - 1)
+        i = min(n - 2, max(0, int(at)))
         p, q = np.array(points[i]), np.array(points[i + 1])
         d = q - p
         length = float(np.hypot(*d)) or 1e-9
         normal = np.array([-d[1], d[0]]) / length
         reach = abs(normal[0]) * half[0] + abs(normal[1]) * half[1]
+        c = p + d * min(1.0, max(0.0, at - i))
         for side in (1, -1):
             for extra in (0.06, 0.2):
-                out.append((p + q) / 2 + normal * side * (reach + extra))
+                out.append(c + normal * side * (reach + extra))
     return out
 
 
@@ -270,7 +300,7 @@ def _data_extent(views: list[dict]) -> tuple[list[float], list[float]]:
                 for piece in it["pieces"]:
                     xs += [p[0] for p in piece]
                     ys += [p[1] for p in piece]
-            elif t in ("area", "segment"):
+            elif t in ("area", "segment", "vector", "polygon"):
                 xs += [p[0] for p in it["points"]]
                 ys += [p[1] for p in it["points"]]
             elif t in ("rects", "bars"):
@@ -446,7 +476,7 @@ def axes_layout(views: list[dict], region) -> AxesLayout:
     requests: dict[tuple[str, str], Request] = {}
     for i, v in enumerate(views):
         lines = {key: [piece for line in item_polylines(it, lay) for piece in clip_polyline(line, lo, hi)]
-                 for key, it in v["items"].items() if it["type"] != "field"}
+                 for key, it in v["items"].items() if it["type"] not in ("field", "grid")}
         for key, it in v["items"].items():
             if not it.get("label"):
                 continue
@@ -455,9 +485,15 @@ def axes_layout(views: list[dict], region) -> AxesLayout:
                 half = text_half(it["label"])
                 if it["type"] == "point":
                     cands = around(lay.to_screen(it["at"]), half)
+                elif it["type"] == "vector":  # past its tip first, then beside it
+                    tail, tip = map(np.array, item_polylines(it, lay)[0])
+                    d = (tip - tail) / (float(np.hypot(*(tip - tail))) or 1e-9)
+                    reach = abs(d[0]) * half[0] + abs(d[1]) * half[1]
+                    cands = [tip + d * (reach + e) for e in (0.08, 0.2)] + around(tuple(tip), half, 0.22) + beside(
+                        [tuple(tail), tuple(tip)], half)
                 elif it["type"] == "points":
                     cands = [c for p in it["at"][::-1][:4] for c in around(lay.to_screen(p), half)]
-                elif it["type"] == "area":
+                elif it["type"] in ("area", "polygon"):
                     cands = _inside(it, lay, half)
                 else:
                     own = lines.get(key) or [[(0, 0), (0, 0)]]
@@ -472,7 +508,8 @@ def axes_layout(views: list[dict], region) -> AxesLayout:
             req.shown.add(i)
             for other, ls in lines.items():  # an area's label sits inside its outline, which it keeps clear of
                 for line in ls:
-                    (req.own if other == key and it["type"] != "area" else req.obstacles).add_polyline(line)
+                    (req.own if other == key and it["type"] not in ("area", "polygon") else req.obstacles
+                     ).add_polyline(line)
             for other, it2 in v["items"].items():
                 if it2["type"] == "point" and other != key:
                     req.obstacles.discs.append((lay.to_screen(it2["at"]), POINT_R + ROOM))
@@ -541,11 +578,13 @@ def item_polylines(it: dict, lay: AxesLayout) -> list[list[tuple[float, float]]]
     t = it["type"]
     if t == "curve":
         return [[lay.to_screen(p) for p in piece] for piece in it["pieces"]]
-    if t == "area":
+    if t in ("area", "polygon"):
         pts = [lay.to_screen(p) for p in it["points"]]
         return [pts + pts[:1]]
-    if t == "segment":
+    if t in ("segment", "vector"):
         return [[lay.to_screen(p) for p in it["points"]]]
+    if t == "grid":
+        return [[lay.to_screen(p) for p in piece] for piece in it["pieces"]]
     if t in ("rects", "bars"):
         out = []
         for x0, x1, h in it["rects" if t == "rects" else "bars"]:

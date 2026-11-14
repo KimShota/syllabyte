@@ -2,7 +2,8 @@
 What a picture program can call (plan/scene-grammar-plan.md). Pure Python, no Manim: it runs inside the sandbox
 (scene/sandbox.py), and the state it records is drawn by scene/draw.py.
 
-A program makes up to MAX_VIEWS views (cells, nodes, code, container; for math: axes, venn, geometry), changes them
+A program makes up to MAX_VIEWS views (cells, nodes, code, container; for math: axes, venn, geometry, numberline,
+surface; diagrams: grid, flow, timeline, sequence, circuit, memory), changes them
 as the algorithm or the math runs, and calls
 snap("what this picture shows") after each step it wants seen. Each snap() records every view's whole state; the
 storyboard steps through the snapshots one beat at a time, and the engine animates the change between two of them
@@ -528,6 +529,61 @@ class Axes(_View):
             raise PictureError(f"{self.name}: 1-60 points in one scatter")
         self._put(key, {"type": "points", "at": pts}, style, label)
 
+    def vector(self, key, x, y, origin=(0, 0), style=None, label=None):
+        """An arrow from `origin` to origin + (x, y) (a vector, a basis vector, its image under a matrix)."""
+        ox, oy = _num(origin[0]), _num(origin[1])
+        self._put(key, {"type": "vector", "points": [[ox, oy], [ox + _num(x), oy + _num(y)]]}, style, label)
+
+    def polygon(self, key, points, style=None, fill=True, label=None):
+        """The polygon through the (x, y) points, shaded (fill=False: its outline only)."""
+        pts = [[_num(p[0]), _num(p[1])] for p in points]
+        if len(pts) < 3:
+            raise PictureError(f"{self.name}: {key}: a polygon needs at least 3 points")
+        self._put(key, {"type": "polygon", "points": pts, "fill": bool(fill)}, style, label)
+
+    def curve(self, key, fx, fy, t=(0, 1), style=None, label=None):
+        """The parametric curve (fx(t), fy(t)) for t from t[0] to t[1] (a circle, a cycloid, a path)."""
+        lo, hi = _num(t[0]), _num(t[1])
+        pieces, cur = [], []
+        for i in range(SAMPLES * 2 + 1):
+            s = lo + (hi - lo) * i / (SAMPLES * 2)
+            x, y = _value(fx, s), _value(fy, s)
+            if x is None or y is None:
+                if len(cur) > 1:
+                    pieces.append(cur)
+                cur = []
+                continue
+            cur.append([x, y])
+        if len(cur) > 1:
+            pieces.append(cur)
+        if not pieces:
+            raise PictureError(f"{self.name}: {key} is undefined everywhere on t = {lo:g}..{hi:g}")
+        self._put(key, {"type": "curve", "pieces": pieces}, style, label)
+
+    def polar(self, key, r, t=(0, 2 * math.pi), style=None, label=None):
+        """The polar curve r = r(theta) for theta from t[0] to t[1]."""
+        self.curve(key, lambda s: r(s) * math.cos(s), lambda s: r(s) * math.sin(s), t, style, label)
+
+    def grid(self, key, matrix=None, step=1, style="grey"):
+        """The lines x = k*step and y = k*step across the axes, each point sent through `matrix` [[a, b], [c, d]]
+        when given (what a linear map does to the plane). A background: labels may sit on it."""
+        if self.x is None or self.y is None:
+            raise PictureError(f"{self.name}: give the axes x and y ranges to draw a grid")
+        step = _num(step)
+        if step <= 0:
+            raise PictureError(f"{self.name}: a grid's step must be positive")
+        (a, b), (c, d) = ((1, 0), (0, 1)) if matrix is None else ((_num(matrix[0][0]), _num(matrix[0][1])),
+                                                                   (_num(matrix[1][0]), _num(matrix[1][1])))
+        span = max(abs(v) for v in self.x + self.y)
+        k = int(span / step) + 1
+        if 2 * k + 1 > 41:
+            raise PictureError(f"{self.name}: a grid of step {step:g} has too many lines; use a larger step")
+        lines = []
+        for i in range(-k, k + 1):
+            for p, q in (((i * step, -k * step), (i * step, k * step)), ((-k * step, i * step), (k * step, i * step))):
+                lines.append([[a * p[0] + b * p[1], c * p[0] + d * p[1]], [a * q[0] + b * q[1], c * q[0] + d * q[1]]])
+        self._put(key, {"type": "grid", "pieces": lines}, style)
+
     def mark(self, key, style="current"):
         if str(key) in self._items:
             self._items[str(key)]["style"] = _style(style)
@@ -835,6 +891,560 @@ class Surface(_View):
                 "items": copy.deepcopy(self._items)}
 
 
+# ---- diagrams (plan/scene-grammar-plan.md, P5): tables, boxes and arrows, timelines, message sequences, logic
+# circuits and memory. Their layouts are in scene/diagram_layout.py.
+
+MAX_GRID_ROWS = 8
+MAX_GRID_COLS = 8
+MAX_WORD = 6  # characters in a table entry, a header, a timeline block or a memory value
+
+
+def _word(v, limit: int = MAX_WORD, what: str = "an entry") -> str:
+    """A short text for a table entry, a header or a value: None is blank, a float shows as %g, INF as ∞."""
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        s = str(int(v))
+    elif isinstance(v, float):
+        s = INFINITY if v == float("inf") else ("-" + INFINITY if v == float("-inf") else f"{v:g}")
+        if len(s) > limit:
+            s = f"{v:.3g}"
+    else:
+        s = INFINITY if v in ("INF", "inf", "Infinity") else str(v)
+    if len(s) > limit:
+        raise PictureError(f"{what} {s!r} is longer than {limit} characters")
+    return s
+
+
+class _Row:
+    """One row of a grid, so g[r][c] reads and writes as in a list of lists."""
+
+    def __init__(self, grid: Grid, r: int):
+        self._grid, self._r = grid, r
+
+    def __getitem__(self, c):
+        return self._grid._raw[self._r][c]
+
+    def __setitem__(self, c, v):
+        self._grid[self._r, c] = v
+
+    def __len__(self):
+        return self._grid.cols
+
+    def __iter__(self):
+        return iter(list(self._grid._raw[self._r]))
+
+
+class Grid(_View):
+    """A table of rows and columns (a matrix, a DP table, a truth table, a database table, an adjacency matrix).
+    g[r][c] or g[r, c] reads and writes an entry (None: blank); headers name the rows and columns."""
+
+    kind = "grid"
+
+    def __init__(self, name, rows, row_names=None, col_names=None, title=None, matrix=False):
+        super().__init__(name, title)
+        rows = [list(r) for r in rows]
+        if not 1 <= len(rows) <= MAX_GRID_ROWS:
+            raise PictureError(f"{name}: 1-{MAX_GRID_ROWS} rows")
+        widths = {len(r) for r in rows}
+        if len(widths) != 1 or not 1 <= widths.pop() <= MAX_GRID_COLS:
+            raise PictureError(f"{name}: every row needs the same number of entries, 1-{MAX_GRID_COLS}")
+        self._raw = rows
+        for r in rows:
+            for v in r:
+                _word(v)
+        self.rows, self.cols = len(rows), len(rows[0])
+        self.row_names = None if row_names is None else [_word(v, what="a row name") for v in row_names]
+        self.col_names = None if col_names is None else [_word(v, what="a column name") for v in col_names]
+        if self.row_names is not None and len(self.row_names) != self.rows:
+            raise PictureError(f"{name}: {self.rows} rows but {len(self.row_names)} row names")
+        if self.col_names is not None and len(self.col_names) != self.cols:
+            raise PictureError(f"{name}: {self.cols} columns but {len(self.col_names)} column names")
+        self.matrix = bool(matrix)
+        self._marks: dict[tuple[int, int], str] = {}
+
+    def _rc(self, rc):
+        r, c = rc
+        if not (-self.rows <= r < self.rows and -self.cols <= c < self.cols):
+            raise PictureError(f"{self.name}: no entry ({r}, {c}) in a {self.rows} x {self.cols} table")
+        return r % self.rows, c % self.cols
+
+    def __getitem__(self, key):
+        if isinstance(key, tuple):
+            r, c = self._rc(key)
+            return self._raw[r][c]
+        return _Row(self, self._rc((key, 0))[0])
+
+    def __setitem__(self, key, v):
+        r, c = self._rc(key)
+        _word(v)
+        self._raw[r][c] = v
+
+    def __len__(self):
+        return self.rows
+
+    def row(self, r):
+        return list(self._raw[self._rc((r, 0))[0]])
+
+    def col(self, c):
+        c = self._rc((0, c))[1]
+        return [row[c] for row in self._raw]
+
+    def mark(self, r, c, style="current"):
+        self._marks[self._rc((r, c))] = _style(style)
+
+    def mark_row(self, r, style="current"):
+        for c in range(self.cols):
+            self.mark(r, c, style)
+
+    def mark_col(self, c, style="current"):
+        for r in range(self.rows):
+            self.mark(r, c, style)
+
+    def unmark(self, r=None, c=None):
+        for k in [k for k in self._marks if (r is None or k[0] == r % self.rows) and (c is None or k[1] == c % self.cols)]:
+            del self._marks[k]
+
+    def state(self):
+        return {"kind": self.kind, "title": self.title, "values": [[_word(v) for v in r] for r in self._raw],
+                "row_names": self.row_names, "col_names": self.col_names, "matrix": self.matrix,
+                "marks": {f"{r},{c}": s for (r, c), s in self._marks.items()}}
+
+
+def grid(name, rows, row_names=None, col_names=None, title=None, matrix=False):
+    return Grid(name, rows, row_names, col_names, title, matrix)
+
+
+SHAPES = ("box", "round", "diamond", "circle", "double", "cylinder", "document", "cloud", "person", "chip",
+          "monitor", "lock", "server")
+MAX_BOXES = 12
+MAX_BOX_TEXT = 14  # characters in a line of a box's text (two lines at most)
+
+
+def _box_text(text) -> str:
+    lines = str(text).split("\n")
+    if len(lines) > 2 or any(len(line) > MAX_BOX_TEXT for line in lines):
+        raise PictureError(f"a box's text {str(text)!r} is more than 2 lines of {MAX_BOX_TEXT} characters")
+    return "\n".join(line.strip() for line in lines)
+
+
+class Flow(_View):
+    """Labelled boxes joined by arrows, laid out in layers (direction 'down': top to bottom; 'right': left to
+    right): a flowchart, a pipeline, a system's parts, a state machine with named states, a call or parse tree.
+    A box's shape says what it is: box, round, diamond (a decision), circle, double (an accepting state), cylinder
+    (a database or disk), document, cloud, and pictograms with the text under them: person, chip (a CPU), monitor
+    (a computer), lock, server."""
+
+    kind = "flow"
+
+    def __init__(self, name, direction="down", title=None):
+        super().__init__(name, title)
+        if direction not in ("down", "right"):
+            raise PictureError("direction must be 'down' or 'right'")
+        self.direction = direction
+        self._boxes: dict[str, dict] = {}
+        self._arrows: dict[tuple[str, str], dict] = {}
+
+    def box(self, key, text=None, shape="box", style=None, layer=None):
+        key = str(key)
+        if key not in self._boxes and len(self._boxes) >= MAX_BOXES:
+            raise PictureError(f"{self.name}: at most {MAX_BOXES} boxes")
+        if shape not in SHAPES:
+            raise PictureError(f"unknown shape {shape!r}; use one of {', '.join(SHAPES)}")
+        self._boxes[key] = {"text": _box_text(key if text is None else text), "shape": shape, "style": _style(style),
+                            "layer": None if layer is None else int(layer)}
+
+    def text(self, key, text):
+        """Changes what a box says (a variable's new value, a state's new name)."""
+        self._need(key)["text"] = _box_text(text)
+
+    def _need(self, key):
+        if str(key) not in self._boxes:
+            raise PictureError(f"{self.name}: no box {key!r}; make it with box(key, text)")
+        return self._boxes[str(key)]
+
+    def arrow(self, a, b, label=None, style=None):
+        self._need(a), self._need(b)
+        label = None if label is None or not str(label).strip() else str(label).strip()
+        if label is not None and len(label) > MAX_MATH_LABEL:
+            raise PictureError(f"an arrow's label {label!r} is longer than {MAX_MATH_LABEL} characters")
+        self._arrows[(str(a), str(b))] = {"label": label, "style": _style(style)}
+
+    def unarrow(self, a, b):
+        self._arrows.pop((str(a), str(b)), None)
+
+    def restyle(self, a, b, style):
+        """Colours the arrow a -> b (the transition taken, the path followed)."""
+        if (str(a), str(b)) in self._arrows:
+            self._arrows[(str(a), str(b))]["style"] = _style(style)
+
+    def mark(self, key, style="current"):
+        self._need(key)["style"] = _style(style)
+
+    def unmark(self, key=None):
+        for k, b in self._boxes.items():
+            if key is None or k == str(key):
+                b["style"] = None
+        if key is None:
+            for d in self._arrows.values():
+                d["style"] = None
+
+    def remove(self, key):
+        key = str(key)
+        self._boxes.pop(key, None)
+        for e in [e for e in self._arrows if key in e]:
+            del self._arrows[e]
+
+    def state(self):
+        return {"kind": self.kind, "title": self.title, "direction": self.direction,
+                "boxes": copy.deepcopy(self._boxes),
+                "arrows": [[a, b, d["style"], d["label"]] for (a, b), d in self._arrows.items()]}
+
+
+def flow(name, direction="down", title=None):
+    return Flow(name, direction, title)
+
+
+MAX_LANES = 6
+MAX_BLOCKS = 24
+
+
+class Timeline(_View):
+    """Lanes along a time axis, with blocks in them (a CPU schedule, a Gantt chart, a pipeline's stages, a
+    process's states over time) and markers at moments (a deadline, an arrival)."""
+
+    kind = "timeline"
+
+    def __init__(self, name, lanes, t=None, step=None, title=None):
+        super().__init__(name, title)
+        self.lanes = [str(x).strip() for x in lanes]
+        if not 1 <= len(self.lanes) <= MAX_LANES:
+            raise PictureError(f"{name}: 1-{MAX_LANES} lanes")
+        if any(len(x) > MAX_MATH_LABEL for x in self.lanes):
+            raise PictureError(f"{name}: a lane's name is at most {MAX_MATH_LABEL} characters")
+        self.t = None if t is None else [_num(t[0]), _num(t[1])]
+        if self.t is not None and not self.t[0] < self.t[1]:
+            raise PictureError(f"{name}: t must run from low to high")
+        self.step = None if step is None else _num(step)
+        self._items: dict[str, dict] = {}
+
+    def _lane(self, lane) -> int:
+        if isinstance(lane, int) and 0 <= lane < len(self.lanes):
+            return lane
+        if str(lane) in self.lanes:
+            return self.lanes.index(str(lane))
+        raise PictureError(f"{self.name}: no lane {lane!r}; the lanes are {', '.join(self.lanes)}")
+
+    def _put(self, key, item, style, label):
+        key = str(key)
+        if key not in self._items and len(self._items) >= MAX_BLOCKS:
+            raise PictureError(f"{self.name}: at most {MAX_BLOCKS} blocks and markers")
+        label = None if label is None or not str(label).strip() else _word(str(label).strip(), MAX_MATH_LABEL,
+                                                                             "a label")
+        self._items[key] = {**item, "style": _style(style), "label": label}
+
+    def block(self, key, lane, start, end, label=None, style=None):
+        """A block in `lane` from `start` to `end` (its label is written inside it when it fits)."""
+        a, b = _num(start), _num(end)
+        if not a < b:
+            raise PictureError(f"{self.name}: {key}: a block ends after it starts")
+        self._put(key, {"type": "block", "lane": self._lane(lane), "a": a, "b": b}, style, label)
+
+    def marker(self, key, t, label=None, style="current"):
+        """A line across every lane at time t, labelled above them."""
+        self._put(key, {"type": "marker", "t": _num(t)}, style, label)
+
+    def mark(self, key, style="current"):
+        if str(key) in self._items:
+            self._items[str(key)]["style"] = _style(style)
+
+    def remove(self, key):
+        self._items.pop(str(key), None)
+
+    def state(self):
+        return {"kind": self.kind, "title": self.title, "lanes": list(self.lanes),
+                "t": None if self.t is None else list(self.t), "step": self.step, "items": copy.deepcopy(self._items)}
+
+
+def timeline(name, lanes, t=None, step=None, title=None):
+    return Timeline(name, lanes, t, step, title)
+
+
+MAX_ACTORS = 4
+MAX_MESSAGES = 10
+MAX_MESSAGE_LABEL = 14
+
+
+class Sequence(_View):
+    """Actors side by side, each with a lifeline down the page, and messages between them in time order (a
+    protocol's handshake, a client and a server, threads and a lock). Each message gets its own row, in the order
+    the program first sends it."""
+
+    kind = "sequence"
+
+    def __init__(self, name, actors, title=None):
+        super().__init__(name, title)
+        self.actors = [str(a).strip() for a in actors]
+        if not 2 <= len(self.actors) <= MAX_ACTORS:
+            raise PictureError(f"{name}: 2-{MAX_ACTORS} actors")
+        if any(len(a) > MAX_MATH_LABEL for a in self.actors) or len(set(self.actors)) != len(self.actors):
+            raise PictureError(f"{name}: each actor has its own name of at most {MAX_MATH_LABEL} characters")
+        self._messages: dict[str, dict] = {}
+        self._rows = 0
+
+    def _actor(self, a) -> int:
+        if str(a) in self.actors:
+            return self.actors.index(str(a))
+        if isinstance(a, int) and 0 <= a < len(self.actors):
+            return a
+        raise PictureError(f"{self.name}: no actor {a!r}; the actors are {', '.join(self.actors)}")
+
+    def message(self, key, a, b, label=None, style=None, dashed=False):
+        """An arrow from actor a's lifeline to b's (a == b: to itself), below the messages before it; dashed for a
+        reply."""
+        key = str(key)
+        old = self._messages.get(key)
+        if old is None:
+            if self._rows >= MAX_MESSAGES:
+                raise PictureError(f"{self.name}: at most {MAX_MESSAGES} messages")
+            row = self._rows
+            self._rows += 1
+        else:
+            row = old["row"]
+        label = None if label is None or not str(label).strip() else str(label).strip()
+        if label is not None and len(label) > MAX_MESSAGE_LABEL:
+            raise PictureError(f"a message's label {label!r} is longer than {MAX_MESSAGE_LABEL} characters")
+        self._messages[key] = {"a": self._actor(a), "b": self._actor(b), "label": label, "style": _style(style),
+                               "dashed": bool(dashed), "row": row}
+
+    def mark(self, key, style="current"):
+        if str(key) in self._messages:
+            self._messages[str(key)]["style"] = _style(style)
+
+    def remove(self, key):
+        self._messages.pop(str(key), None)
+
+    def state(self):
+        return {"kind": self.kind, "title": self.title, "actors": list(self.actors),
+                "messages": copy.deepcopy(self._messages)}
+
+
+def sequence(name, actors, title=None):
+    return Sequence(name, actors, title)
+
+
+GATES = ("AND", "OR", "NOT", "NAND", "NOR", "XOR", "XNOR", "BUF")
+MAX_PARTS = 14
+
+
+def _gate_value(kind: str, ins: list[int]) -> int:
+    if kind in ("NOT", "BUF"):
+        if len(ins) != 1:
+            raise PictureError(f"a {kind} gate takes one input")
+        return 1 - ins[0] if kind == "NOT" else ins[0]
+    if len(ins) < 2:
+        raise PictureError(f"an {kind} gate takes two or more inputs")
+    base = {"AND": all(ins), "NAND": all(ins), "OR": any(ins), "NOR": any(ins), "XOR": sum(ins) % 2 == 1,
+            "XNOR": sum(ins) % 2 == 1}[kind]
+    return int(bool(base) != (kind in ("NAND", "NOR", "XNOR")))
+
+
+class Circuit(_View):
+    """A logic circuit: inputs on the left, gates in columns by depth, outputs on the right. Every wire carries
+    the value code works out from the inputs (1 lit, 0 dim), so set() an input and snap() to show what changes."""
+
+    kind = "circuit"
+
+    def __init__(self, name, title=None):
+        super().__init__(name, title)
+        self._parts: dict[str, dict] = {}
+
+    def _add(self, key, part):
+        key = str(key)
+        if key not in self._parts and len(self._parts) >= MAX_PARTS:
+            raise PictureError(f"{self.name}: at most {MAX_PARTS} inputs, gates and outputs")
+        label = part.get("label")
+        if label is not None and len(str(label)) > 4:
+            raise PictureError(f"{self.name}: a label is at most 4 characters ({label!r})")
+        self._parts[key] = part
+
+    def input(self, key, value=0, label=None):
+        self._add(key, {"type": "input", "value": 1 if value else 0, "label": str(key if label is None else label),
+                        "style": None})
+
+    def gate(self, key, kind, inputs, label=None):
+        kind = str(kind).upper()
+        if kind not in GATES:
+            raise PictureError(f"unknown gate {kind!r}; use one of {', '.join(GATES)}")
+        ins = [str(i) for i in inputs]
+        for i in ins:
+            if i not in self._parts or self._parts[i]["type"] == "output":
+                raise PictureError(f"{self.name}: {key}'s input {i!r} is not an input or gate made before it")
+        _gate_value(kind, [0] * len(ins))  # refuses the wrong number of inputs
+        if len(ins) > 4:
+            raise PictureError(f"{self.name}: a gate takes at most 4 inputs")
+        self._add(key, {"type": "gate", "gate": kind, "inputs": ins, "label": None if label is None else str(label),
+                        "style": None})
+
+    def output(self, key, source, label=None):
+        if str(source) not in self._parts or self._parts[str(source)]["type"] == "output":
+            raise PictureError(f"{self.name}: output {key}'s source {source!r} is not an input or gate")
+        self._add(key, {"type": "output", "inputs": [str(source)], "label": str(key if label is None else label),
+                        "style": None})
+
+    def set(self, key, value):
+        if str(key) not in self._parts or self._parts[str(key)]["type"] != "input":
+            raise PictureError(f"{self.name}: {key!r} is not an input")
+        self._parts[str(key)]["value"] = 1 if value else 0
+
+    def value(self, key) -> int:
+        return self._values()[str(key)]
+
+    def _values(self) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for k, p in self._parts.items():  # each part made after its inputs, so one pass in order
+            if p["type"] == "input":
+                out[k] = p["value"]
+            elif p["type"] == "gate":
+                out[k] = _gate_value(p["gate"], [out[i] for i in p["inputs"]])
+            else:
+                out[k] = out[p["inputs"][0]]
+        return out
+
+    def mark(self, key, style="current"):
+        if str(key) in self._parts:
+            self._parts[str(key)]["style"] = _style(style)
+
+    def unmark(self, key=None):
+        for k, p in self._parts.items():
+            if key is None or k == str(key):
+                p["style"] = None
+
+    def state(self):
+        return {"kind": self.kind, "title": self.title, "parts": copy.deepcopy(self._parts), "values": self._values()}
+
+
+def circuit(name, title=None):
+    return Circuit(name, title)
+
+
+class Ref:
+    """A pointer to a heap object (memory.ref(key)): a field holding one is drawn as an arrow to it."""
+
+    def __init__(self, key):
+        self.key = str(key)
+
+    def __eq__(self, other):
+        return isinstance(other, Ref) and other.key == self.key
+
+    def __repr__(self):
+        return f"ref({self.key!r})"
+
+
+MAX_FRAMES = 4
+MAX_OBJECTS = 4
+MAX_FIELDS = 5
+
+
+class Memory(_View):
+    """Memory as boxes: stack frames down the left (the call stack, newest at the bottom), heap objects down the
+    right, each a list of named fields. A field holding m.ref(key) is drawn as an arrow to that object (a pointer,
+    a reference, a linked list's next)."""
+
+    kind = "memory"
+
+    def __init__(self, name, title=None):
+        super().__init__(name, title)
+        self._boxes: dict[str, dict] = {}
+
+    def _new(self, key, title, area):
+        key = str(key)
+        if key in self._boxes:
+            raise PictureError(f"{self.name}: there is already a frame or object {key!r}")
+        n = sum(1 for b in self._boxes.values() if b["area"] == area)
+        if n >= (MAX_FRAMES if area == "stack" else MAX_OBJECTS):
+            raise PictureError(f"{self.name}: at most {MAX_FRAMES} stack frames and {MAX_OBJECTS} heap objects")
+        title = key if title is None else str(title)
+        if len(title) > 10:
+            raise PictureError(f"{self.name}: a frame's or object's title is at most 10 characters ({title!r})")
+        self._boxes[key] = {"title": title, "area": area, "fields": {}, "style": None}
+
+    def frame(self, key, title=None):
+        """A stack frame (a call: 'main', 'f(3)')."""
+        self._new(key, title, "stack")
+
+    def obj(self, key, title=None):
+        """An object on the heap (a node, an array, an instance)."""
+        self._new(key, title, "heap")
+
+    def ref(self, key) -> Ref:
+        return Ref(key)
+
+    def _box(self, key):
+        if str(key) not in self._boxes:
+            raise PictureError(f"{self.name}: no frame or object {key!r}")
+        return self._boxes[str(key)]
+
+    def set(self, box, name, value):
+        """Field `name` of a frame or object now holds `value` (a short value, None for blank, or m.ref(key))."""
+        b = self._box(box)
+        name = str(name)
+        if len(name) > MAX_WORD:
+            raise PictureError(f"{self.name}: a field's name is at most {MAX_WORD} characters ({name!r})")
+        if name not in b["fields"] and len(b["fields"]) >= MAX_FIELDS:
+            raise PictureError(f"{self.name}: at most {MAX_FIELDS} fields in a frame or object")
+        if not isinstance(value, Ref):
+            _word(value, what="a value")
+        old = b["fields"].get(name)
+        b["fields"][name] = {"value": value, "style": None if old is None else old["style"]}
+
+    def get(self, box, name):
+        f = self._box(box)["fields"].get(str(name))
+        if f is None:
+            raise PictureError(f"{self.name}: {box} has no field {name!r}")
+        return f["value"]
+
+    def unset(self, box, name):
+        self._box(box)["fields"].pop(str(name), None)
+
+    def remove(self, key):
+        """Pops a frame or frees an object."""
+        self._boxes.pop(str(key), None)
+
+    def mark(self, box, name=None, style="current"):
+        b = self._box(box)
+        if name is None:
+            b["style"] = _style(style)
+        elif str(name) in b["fields"]:
+            b["fields"][str(name)]["style"] = _style(style)
+
+    def unmark(self, box=None):
+        for k, b in self._boxes.items():
+            if box is None or k == str(box):
+                b["style"] = None
+                for f in b["fields"].values():
+                    f["style"] = None
+
+    def state(self):
+        boxes = {}
+        for k, b in self._boxes.items():
+            fields = []
+            for name, f in b["fields"].items():
+                v = f["value"]
+                if isinstance(v, Ref):
+                    if v.key not in self._boxes or self._boxes[v.key]["area"] != "heap":
+                        raise PictureError(f"{self.name}: {k}.{name} points to {v.key!r}, which is not a heap object")
+                    fields.append([name, "", v.key, f["style"]])
+                else:
+                    fields.append([name, _word(v), None, f["style"]])
+            boxes[k] = {"title": b["title"], "area": b["area"], "fields": fields, "style": b["style"]}
+        return {"kind": self.kind, "title": self.title, "boxes": boxes}
+
+
+def memory(name, title=None):
+    return Memory(name, title)
+
+
 def surface(name, x=(-2, 2), y=(-2, 2), z=None, title=None, xlabel="x", ylabel="y", zlabel="z"):
     return Surface(name, x, y, z, title, xlabel, ylabel, zlabel)
 
@@ -886,8 +1496,10 @@ MATH = {k: getattr(math, k) for k in ("sin", "cos", "tan", "asin", "acos", "atan
                                        "factorial", "comb", "perm", "gcd")}
 
 EXPORTS = {"INF": float("inf"), "cells": cells, "nodes": nodes, "code": code, "container": container, "snap": snap,
-           "axes": axes, "venn": venn, "geometry": geometry, "numberline": numberline, "surface": surface, "derivative": derivative, "integral": integral,
-           "root": root, "Fraction": Fraction, "PictureError": PictureError, **MATH}
+           "axes": axes, "venn": venn, "geometry": geometry, "numberline": numberline, "surface": surface,
+           "grid": grid, "flow": flow, "timeline": timeline, "sequence": sequence, "circuit": circuit,
+           "memory": memory, "derivative": derivative, "integral": integral, "root": root, "Fraction": Fraction,
+           "PictureError": PictureError, **MATH}
 
 
 def reset() -> None:

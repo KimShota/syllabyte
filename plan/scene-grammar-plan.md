@@ -282,6 +282,28 @@ check 2.2, voices 19.4 (of which about 8 s loading Kokoro, its voice files over 
 After: plan 17.3 s, lines 6.9, line check 1.5, then voices and renders together, assembly 2.7: **44.0 s**, with
 the critic's scores unchanged (8, 8, 7, 6). A plan drawn again still adds 15-20 s. Not done: low effort for the
 planner, and speaking lines while the writer is still writing.
+- **P5, diagrams for the rest of CS and Math (2026-11-14, uncommitted):** the coverage and head-to-head runs drew
+  only from algorithms, discrete math, data science, ML, calculus, differential equations and statistics; the
+  views had nothing for tables, timelines, protocols, logic, memory or linear maps. Six views and five axes calls
+  were added, each with the same rules (one layout per program, the largest that fits, every label clear or left
+  out, a refusal that says what to cut), in scene/diagram_layout.py:
+  - `grid`: tables and matrices up to 8 x 8 (DP tables, truth tables, database rows, adjacency matrices);
+  - `flow`: labelled boxes and arrows in layers, with shapes (decision, accepting state, database, document,
+    cloud) and pictograms (person, chip, monitor, lock, server): flowcharts, pipelines, architectures, state
+    machines with loops, call trees with words. An arrow that skips layers passes each at a slot of its own
+    (layered drawing's dummy nodes); a label sits nearer its own arrow than any other;
+  - `timeline`: lanes over time (schedules, Gantt charts, pipelines);
+  - `sequence`: actors, lifelines and messages (protocols); a label wider than its lifelines breaks them;
+  - `circuit`: logic gates top to bottom (the frame is tall: left to right a full adder needs 7 units across and
+    3.7 fit), every wire showing its computed value; long wires pass levels at their own slots, each gap as tall
+    as its wires need;
+  - `memory`: stack frames and heap objects, pointers as arrows routed in channels of their own;
+  - axes: `vector`, `polygon`, `curve` (parametric), `polar`, `grid` (the plane through a 2x2 matrix, morphing).
+  The planner's brief lists them, says which view suits which kind of idea, and has 7 more worked examples (27k
+  characters). Text widths in the diagrams are measured per character (capitals 0.26, digits 0.2, lowercase 0.17
+  at font 30): a flat 0.18 ran 'SYN-ACK 300' 0.6 units short. All 11 examples render with no layout findings;
+  723 tests pass. Not done: an LLM run on the areas never tested (operating systems, networks, databases,
+  architecture, compilers, theory of computation, linear algebra, security).
 - **P3:** layer 2 (checked codegen on primitives), icon set, miss log.
 - **P4:** benchmark; templates kept only where they beat the grammar.
 - **Head-to-head (2026-11-13, runs/h2h, $2.11):** 10 topics (5 CS, 5 math, none used to tune the grammar), each
