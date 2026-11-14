@@ -14,6 +14,7 @@ import { CourseSync } from "@/state/course";
 import { retryConnection, useReachable, useSession } from "@/state/session";
 import { canExploreBeforeBaseline, isAuthPage, sessionRedirect } from "@/state/sessionRoutes";
 import { T } from "@/components/T";
+import { ReflectionSheet } from "@/components/ReflectionSheet";
 import { colors, fonts } from "@/theme/tokens";
 
 SplashScreen.preventAutoHideAsync();
@@ -100,6 +101,7 @@ export default function RootLayout() {
       <SessionGate pathname={pathname} />
       <CourseSync />
       <BaselineGate pathname={pathname} />
+      <ReflectionSheet pathname={pathname} />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.surface } }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="landing" options={{ animation: "fade", gestureEnabled: false }} />

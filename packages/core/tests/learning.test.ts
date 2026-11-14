@@ -273,3 +273,145 @@ describe.skipIf(!haveFixtures)("learning API", () => {
     expect(Object.keys(data.learning_sessions as Record<string, unknown>)).toContain(ctx.sessionId);
   });
 });
+
+describe.skipIf(!haveFixtures)("automatic prompts and the session reflection", () => {
+  let api: typeof import("../src/api/client").api;
+  let store: typeof import("../src/store");
+  let FIX: typeof import("../src/fixtures").FIX;
+  let ctx: { sessionId: string; courseId: string };
+  const MIN = 60_000;
+
+  beforeEach(async () => {
+    api = (await import("../src/api/client")).api;
+    store = await import("../src/store");
+    FIX = (await import("../src/fixtures")).FIX;
+    store.resetState();
+    ctx = { sessionId: `learning-${Math.random().toString(36).slice(2)}`, courseId: FIX.course.id };
+  });
+
+  /** Moves the app's clock on, as the demo's "simulate next day" does. */
+  const later = (ms: number) => store.mutate((s) => { s.clock_offset_ms += ms; });
+  const play = (i: number, upTo: number, id = `playback-${i}`) => {
+    const v = FIX.videos[i];
+    const end = Math.min(upTo, v.duration_s);
+    return api.recordLearningPlayback({ ...ctx, playbackId: id, videoId: v.id,
+      snapshot: { sequence: 1, intervals: end > 0 ? [[0, end]] : [], elapsed_s: end, exposure_s: end, position_s: end, duration_s: v.duration_s, source: "video" } });
+  };
+  const answerWrongCertain = (i: number) => {
+    const v = FIX.videos[i];
+    const item = FIX.items.find((x) => x.id === v.checkpoint.item_id)!;
+    return api.postCheckpointAnswer({ attemptId: `attempt-${i}`, learning: ctx, videoId: v.id, choice: (item.correct_index + 1) % item.options.length, confidence: "certain", hintUsed: false, latencyMs: 900 });
+  };
+
+  it("after a video watched and three left early, the move to the next video offers a drift check recalling the watched one", async () => {
+    await play(0, FIX.videos[0].duration_s * 0.7);
+    for (const i of [1, 2, 3]) { later(1000); await play(i, 3); }
+    later(1000);
+    const p = await api.evaluateLearningBoundary(ctx, { reason: "next_video", videoId: FIX.videos[1].id }); // back to one seen before
+    expect(p).toMatchObject({ kind: "drift_check", evidence: ["early_leaves:3"], observation: "You moved on early from the last 3 videos.", answer: null, action: null });
+    expect(p!.recall?.videoId).toBe(FIX.videos[0].id);
+    expect(p!.recall!.points.length).toBeGreaterThan(0);
+    // nothing new since: no second prompt
+    expect(await api.evaluateLearningBoundary(ctx, { reason: "next_video", videoId: FIX.videos[2].id })).toBeNull();
+
+    await api.respondToLearningPrompt(ctx, p!.id, { answer: "drifted" });
+    await api.respondToLearningPrompt(ctx, p!.id, { answer: "on_task", action: "rewatch" }); // the first answer stands
+    const saved = store.getState().learning_sessions[ctx.sessionId].prompts![0];
+    expect(saved).toMatchObject({ answer: "drifted", action: "rewatch", policyVersion: "drift-1" });
+  });
+
+  it("swiping straight through (videos that never played) counts as moving on early too", async () => {
+    for (const i of [1, 2, 3]) { later(1000); await play(i, 0); }
+    later(1000);
+    expect((await api.evaluateLearningBoundary(ctx, { reason: "next_video", videoId: FIX.videos[0].id }))?.kind).toBe("drift_check");
+  });
+
+  it("coming back after a minute or more, partway through a video, offers a recall of what came before", async () => {
+    const v = FIX.videos.find((x) => x.duration_s > 60)!;
+    const i = FIX.videos.indexOf(v);
+    await play(i, 45);
+    await api.recordLearningAway(ctx, { seconds: 120, videoId: v.id });
+    const p = await api.evaluateLearningBoundary(ctx, { reason: "return", videoId: v.id });
+    expect(p?.kind).toBe("welcome_back");
+    expect(p!.observation).toBe(`Welcome back. You were 0:45 into “${v.short_title}”.`);
+    expect(p!.recall?.replayFrom).toBeLessThanOrEqual(45);
+    // a short absence: carry on
+    await api.recordLearningAway(ctx, { seconds: 20, videoId: v.id });
+    expect(await api.evaluateLearningBoundary(ctx, { reason: "return", videoId: v.id })).toBeNull();
+    await expect(api.recordLearningAway(ctx, { seconds: -1, videoId: v.id })).rejects.toThrow(/Invalid/);
+  });
+
+  it("ending a session with a certain wrong answer leaves a reflection to show once; nothing is shown for an empty one", async () => {
+    await play(0, 40);
+    await answerWrongCertain(0);
+    const summary = await api.finishLearningSession(ctx, "left");
+    expect(summary).toMatchObject({ sessionId: ctx.sessionId, reason: "left" });
+    expect(summary!.observation).toBe(`You felt certain on the check in “${FIX.videos[0].short_title}”, but the answer was incorrect.`);
+    expect(summary!.nextStep).toMatch(/^Rewatch the part of/);
+    expect(summary!.stats).toMatch(/0 of 1 check right/);
+    expect(await api.finishLearningSession(ctx, "left")).toEqual(summary); // idempotent
+    expect(await api.getPendingReflection()).toEqual(summary);
+    await api.dismissReflection(ctx.sessionId);
+    expect(await api.getPendingReflection()).toBeNull();
+
+    const empty = { ...ctx, sessionId: "learning-empty" };
+    await api.recordLearningPlayback({ ...empty, playbackId: "playback-x", videoId: FIX.videos[1].id,
+      snapshot: { sequence: 1, intervals: [[0, 4]], elapsed_s: 4, exposure_s: 4, position_s: 4, duration_s: FIX.videos[1].duration_s, source: "video" } });
+    expect(await api.finishLearningSession(empty, "left")).toBeNull();
+    expect(await api.getPendingReflection()).toBeNull();
+  });
+
+  it("a session left idle for 10 minutes (the app was closed) ends by itself, and its reflection waits for the next open", async () => {
+    await play(0, 40);
+    await answerWrongCertain(0);
+    expect(await api.getPendingReflection()).toBeNull(); // still going
+    later(11 * MIN);
+    const pending = await api.getPendingReflection();
+    expect(pending).toMatchObject({ sessionId: ctx.sessionId, reason: "gap" });
+    // an ended session offers no more prompts
+    expect(await api.evaluateLearningBoundary(ctx, { reason: "next_video", videoId: FIX.videos[1].id })).toBeNull();
+  });
+
+  it("of several sessions ended together after the app was closed, the most recently active one is shown", async () => {
+    const first = ctx;
+    await play(0, 40);
+    await answerWrongCertain(0);
+    later(1000);
+    ctx = { ...ctx, sessionId: "learning-later" };
+    await play(1, 40);
+    await answerWrongCertain(1);
+    later(11 * MIN);
+    expect((await api.getPendingReflection())?.sessionId).toBe("learning-later");
+    await api.dismissReflection("learning-later");
+    expect(await api.getPendingReflection()).toBeNull();
+    expect(store.getState().learning_sessions[first.sessionId].summarySeenAt).not.toBeNull();
+  });
+
+  it("only the latest waiting reflection is shown; dismissing it clears older ones", async () => {
+    const first = ctx;
+    await play(0, 40);
+    await answerWrongCertain(0);
+    await api.finishLearningSession(first, "left");
+    later(1000);
+    ctx = { ...ctx, sessionId: "learning-second" };
+    await play(1, 40);
+    await answerWrongCertain(1);
+    await api.finishLearningSession(ctx, "left");
+    expect((await api.getPendingReflection())?.sessionId).toBe("learning-second");
+    await api.dismissReflection("learning-second");
+    expect(await api.getPendingReflection()).toBeNull();
+    expect(store.getState().learning_sessions[first.sessionId].summarySeenAt).not.toBeNull();
+  });
+
+  it("right answers given while unsure are named as competence", async () => {
+    for (const i of [0, 1]) {
+      const v = FIX.videos[i];
+      const item = FIX.items.find((x) => x.id === v.checkpoint.item_id)!;
+      await play(i, 30);
+      await api.postCheckpointAnswer({ attemptId: `attempt-${i}`, learning: ctx, videoId: v.id, choice: item.correct_index, confidence: "pretty", hintUsed: false, latencyMs: 900 });
+    }
+    const s = await api.finishLearningSession(ctx, "left");
+    expect(s!.observation).toBe("You answered 2 checks right even when you weren't sure.");
+    expect(s!.nextStep).toMatch(/you know more than you felt/);
+  });
+});

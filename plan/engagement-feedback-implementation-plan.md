@@ -11,10 +11,26 @@ The first milestone (end of this plan) is built for the mobile feed: watch → a
 
 - Core: `logic/playback.ts` (PlaybackMeter, interval union), `learning.ts` (types, `learningFeedback` rules v1), `api/learning.ts` (`recordLearningPlayback`, `postLearningCheckIn`, `recordLearningFeedbackAction`, `getLearningReflection`). Completion is 90% unique coverage of one source; real and stand-in ("demo") playback never add up. Checkpoint answers carry an `attemptId` and are idempotent. Calibration block 1 states counts only. Replay alone no longer queues a refresher.
 - Playback saves use `mutateQuietly` (store) and are exempt from the remote client's refetch, so screens don't refetch every 5 s; the server runner saves on quiet changes too. Screens are woken when a save completes a video or a page stops playing.
-- Mobile: `usePlayback` feeds the meter (also from the stand-in clock), `useLearningPlayback` saves every 5 s and on leaving, `QuickCheck` retries without duplicating, `LearningFeedback` is a student-opened check-in, `SessionReflection` is its own page after the last video (before a feed's own end page).
+- Mobile: `usePlayback` feeds the meter (also from the stand-in clock), `useLearningPlayback` saves every 5 s and on leaving, `QuickCheck` retries without duplicating, `LearningFeedback` is an optional check-in after a checkpoint. The session reflection is no longer a page: see "Automatic feedback" below.
 - Tests: `packages/core/tests/learning.test.ts`, plus an HTTP test in `apps/server/tests/rpc.test.ts`.
 
-The API names differ from the "Proposed API operations" table below. Not built yet: the event envelope and persistent, deduplicated queue (phase 1), system-offered check-ins with session budgets, the 10-minute session-gap rule (a session is one mounted feed), later access to a reflection after leaving a feed early, later retrieval and future-learning judgments in the feed (phase 5), research exports and feature flags (phase 6). Native playback callbacks have not yet been exercised on a device.
+### Automatic feedback (built 14 November 2026)
+
+Students never open a reflection page; the app decides when to offer support, in the sense of a just-in-time adaptive intervention (Nahum-Shani et al., 2018): decision points, tailoring variables, intervention options, rules, and "no prompt" as the default. Policy `drift-1` in `packages/core/src/logic/engagementDrift.ts`; every number is a pilot starting point, versioned in the data.
+
+| Decision point | Rule | What the student sees |
+|---|---|---|
+| Moving to the next video | Drift: 3 videos in a row left before half-way, or two of {2 such videos, 2 absences of 15 s+ within 10 min, 2 of the last 3 checks wrong}. Only evidence since the last prompt counts; at most 2 per session, 5 min apart | The observation in plain words ("You moved on early from the last 3 videos"), "where was your attention?" (on the videos / something else / familiar / searching; Seli et al., 2016). Drifted or familiar: recall the last video really watched, then compare with its key points (`claims`; Szpunar et al., 2013) → continue / rewatch it / take a break |
+| Returning to the app after 60 s to 10 min, partway through a video | Welcome back, at most 2 per session | "Welcome back. You were 0:45 into X." Recall the last idea, then compare with the key points up to there → continue / replay from that point |
+| Returning after 10 min or more | The session ends (reason `gap`); a new one starts | The ended session's reflection |
+| Leaving the feed | The session ends (reason `left`) | The reflection, as a sheet over whatever screen comes next |
+| Next app open after closing it | Sessions idle for 10 min end when the app next asks (`getPendingReflection`) | The latest ended session's reflection ("Your last session") |
+
+The reflection is one observation and one next step, and only when there is something to say (an answer, a finished video, or a reported drift). Observation priority: certain + wrong, wrong, right while unsure (2+), drift, all right, finished. Shown once; dismissing it also clears older ones. The swipe-to reflection page is removed.
+
+Playback saves, absences, prompts and prompt responses are quiet writes (no refetch). A decision point waits for the page left behind to finish saving (`apps/mobile/src/components/player/learningSync.ts`), so the server decides on everything the student did.
+
+The API names differ from the "Proposed API operations" table below. Not built yet: the event envelope and persistent, deduplicated queue (phase 1), later retrieval and future-learning judgments in the feed (phase 5), research exports and feature flags (phase 6). Native playback callbacks have not yet been exercised on a device.
 
 ## Objective and scope
 

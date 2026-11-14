@@ -38,14 +38,63 @@ export interface LearningCheckIn extends LearningCheckInInput {
   action: FeedbackAction | null;
   actionAt: number | null;
 }
+/** The student left the app (backgrounded it) during a learning session and came back after `seconds`. */
+export interface AwayRecord { at: number; seconds: number; videoId: string | null }
+
+/**
+ * A prompt the app offered by itself at a decision point (plan/engagement-feedback-implementation-plan.md, "Automatic
+ * feedback"). `drift_check`: signs the student's engagement dropped, at the move to the next video. `welcome_back`: the
+ * student came back to the app partway through a video.
+ */
+export type PromptKind = "drift_check" | "welcome_back";
+/** The answer to "where was your attention?" in a drift check (Seli et al. 2016: deliberate vs unintended drift). */
+export type DriftAnswer = "on_task" | "drifted" | "familiar" | "searching";
+export type PromptAction = "continue" | "rewatch" | "replay" | "pause";
+export interface LearningPrompt {
+  id: string;
+  kind: PromptKind;
+  policyVersion: string;
+  /** the observations that fired it, e.g. "early_leaves:3", "away:2", "errors:2", "away_s:95" */
+  evidence: string[];
+  /** what happened, in plain words, shown to the student (never a judgement about them) */
+  observation: string;
+  /** the video to recall: the last one really watched (drift) or the one on screen (welcome back) */
+  recall: { videoId: string; title: string; points: string[]; replayFrom: number } | null;
+  shownAt: number;
+  answer: DriftAnswer | null;
+  action: PromptAction | null;
+  respondedAt: number | null;
+}
+
+export type SessionEndReason = "left" | "gap";
+/** The short reflection the app shows by itself when a session ends: one observation and one next step. */
+export interface SessionSummary {
+  sessionId: string;
+  observation: string;
+  nextStep: string;
+  /** e.g. "2 videos · 1 of 2 checks right · 4 min of playback" */
+  stats: string;
+  reason: SessionEndReason;
+  createdAt: number;
+}
+
 export interface LearningSession {
   id: string;
   courseId: string;
   startedAt: number;
   updatedAt: number;
-  playback: Record<string, { videoId: string; snapshot: PlaybackSnapshot; receivedAt: number }>;
+  /** one row per time a video was on screen; `firstAt` orders them (missing on rows saved before it existed) */
+  playback: Record<string, { videoId: string; snapshot: PlaybackSnapshot; receivedAt: number; firstAt?: number }>;
   completedVideos: string[];
   checkIns: LearningCheckIn[];
+  /** fields below were added later: missing on older sessions */
+  away?: AwayRecord[];
+  prompts?: LearningPrompt[];
+  endedAt?: number | null;
+  endReason?: SessionEndReason | null;
+  /** null when the session gave nothing worth reflecting on, so nothing was shown */
+  summary?: SessionSummary | null;
+  summarySeenAt?: number | null;
 }
 export interface LearningReflection {
   sessionId: string;

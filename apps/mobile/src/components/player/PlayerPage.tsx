@@ -22,6 +22,9 @@ import { colors, fonts, radius, shadow } from "@/theme/tokens";
 import type { LearningContext } from "@syllabyte/core/learning";
 import { useLearningPlayback } from "./useLearningPlayback";
 
+/** Something the feed asks the page on screen to do (an automatic prompt's action); `id` makes each one new. */
+export type PlayerCommand = { id: number; videoId: string; kind: "seek"; t: number } | { id: number; videoId: string; kind: "pause" };
+
 export function PlayerPage({
   ku,
   learning,
@@ -31,9 +34,12 @@ export function PlayerPage({
   speed,
   onSpeed,
   onBlockSwipe,
+  command,
 }: {
   ku: Ku;
   learning: LearningContext;
+  /** for the page on screen only */
+  command?: PlayerCommand | null;
   eyebrow: string;
   height: number;
   active: boolean;
@@ -64,6 +70,16 @@ export function PlayerPage({
   }, [checkOpen, cp]);
 
   const playbackSave = useLearningPlayback(learning, videoId, pb.measurement, active && !checkOpen);
+
+  const { seek, pause } = pb;
+  const done = useRef(0);
+  useEffect(() => {
+    // a command waits for its own video: "rewatch" scrolls back first, then seeks
+    if (!command || command.id === done.current || command.videoId !== videoId) return;
+    done.current = command.id;
+    if (command.kind === "seek") seek(command.t);
+    else pause();
+  }, [command, seek, pause, videoId]);
 
   // how far in the student got (drives "pick up where you left off"), saved when they swipe away or leave
   const reached = useRef(0);

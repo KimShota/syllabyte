@@ -3,6 +3,7 @@ import { api } from "@syllabyte/core/api/client";
 import type { LearningContext, PlaybackSnapshot } from "@syllabyte/core/learning";
 import { touch } from "@syllabyte/core/store";
 import { uid } from "@syllabyte/core/util";
+import { trackSave } from "./learningSync";
 
 /** How often a playing page saves what it observed. */
 const SAVE_EVERY_MS = 5000;
@@ -16,12 +17,13 @@ const SAVE_EVERY_MS = 5000;
 export function useLearningPlayback(learning: LearningContext, videoId: string | null, measurement: () => PlaybackSnapshot, active: boolean) {
   const [playbackId] = useState(() => uid("playback"));
   const [failed, setFailed] = useState(false);
-  const acknowledged = useRef(0);
+  const acknowledged = useRef(-1);
   const flush = useCallback(async (wake = false) => {
     const snapshot = measurement();
+    // the first save goes even with nothing played: a video swiped straight past is a visit too (moving on early)
     if (!videoId || snapshot.sequence <= acknowledged.current) return;
     try {
-      const { completedNow } = await api.recordLearningPlayback({ ...learning, playbackId, videoId, snapshot });
+      const { completedNow } = await trackSave(api.recordLearningPlayback({ ...learning, playbackId, videoId, snapshot }));
       acknowledged.current = Math.max(acknowledged.current, snapshot.sequence);
       setFailed(false);
       if (completedNow || wake) touch();

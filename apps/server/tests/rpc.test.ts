@@ -190,3 +190,30 @@ describe("learning sessions over HTTP", () => {
     expect(other).toMatchObject({ videos: [], answers: 0 });
   });
 });
+
+describe("automatic prompts and reflections over HTTP", () => {
+  it("saves a quiet drift prompt and a session's reflection, which waits until it is dismissed", async () => {
+    const { FIX } = await import("@syllabyte/core/fixtures");
+    const dir = (await import("node:fs")).mkdtempSync((await import("node:os")).tmpdir() + "/syllabyte-");
+    const path = `${dir}/t.db`;
+    const ann = await makeServer({ db: openDb(path) }).signIn("ann@nyu.edu");
+    const ctx = { sessionId: "learning-ann", courseId: FIX.course.id };
+    const visit = (i: number, id: string) => ann.rpc("recordLearningPlayback", { ...ctx, playbackId: id, videoId: FIX.videos[i].id,
+      snapshot: { sequence: 0, intervals: [], elapsed_s: 0, exposure_s: 0, position_s: 0, duration_s: FIX.videos[i].duration_s, source: "video" } });
+    for (const [i, id] of [[1, "p-1"], [2, "p-2"], [3, "p-3"]] as const) await visit(i, id);
+    const prompt = await ann.rpc<{ id: string; kind: string }>("evaluateLearningBoundary", ctx, { reason: "next_video", videoId: FIX.videos[0].id });
+    expect(prompt.kind).toBe("drift_check");
+    await ann.rpc("respondToLearningPrompt", ctx, prompt.id, { answer: "searching", action: "continue" });
+    const item = FIX.items.find((i) => i.id === FIX.videos[0].checkpoint.item_id)!;
+    await ann.rpc("postCheckpointAnswer", { attemptId: "a-1", learning: ctx, videoId: FIX.videos[0].id, choice: (item.correct_index + 1) % item.options.length, confidence: "certain", hintUsed: false, latencyMs: 700 });
+    const summary = await ann.rpc<{ sessionId: string }>("finishLearningSession", ctx, "left");
+    expect(summary.sessionId).toBe(ctx.sessionId);
+
+    const again = await makeServer({ db: openDb(path) }).signIn("ann@nyu.edu");
+    expect(await again.rpc("getPendingReflection")).toEqual(summary);
+    const data = await again.rpc<{ learning_sessions: Record<string, { prompts: { answer: string; action: string }[] }> }>("exportMyData");
+    expect(data.learning_sessions[ctx.sessionId].prompts[0]).toMatchObject({ answer: "searching", action: "continue" });
+    await again.rpc("dismissReflection", ctx.sessionId);
+    expect(await again.rpc("getPendingReflection")).toBeNull();
+  });
+});

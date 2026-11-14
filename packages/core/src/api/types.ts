@@ -1,4 +1,4 @@
-import type { LearningContext, LearningPlaybackInput, LearningCheckInInput, LearningCheckIn, LearningReflection, FeedbackAction } from "../learning";
+import type { DriftAnswer, LearningContext, LearningPlaybackInput, LearningCheckInInput, LearningCheckIn, LearningPrompt, LearningReflection, FeedbackAction, PromptAction, SessionEndReason, SessionSummary } from "../learning";
 import type { Instrument } from "../content/instruments";
 import type {
   AppSettings, BatteryRecord, CalibrationView, Choice, Condition, Confidence, Course, CourseMapView, DemoState, Difficulty, Item,
@@ -59,6 +59,17 @@ export interface Api {
   postLearningCheckIn(input: LearningCheckInInput): Promise<LearningCheckIn>;
   recordLearningFeedbackAction(context: LearningContext, checkInId: string, action: FeedbackAction): Promise<void>;
   getLearningReflection(context: LearningContext): Promise<LearningReflection>;
+  /** The student came back to the app after `seconds` away, on `videoId` (null: not on a video). */
+  recordLearningAway(context: LearningContext, input: { seconds: number; videoId: string | null }): Promise<void>;
+  /** A decision point (moved to the next video, came back to the app): the prompt to offer now, if any. Call it after the
+   *  playback saves of the page left behind have been acknowledged. */
+  evaluateLearningBoundary(context: LearningContext, input: { reason: "next_video" | "return"; videoId: string }): Promise<LearningPrompt | null>;
+  respondToLearningPrompt(context: LearningContext, promptId: string, response: { answer?: DriftAnswer; action?: PromptAction }): Promise<void>;
+  /** Ends a session; returns the reflection to show, or null when there is nothing worth reflecting on. */
+  finishLearningSession(context: LearningContext, reason: SessionEndReason): Promise<SessionSummary | null>;
+  /** The latest session reflection not yet seen (ending sessions left idle for 10 minutes first), or null. */
+  getPendingReflection(): Promise<SessionSummary | null>;
+  dismissReflection(sessionId: string): Promise<void>;
   // session / first run
   getMe(): Promise<Me>;
   postConsent(research: boolean): Promise<void>;

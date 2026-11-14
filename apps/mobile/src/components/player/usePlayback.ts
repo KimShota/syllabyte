@@ -120,7 +120,9 @@ export function usePlayback(ku: Ku, { active, hold, rate }: { active: boolean; h
     else setPlaying((p) => !p);
   }, [ended, seek]);
 
+  const pause = useCallback(() => setPlaying(false), []);
+
   const measurement = useCallback(() => meter.snapshot(), [meter]);
 
-  return { measurement, player: hasVideo ? player : null, time, playing: playing && !ended, ended, seek, toggle };
+  return { measurement, player: hasVideo ? player : null, time, playing: playing && !ended, ended, seek, toggle, pause };
 }
