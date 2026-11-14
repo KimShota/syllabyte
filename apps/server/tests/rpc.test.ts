@@ -161,3 +161,32 @@ describe("the researcher export", () => {
     expect(csv).not.toContain("@");
   });
 });
+
+describe("learning sessions over HTTP", () => {
+  it("saves quiet playback observations, isolates students and keeps a retried answer once", async () => {
+    const { FIX } = await import("@syllabyte/core/fixtures");
+    const dir = (await import("node:fs")).mkdtempSync((await import("node:os")).tmpdir() + "/syllabyte-");
+    const path = `${dir}/t.db`;
+    const first = makeServer({ db: openDb(path) });
+    const [ann, bob] = await Promise.all([first.signIn("ann@nyu.edu"), first.signIn("bob@nyu.edu")]);
+    const video = FIX.videos[0];
+    const item = FIX.items.find((i) => i.id === video.checkpoint.item_id)!;
+    const ctx = { sessionId: "learning-ann", courseId: FIX.course.id };
+    const snapshot = { sequence: 1, intervals: [[0, 20]], elapsed_s: 20, exposure_s: 20, position_s: 20, duration_s: video.duration_s, source: "video" };
+    // a playback save is quiet (no screen refresh), but it must still reach the database
+    expect(await ann.rpc("recordLearningPlayback", { ...ctx, playbackId: "playback-1", videoId: video.id, snapshot })).toEqual({ completedNow: false });
+    const answer = { attemptId: "attempt-1", learning: ctx, videoId: video.id, choice: (item.correct_index + 1) % item.options.length, confidence: "certain", hintUsed: false, latencyMs: 800 };
+    const a = await ann.rpc<{ responseId: string }>("postCheckpointAnswer", answer);
+    const b = await ann.rpc<{ responseId: string }>("postCheckpointAnswer", answer);
+    expect(b.responseId).toBe(a.responseId);
+
+    const again = makeServer({ db: openDb(path) });
+    const ann2 = await again.signIn("ann@nyu.edu");
+    const r = await ann2.rpc<{ videos: { id: string; coverage: number }[]; answers: number }>("getLearningReflection", ctx);
+    expect(r.videos.map((v) => v.id)).toEqual([video.id]);
+    expect(r.answers).toBe(1);
+    // another student naming the same session id sees nothing of it
+    const other = await bob.rpc<{ videos: unknown[]; answers: number }>("getLearningReflection", ctx);
+    expect(other).toMatchObject({ videos: [], answers: 0 });
+  });
+});

@@ -38,6 +38,8 @@ export interface BackendOptions {
 
 /** Methods that only read (the rest may change data, so the screens refetch after them). */
 const READS = /^(get|list|export)[A-Z]/;
+/** Writes that no screen shows straight away (a playing video's observations, every few seconds): no refetch after them. */
+const QUIET = new Set(["recordLearningPlayback"]);
 
 export interface SignedIn {
   token: string;
@@ -137,7 +139,7 @@ export function createBackend(o: BackendOptions) {
       if (typeof method !== "string" || method === "then") return undefined;
       return async (...args: unknown[]) => {
         const data = await request(`/api/rpc/${method}`, { args }, true);
-        if (!READS.test(method)) o.onChanged();
+        if (!READS.test(method) && !QUIET.has(method)) o.onChanged();
         return data.result;
       };
     },

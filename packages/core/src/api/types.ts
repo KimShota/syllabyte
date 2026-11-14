@@ -1,3 +1,4 @@
+import type { LearningContext, LearningPlaybackInput, LearningCheckInInput, LearningCheckIn, LearningReflection, FeedbackAction } from "../learning";
 import type { Instrument } from "../content/instruments";
 import type {
   AppSettings, BatteryRecord, CalibrationView, Choice, Condition, Confidence, Course, CourseMapView, DemoState, Difficulty, Item,
@@ -42,6 +43,8 @@ export interface BatteryView {
 }
 
 export interface CheckpointAnswerInput {
+  attemptId?: string;
+  learning?: LearningContext;
   videoId: string;
   choice: number;
   confidence: Confidence;
@@ -50,6 +53,12 @@ export interface CheckpointAnswerInput {
 }
 
 export interface Api {
+  /** Saves a playback snapshot (cumulative, so retries and reordering are harmless). `completedNow`: this one made the video
+   *  count as watched (90% unique coverage), so screens should refresh. */
+  recordLearningPlayback(input: LearningPlaybackInput): Promise<{ completedNow: boolean }>;
+  postLearningCheckIn(input: LearningCheckInInput): Promise<LearningCheckIn>;
+  recordLearningFeedbackAction(context: LearningContext, checkInId: string, action: FeedbackAction): Promise<void>;
+  getLearningReflection(context: LearningContext): Promise<LearningReflection>;
   // session / first run
   getMe(): Promise<Me>;
   postConsent(research: boolean): Promise<void>;
@@ -97,7 +106,7 @@ export interface Api {
 
   // player
   getVariant(videoId: string): Promise<VariantView>;
-  postCheckpointAnswer(a: CheckpointAnswerInput): Promise<{ correct: boolean; queuedForTomorrow: boolean }>;
+  postCheckpointAnswer(a: CheckpointAnswerInput): Promise<{ correct: boolean; queuedForTomorrow: boolean; responseId: string }>;
   skipCheckpoint(videoId: string): Promise<void>;
   markWatched(videoId: string): Promise<void>;
   /** How far into the video the student has got; drives "pick up where you left off" (D13). */

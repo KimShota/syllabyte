@@ -1,3 +1,4 @@
+import type { LearningSession } from "./learning";
 /**
  * Shared types. The "fixture" half mirrors packages/common/syllabyte_common/learner.py
  * (keep both in sync); the rest are app-state and view models. From Phase 1 the API
@@ -243,6 +244,8 @@ export interface QuestionNeed {
 // ------------------------------------------------------------ app state
 
 export interface ResponseRecord {
+  attempt_id?: string;
+  learning_session_id?: string;
   id: string;
   item_id: string;
   topic_id: string;
@@ -463,6 +466,7 @@ export interface DemoState {
   /** demo override: the lecture treated as upcoming (null = from the schedule) */
   upcoming_lecture: number | null;
   responses: ResponseRecord[];
+  learning_sessions: Record<string, LearningSession>;
   playlist: PlaylistState;
   watched: Record<string, WatchRecord>;
   next_session: NextSessionTask[];

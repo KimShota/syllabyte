@@ -1,7 +1,7 @@
 import { mockApi, questionBankLectures, questionNeedsNow, syncPlaylistWithVideos } from "@syllabyte/core/api/mock";
 import { FIX, currentCourseId, setFixtures } from "@syllabyte/core/fixtures";
 import { setEventEnv, track } from "@syllabyte/core/events";
-import { freshState, getEventVersion, getState, getVersion, mutate, replaceState } from "@syllabyte/core/store";
+import { freshState, getEventVersion, getQuietVersion, getState, getVersion, mutate, replaceState } from "@syllabyte/core/store";
 import { startOfWeek } from "@syllabyte/core/logic/time";
 import type { DemoState, Fixtures, QuestionNeed } from "@syllabyte/core/types";
 import type { Db } from "./db";
@@ -55,6 +55,7 @@ export class StateRunner {
     replaceState(this.load(user, courseId));
     const v = getVersion();
     const e = getEventVersion();
+    const q = getQuietVersion();
     // a video made since their last request joins their playlist (core's syncPlaylistWithVideos); after the versions
     // are noted, so the change is saved
     if (course) syncPlaylistWithVideos();
@@ -70,7 +71,7 @@ export class StateRunner {
       if (course && this.opts.needs) this.opts.needs(user.id, questionNeedsNow(openedSitting), questionBankLectures(openedSitting));
       return out;
     } finally {
-      if (getVersion() !== v || getEventVersion() !== e) this.save(user.id, courseId);
+      if (getVersion() !== v || getEventVersion() !== e || getQuietVersion() !== q) this.save(user.id, courseId);
     }
   }
 
@@ -111,7 +112,7 @@ export class StateRunner {
     const live = getState();
     const part = (d: Partial<DemoState>): Omit<CourseExport, "course_id" | "code" | "name" | "active"> => ({
       profile: { levels: d.levels ?? {}, made: d.made ?? {}, sittings: d.sittings ?? {} },
-      responses: d.responses ?? [], notes: d.notes ?? [], self_explanations: d.self_explanations ?? [],
+      learning_sessions: d.learning_sessions ?? {}, responses: d.responses ?? [], notes: d.notes ?? [], self_explanations: d.self_explanations ?? [],
     });
     const out: CourseExport[] = courseIds.flatMap((id) => {
       const named = describe(id);
@@ -141,6 +142,7 @@ export interface CourseExport {
   responses: DemoState["responses"];
   notes: DemoState["notes"];
   self_explanations: DemoState["self_explanations"];
+  learning_sessions: DemoState["learning_sessions"];
 }
 
 /** Methods a student may call: the whole `Api` except the ones that read across students. */

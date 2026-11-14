@@ -31,6 +31,7 @@ export function freshState(now = Date.now()): DemoState {
     level_updates: [],
     upcoming_lecture: null,
     responses: [],
+    learning_sessions: {},
     playlist: { entries: [], manual_order: null, built_at_week: 1 },
     watched: {},
     next_session: [],
@@ -110,6 +111,24 @@ export function mutate(fn: (s: DemoState) => void): void {
   state = { ...state };
   persist();
   notify();
+}
+
+let quietVersion = 0;
+
+/**
+ * A change that no screen needs to see straight away (the playback observations a playing video saves every few seconds):
+ * it is saved like any other, but screens are not woken, so they don't refetch while a video plays.
+ */
+export function mutateQuietly(fn: (s: DemoState) => void): void {
+  fn(state);
+  state = { ...state };
+  persist();
+  quietVersion += 1;
+}
+
+/** Counts quiet changes, so the server knows to save a request that made only those. */
+export function getQuietVersion(): number {
+  return quietVersion;
 }
 
 /** The data changed somewhere else (the server answered a write): wake every screen that reads through the API. */

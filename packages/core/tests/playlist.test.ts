@@ -75,10 +75,10 @@ describe("per-KU rules (plan D13, D14)", () => {
     expect(buildEntries(base({ videos: swapped, levels: lv })).map((e) => e.video_id)).toEqual(["a", "b"]);
   });
 
-  it("queues a video watched several times as a refresher, once the first pass is done", () => {
+  it("does not queue a video as a refresher just because it was watched several times: replay alone is not evidence", () => {
     const w = (views: number) => ({ a: { first_at: T0, last_at: T0, views }, d: { first_at: T0, last_at: T0, views: 1 } });
     expect(tags(buildEntries(base({ watched: w(2) })))).toEqual([]);
-    expect(tags(buildEntries(base({ watched: w(3) })))).toEqual(["a:refresher"]);
+    expect(tags(buildEntries(base({ watched: w(5) })))).toEqual([]);
   });
 
   it("sends a video stopped early back to the top, ahead of everything else", () => {
