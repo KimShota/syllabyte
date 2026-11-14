@@ -32,7 +32,7 @@ function actionText(c: LearningCheckIn): string {
 export function SessionReflection({ learning, active, more }: { learning: LearningContext; active: boolean; more: boolean }) {
   const insets = useSafeAreaInsets();
   const r = useQuery(() => api.getLearningReflection(learning), [learning.sessionId, active]);
-  const empty = r && !r.videos.length && !r.answers;
+  const empty = r && !r.videos.length && !r.answers && !r.glanced;
 
   return (
     <ScrollView style={styles.page} contentContainerStyle={[styles.body, { paddingTop: insets.top + 48, paddingBottom: insets.bottom + 48 }]}>
@@ -50,7 +50,7 @@ export function SessionReflection({ learning, active, more }: { learning: Learni
         <T color={MUTED}>Nothing has been saved in this session yet.</T>
       ) : (
         <>
-          {r.videos.length ? (
+          {r.videos.length || r.glanced ? (
             <View style={styles.card}>
               <T color="#fff" style={styles.label}>
                 {formatSeconds(r.elapsedSeconds)} of playback
@@ -65,6 +65,11 @@ export function SessionReflection({ learning, active, more }: { learning: Learni
                   </T>
                 </View>
               ))}
+              {r.glanced ? (
+                <T variant="caption" color={MUTED}>
+                  {r.videos.length ? "Also glanced at" : "Glanced at"} {r.glanced === 1 ? "1 video" : `${r.glanced} videos`} for a few seconds.
+                </T>
+              ) : null}
             </View>
           ) : null}
 
@@ -89,7 +94,8 @@ export function SessionReflection({ learning, active, more }: { learning: Learni
               </T>
               {r.checkIns.map((c) => (
                 <View key={c.id} style={{ gap: 2 }}>
-                  <T color="#fff">{c.feedback.message}</T>
+                  <T color="#fff">{c.videoTitle}</T>
+                  <T color={MUTED}>{c.recap}</T>
                   <T variant="caption" color={MUTED}>
                     {actionText(c)}
                   </T>

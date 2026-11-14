@@ -52,13 +52,16 @@ export interface LearningReflection {
   elapsedSeconds: number;
   /** videos with any observed playback; `synthetic` when it was only the stand-in clock of a video without its file */
   videos: { id: string; title: string; coverage: number; replaySeconds: number; synthetic: boolean; completed: boolean }[];
+  /** videos whose playback was too brief to list (swiped past): only counted */
+  glanced: number;
   /** one suggested next action, chosen from the saved evidence */
   nextStep: string;
   answers: number;
   correct: number;
   certainAnswers: number;
   certainCorrect: number;
-  checkIns: LearningCheckIn[];
+  /** the saved check-ins, each with a recap that reads on its own, away from the checkpoint card */
+  checkIns: (LearningCheckIn & { videoTitle: string; recap: string })[];
 }
 
 /**
@@ -90,4 +93,19 @@ export function learningFeedback(e: {
     message = "You revisited part of this video and answered this question correctly. Which part helped your understanding?";
   }
   return { rule, message, replayFrom: e.replayFrom, policyVersion: "1" };
+}
+
+/**
+ * What a saved card was about, in the past tense, for the session reflection: the card's own message points at "the
+ * explanation above", which is not on that page.
+ */
+export function feedbackRecap(rule: FeedbackRule, e: { confidence: Confidence | null; hintUsed: boolean }): string {
+  const certain = e.confidence === "certain" && !e.hintUsed;
+  switch (rule) {
+    case "attention_recovery": return "You said your attention drifted just before the question.";
+    case "difficulty_support": return certain ? "You felt certain and found this part difficult, and the answer was incorrect." : "You found this part difficult, and the answer was incorrect.";
+    case "confidence_mismatch": return "You felt certain, but the answer was incorrect.";
+    case "review_acknowledgment": return "You revisited part of this video and answered its question correctly.";
+    case "reflection": return "You saved a reflection on this part.";
+  }
 }

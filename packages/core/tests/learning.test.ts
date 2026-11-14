@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { learningFeedback } from "../src/learning";
+import { feedbackRecap, learningFeedback } from "../src/learning";
 import type { PlaybackSnapshot } from "../src/learning";
 import { PlaybackMeter, coveredSeconds, mergeIntervals } from "../src/logic/playback";
 
@@ -96,6 +96,12 @@ describe("learningFeedback rules", () => {
   it("replay alone is not evidence of anything; replay plus a correct answer is acknowledged", () => {
     expect(learningFeedback({ ...base, correct: false, replaySeconds: 30 }).rule).toBe("reflection");
     expect(learningFeedback({ ...base, replaySeconds: 30 }).rule).toBe("review_acknowledgment");
+  });
+  it("recaps every rule without pointing at the checkpoint card", () => {
+    for (const rule of ["attention_recovery", "difficulty_support", "confidence_mismatch", "review_acknowledgment", "reflection"] as const) {
+      expect(feedbackRecap(rule, { confidence: "pretty", hintUsed: false })).not.toMatch(/above/);
+    }
+    expect(feedbackRecap("difficulty_support", { confidence: "certain", hintUsed: true })).not.toMatch(/certain/);
   });
   it("carries the replay target and a policy version", () => {
     expect(learningFeedback(base)).toMatchObject({ replayFrom: 12, policyVersion: "1" });
@@ -216,6 +222,29 @@ describe.skipIf(!haveFixtures)("learning API", () => {
     expect(r.checkIns[0].action).toBe("replay");
     expect(r.videos).toEqual([expect.objectContaining({ id: vid().id, coverage: expect.closeTo(0.5, 5), synthetic: false, completed: false })]);
     expect(r.nextStep).toMatch(/^Rewatch the part of/);
+    // the recap reads on its own: the card's "explanation above" is not on the reflection page
+    expect(r.checkIns[0].recap).toBe("You felt certain and found this part difficult, and the answer was incorrect.");
+    expect(r.checkIns[0].videoTitle).toBe(vid().short_title);
+  });
+
+  it("videos only swiped past are counted, not listed, and never suggested as the next step", async () => {
+    const [a, b, c] = FIX.videos;
+    await api.recordLearningPlayback({ ...ctx, playbackId: "playback-a", videoId: a.id, snapshot: snap(a.duration_s, [[0, 30]], 1) });
+    await api.recordLearningPlayback({ ...ctx, playbackId: "playback-b", videoId: b.id, snapshot: snap(b.duration_s, [[0, 3]], 1) });
+    await api.recordLearningPlayback({ ...ctx, playbackId: "playback-c", videoId: c.id, snapshot: snap(c.duration_s, [[0, 4]], 1) });
+    const r = await api.getLearningReflection(ctx);
+    expect(r.videos.map((v) => v.id)).toEqual([a.id]);
+    expect(r.glanced).toBe(2);
+    expect(r.nextStep).toContain(a.short_title);
+    expect(r.elapsedSeconds).toBeCloseTo(37, 5); // glanced playback still counts toward the total
+  });
+
+  it("a briefly played video stays listed when its checkpoint was answered", async () => {
+    await api.recordLearningPlayback({ ...ctx, playbackId: "playback-a", videoId: vid().id, snapshot: snap(vid().duration_s, [[0, 5]], 1) });
+    await answer(item().correct_index, "pretty");
+    const r = await api.getLearningReflection(ctx);
+    expect(r.videos.map((v) => v.id)).toEqual([vid().id]);
+    expect(r.glanced).toBe(0);
   });
 
   it("a check-in must point at a checkpoint answer from the same session", async () => {
@@ -226,7 +255,7 @@ describe.skipIf(!haveFixtures)("learning API", () => {
 
   it("the reflection of an empty session says so honestly", async () => {
     const r = await api.getLearningReflection(ctx);
-    expect(r).toMatchObject({ answers: 0, videos: [], checkIns: [], elapsedSeconds: 0 });
+    expect(r).toMatchObject({ answers: 0, videos: [], glanced: 0, checkIns: [], elapsedSeconds: 0 });
     expect(r.nextStep).toMatch(/^Watch a video/);
   });
 

@@ -1,6 +1,6 @@
 import { fixtures, videoById } from "../fixtures";
 import { coveredSeconds, mergeIntervals } from "../logic/playback";
-import { learningFeedback, type LearningContext, type LearningReflection, type LearningSession } from "../learning";
+import { feedbackRecap, learningFeedback, type LearningContext, type LearningReflection, type LearningSession } from "../learning";
 import type { ResponseRecord } from "../types";
 import { getState, mutate, mutateQuietly, now } from "../store";
 import { uid } from "../util";
@@ -33,6 +33,9 @@ function exposureOf(rows: Observation[]) {
 function bestCoverage(rows: Observation[]): number {
   return Math.max(0, ...(["video", "demo"] as const).map((src) => exposureOf(rows.filter((r) => r.snapshot.source === src)).unique));
 }
+
+/** Below this much unique playback a video only counts as glanced at in the reflection (it was swiped past). */
+export const GLANCE_S = 10;
 
 /** Share of a video's unique content that must play before it counts as watched (the old rule, now on coverage). */
 export const WATCHED_COVERAGE = 0.9;
@@ -103,22 +106,35 @@ export function learningApi(markWatched: (videoId: string) => Promise<void>): Pi
       const s = getState().learning_sessions[context.sessionId];
       const observations = Object.values(s?.playback ?? {});
       const responses = getState().responses.filter((r) => r.learning_session_id === context.sessionId && r.context === "checkpoint");
+      const answered = new Set(responses.map((r) => r.video_id));
+      let glanced = 0;
       const videos = [...new Set(observations.map((p) => p.videoId))].flatMap((id) => {
           const rows = observations.filter((r) => r.videoId === id);
           const { unique, replay } = exposureOf(rows);
           if (unique <= 0) return [];
+          const completed = s?.completedVideos.includes(id) ?? false;
+          // a video swiped past is counted, not listed, unless something else happened on it
+          if (unique < GLANCE_S && !completed && !answered.has(id)) {
+            glanced += 1;
+            return [];
+          }
           return [{ id, title: videoById(id).short_title, coverage: Math.min(1, unique / rows[0].snapshot.duration_s), replaySeconds: replay,
-            synthetic: rows.every((r) => r.snapshot.source === "demo"), completed: s?.completedVideos.includes(id) ?? false }];
+            synthetic: rows.every((r) => r.snapshot.source === "demo"), completed }];
       });
       return {
         sessionId: context.sessionId,
         elapsedSeconds: observations.reduce((n, r) => n + r.snapshot.elapsed_s, 0),
         videos,
+        glanced,
         nextStep: nextStep(responses, videos),
         answers: responses.length, correct: responses.filter((r) => r.correct === true).length,
         certainAnswers: responses.filter((r) => r.confidence === "certain" && !r.hint_used).length,
         certainCorrect: responses.filter((r) => r.confidence === "certain" && !r.hint_used && r.correct === true).length,
-        checkIns: structuredClone(s?.checkIns ?? []),
+        checkIns: (s?.checkIns ?? []).map((c) => {
+          const r = responses.find((x) => x.id === c.responseId);
+          return { ...structuredClone(c), videoTitle: videoById(c.videoId).short_title,
+            recap: feedbackRecap(c.feedback.rule, { confidence: r?.confidence ?? null, hintUsed: r?.hint_used ?? false }) };
+        }),
       };
     },
   };
