@@ -371,6 +371,13 @@ def _picture_calls(segments) -> str:
     return ", ".join(f"{k} {v}" for k, v in counts.items())
 
 
+def pictures_mode() -> str:
+    """How a storyboard's picture is drawn: "grammar" (the default since 2026-11-14: a program the planner writes,
+    plan/scene-grammar-plan.md) or "templates" (the per-topic templates that came before, kept as the way back:
+    SYLLABYTE_PICTURES=templates, or the templates-video branch)."""
+    return "templates" if os.environ.get("SYLLABYTE_PICTURES", "").strip().lower() == "templates" else "grammar"
+
+
 def write_storyboard_planned(
     ku: KnowledgeUnit,
     corpus,
@@ -416,7 +423,7 @@ def write_storyboard_planned(
         raise ScriptValidationError(f"KU {ku.id} cites slides that don't resolve in the corpus: {ku.source_refs}")
     cast = load_cast()
     explainer, peer = cast.explainer.name, cast.peer.name
-    grammar = os.environ.get("SYLLABYTE_PICTURES") == "grammar"
+    grammar = pictures_mode() == "grammar"
     if grammar:  # a program draws the picture (scene grammar, P1)
         from script_generation_agent.picture_plan import GRAMMAR_PLAN
 

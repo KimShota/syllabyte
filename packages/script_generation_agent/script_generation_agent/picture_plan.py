@@ -61,7 +61,7 @@ class PicturePlan(BaseModel):
 @dataclass(frozen=True)
 class GrammarPlan:
     """The picture plan when a program draws the picture (the scene grammar, plan/scene-grammar-plan.md, P1;
-    SYLLABYTE_PICTURES=grammar): Picture, with formulas and notes beside it, and no traced example."""
+    the default, unless SYLLABYTE_PICTURES=templates): Picture, with formulas and notes beside it, and no traced example."""
 
     templates: tuple[str, ...] = ("Picture", "EquationSteps", "Note")
     main: str = "Picture"

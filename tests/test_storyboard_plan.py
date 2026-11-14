@@ -50,6 +50,7 @@ def _run(monkeypatch, answers):
 
 
 def test_the_picture_is_planned_then_the_lines_are_written_to_it(monkeypatch):
+    monkeypatch.setenv("SYLLABYTE_PICTURES", "templates")  # the template path, kept as the way back
     plan = storyboard.skeleton(2)
     script, seen, ready = _run(monkeypatch, {
         "storyboard_plan": plan_board(plan),
@@ -122,3 +123,14 @@ def test_a_note_is_judged_against_the_line_not_the_planners_point():
     segments = [[['t = Table(columns=["i", "x"], rows=[[1, 4]])', 't.note(text="total is four")']]]
     assert storyboard.drop_echoes(segments, [["So the total is four after one pass."]])[0][0] == [segments[0][0][0]]
     assert storyboard.drop_echoes(segments, [["One pass in, and x was four."]]) == segments
+
+
+def test_a_program_draws_the_picture_unless_the_templates_are_asked_for(monkeypatch):
+    from script_generation_agent.storyboard_plan import pictures_mode
+
+    monkeypatch.delenv("SYLLABYTE_PICTURES", raising=False)
+    assert pictures_mode() == "grammar"
+    monkeypatch.setenv("SYLLABYTE_PICTURES", "templates")
+    assert pictures_mode() == "templates"
+    monkeypatch.setenv("SYLLABYTE_PICTURES", "grammar")
+    assert pictures_mode() == "grammar"

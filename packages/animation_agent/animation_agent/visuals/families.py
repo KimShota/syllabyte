@@ -98,7 +98,7 @@ DRAWN_BY: dict[str, tuple[str, ...]] = {
 # Beside any picture: a formula, and a short note.
 ALWAYS = ("EquationSteps", "Note")
 
-# Drawn for any family when a program draws the picture (SYLLABYTE_PICTURES=grammar; plan/scene-grammar-plan.md),
+# Drawn for any family when a program draws the picture (the default; SYLLABYTE_PICTURES=templates turns it off; plan/scene-grammar-plan.md),
 # never picked by family.
 GRAMMAR = ("Picture",)
 
