@@ -330,15 +330,18 @@ describe.skipIf(!haveFixtures)("automatic prompts and the session reflection", (
     const v = FIX.videos.find((x) => x.duration_s > 60)!;
     const i = FIX.videos.indexOf(v);
     await play(i, 45);
-    await api.recordLearningAway(ctx, { seconds: 120, videoId: v.id });
+    await api.recordLearningAway(ctx, { id: "away-1", seconds: 120, videoId: v.id });
     const p = await api.evaluateLearningBoundary(ctx, { reason: "return", videoId: v.id });
     expect(p?.kind).toBe("welcome_back");
     expect(p!.observation).toBe(`Welcome back. You were 0:45 into “${v.short_title}”.`);
     expect(p!.recall?.replayFrom).toBeLessThanOrEqual(45);
     // a short absence: carry on
-    await api.recordLearningAway(ctx, { seconds: 20, videoId: v.id });
+    await api.recordLearningAway(ctx, { id: "away-2", seconds: 20, videoId: v.id });
     expect(await api.evaluateLearningBoundary(ctx, { reason: "return", videoId: v.id })).toBeNull();
-    await expect(api.recordLearningAway(ctx, { seconds: -1, videoId: v.id })).rejects.toThrow(/Invalid/);
+    await expect(api.recordLearningAway(ctx, { id: "away-3", seconds: -1, videoId: v.id })).rejects.toThrow(/Invalid/);
+    // a retried save of the same absence is kept once
+    await api.recordLearningAway(ctx, { id: "away-2", seconds: 20, videoId: v.id });
+    expect(store.getState().learning_sessions[ctx.sessionId].away!.map((a) => a.id)).toEqual(["away-1", "away-2"]);
   });
 
   it("ending a session with a certain wrong answer leaves a reflection to show once; nothing is shown for an empty one", async () => {
@@ -372,6 +375,20 @@ describe.skipIf(!haveFixtures)("automatic prompts and the session reflection", (
     expect(await api.evaluateLearningBoundary(ctx, { reason: "next_video", videoId: FIX.videos[1].id })).toBeNull();
   });
 
+  it("a feed kept open with the app in front (keep-alives) never ends as idle, however long the video stays paused", async () => {
+    await play(0, 40);
+    await answerWrongCertain(0);
+    for (let i = 0; i < 4; i++) {
+      later(5 * MIN);
+      expect(await api.keepLearningSessionOpen(ctx)).toEqual({ ended: false });
+      expect(await api.getPendingReflection()).toBeNull();
+    }
+    // the keep-alives stop (the app was closed): it ends after the gap, and a late keep-alive says so
+    later(11 * MIN);
+    expect((await api.getPendingReflection())?.sessionId).toBe(ctx.sessionId);
+    expect(await api.keepLearningSessionOpen(ctx)).toEqual({ ended: true });
+  });
+
   it("of several sessions ended together after the app was closed, the most recently active one is shown", async () => {
     const first = ctx;
     await play(0, 40);
@@ -401,6 +418,15 @@ describe.skipIf(!haveFixtures)("automatic prompts and the session reflection", (
     await api.dismissReflection("learning-second");
     expect(await api.getPendingReflection()).toBeNull();
     expect(store.getState().learning_sessions[first.sessionId].summarySeenAt).not.toBeNull();
+  });
+
+  it("a reported drift alone is worth a reflection, with no empty counts in its stats", async () => {
+    for (const i of [1, 2, 3]) { later(1000); await play(i, 0); }
+    later(1000);
+    const p = await api.evaluateLearningBoundary(ctx, { reason: "next_video", videoId: FIX.videos[0].id });
+    await api.respondToLearningPrompt(ctx, p!.id, { answer: "drifted", action: "pause" });
+    const s = await api.finishLearningSession(ctx, "left");
+    expect(s).toMatchObject({ observation: "You said your attention drifted during this session.", stats: "" });
   });
 
   it("right answers given while unsure are named as competence", async () => {

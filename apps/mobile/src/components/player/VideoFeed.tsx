@@ -10,6 +10,7 @@ import { COURSE } from "@/data/course";
 import { kuEyebrow } from "@/data/selectors";
 import type { Ku } from "@/data/types";
 import { usePrefs, type Speed } from "@/state/app";
+import { sendLearning } from "@/state/learningOutbox";
 import { EngagementPrompt } from "./EngagementPrompt";
 import { whenSaved } from "./learningSync";
 import { PlayerPage, type PlayerCommand } from "./PlayerPage";
@@ -30,6 +31,8 @@ export function useDarkStatusBar() {
 }
 
 const newSession = (): LearningContext => ({ courseId: COURSE.id, sessionId: uid("learning") });
+/** How often an open feed tells the server its session is still going (well inside the 10-minute idle gap). */
+const KEEP_OPEN_MS = 60_000;
 
 /**
  * A vertical swipe feed of full-screen videos: one page at a time, and only the page on screen plays. Speed
@@ -107,11 +110,11 @@ export function VideoFeed({ kus, startIndex, end }: { kus: readonly Ku[]; startI
       if (seconds * 1000 >= DRIFT_POLICY.sessionGapMs) {
         setPrompt(null);
         setLearning(newSession());
-        void whenSaved().then(() => api.finishLearningSession(context, "gap")).catch(() => {});
+        void whenSaved().then(() => sendLearning("finishLearningSession", context, "gap"));
         return;
       }
       void whenSaved()
-        .then(() => api.recordLearningAway(context, { seconds, videoId }))
+        .then(() => sendLearning("recordLearningAway", context, { id: uid("away"), seconds, videoId }))
         .then(() => (videoId ? api.evaluateLearningBoundary(context, { reason: "return", videoId }) : null))
         .then((p) => { if (p && current.current === context) setPrompt(p); }, () => {});
     });
@@ -123,14 +126,34 @@ export function VideoFeed({ kus, startIndex, end }: { kus: readonly Ku[]; startI
   // Decision point: leaving the feed ends the session; its reflection, if any, appears by itself (ReflectionSheet).
   useEffect(() => () => {
     const context = current.current;
-    void whenSaved().then(() => api.finishLearningSession(context, "left")).catch(() => {});
+    void whenSaved().then(() => sendLearning("finishLearningSession", context, "left"));
   }, []);
+
+  // While the feed is open with the app in front, the session stays open however long a video stays paused: only a
+  // closed or backgrounded app lets it end as idle. If it ended anyway (no keep-alive got through for 10 minutes), what
+  // the student does next belongs to a new session.
+  const live = focused && foreground;
+  useEffect(() => {
+    if (!live) return;
+    const ping = () => {
+      const context = current.current;
+      api.keepLearningSessionOpen(context).then(({ ended }) => {
+        if (ended && current.current === context) {
+          setPrompt(null);
+          setLearning(newSession());
+        }
+      }, () => {});
+    };
+    ping();
+    const timer = setInterval(ping, KEEP_OPEN_MS);
+    return () => clearInterval(timer);
+  }, [live]);
 
   function closePrompt(action: PromptAction) {
     const p = prompt;
     setPrompt(null);
     if (!p) return;
-    void api.respondToLearningPrompt(learning, p.id, { action }).catch(() => {});
+    void sendLearning("respondToLearningPrompt", learning, p.id, { action });
     if (action === "pause" && activeVideoId) setCommand({ id: Date.now(), videoId: activeVideoId, kind: "pause" });
     const r = p.recall;
     if (!r) return;
@@ -194,7 +217,7 @@ export function VideoFeed({ kus, startIndex, end }: { kus: readonly Ku[]; startI
         <EngagementPrompt
           key={prompt.id}
           prompt={prompt}
-          onAnswer={(answer) => { void api.respondToLearningPrompt(learning, prompt.id, { answer }).catch(() => {}); }}
+          onAnswer={(answer) => { void sendLearning("respondToLearningPrompt", learning, prompt.id, { answer }); }}
           onDone={closePrompt}
         />
       ) : null}

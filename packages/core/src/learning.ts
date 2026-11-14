@@ -39,7 +39,7 @@ export interface LearningCheckIn extends LearningCheckInInput {
   actionAt: number | null;
 }
 /** The student left the app (backgrounded it) during a learning session and came back after `seconds`. */
-export interface AwayRecord { at: number; seconds: number; videoId: string | null }
+export interface AwayRecord { at: number; seconds: number; videoId: string | null; /** the phone's id: a retried save is kept once */ id?: string }
 
 /**
  * A prompt the app offered by itself at a decision point (plan/engagement-feedback-implementation-plan.md, "Automatic

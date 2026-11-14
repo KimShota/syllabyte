@@ -43,7 +43,8 @@ export const WATCHED_COVERAGE = 0.9;
 
 export function learningApi(markWatched: (videoId: string) => Promise<void>): Pick<Api,
   "recordLearningPlayback" | "postLearningCheckIn" | "recordLearningFeedbackAction" | "getLearningReflection" | "recordLearningAway"
-  | "evaluateLearningBoundary" | "respondToLearningPrompt" | "finishLearningSession" | "getPendingReflection" | "dismissReflection"> {
+  | "evaluateLearningBoundary" | "respondToLearningPrompt" | "finishLearningSession" | "getPendingReflection" | "dismissReflection"
+  | "keepLearningSessionOpen"> {
   return {
     async recordLearningPlayback(input) {
       validateLearningContext(input);
@@ -110,13 +111,22 @@ export function learningApi(markWatched: (videoId: string) => Promise<void>): Pi
 
     async recordLearningAway(context, input) {
       validateLearningContext(context);
-      if (!Number.isFinite(input.seconds) || input.seconds < 0 || input.seconds > 7 * 86400) throw new Error("Invalid absence");
+      if (!Number.isFinite(input.seconds) || input.seconds < 0 || input.seconds > 7 * 86400 || typeof input.id !== "string" || !/^[a-zA-Z0-9-]{1,100}$/.test(input.id)) throw new Error("Invalid absence");
       if (input.videoId !== null) videoById(input.videoId);
       const s = session(context);
+      if (s.away?.some((a) => a.id === input.id)) return; // a retried save
       mutateQuietly(() => {
-        (s.away ??= []).push({ at: now(), seconds: input.seconds, videoId: input.videoId });
+        (s.away ??= []).push({ id: input.id, at: now(), seconds: input.seconds, videoId: input.videoId });
         s.updatedAt = now();
       });
+    },
+
+    async keepLearningSessionOpen(context) {
+      validateLearningContext(context);
+      const s = session(context);
+      if (s.endedAt) return { ended: true };
+      mutateQuietly(() => { s.updatedAt = now(); });
+      return { ended: false };
     },
 
     async evaluateLearningBoundary(context, input) {
@@ -299,7 +309,7 @@ export function sessionSummary(s: LearningSession, reason: SessionEndReason): Se
     : r.nextStep;
   const minutes = Math.round(r.elapsedSeconds / 60);
   const stats = [
-    `${r.videos.length} ${r.videos.length === 1 ? "video" : "videos"}`,
+    r.videos.length ? `${r.videos.length} ${r.videos.length === 1 ? "video" : "videos"}` : null,
     r.answers ? `${r.correct} of ${r.answers} ${r.answers === 1 ? "check" : "checks"} right` : null,
     minutes ? `${minutes} min of playback` : null,
   ].filter(Boolean).join(" · ");

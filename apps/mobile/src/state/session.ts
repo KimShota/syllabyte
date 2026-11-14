@@ -16,6 +16,7 @@ import { createBackend, createEventQueue, ApiError, type SignedIn } from "@sylla
 import { setEventSink } from "@syllabyte/core/events";
 import { touch } from "@syllabyte/core/store";
 import { BACKEND_BASE, REMOTE } from "@/data/backend";
+import { clearLearningOutbox } from "./learningOutbox";
 
 const TOKEN_KEY = "syllabyte.session.token";
 const newVisitId = () => Math.random().toString(36).slice(2);
@@ -102,6 +103,7 @@ export function flushEvents(): void {
 async function endSession(): Promise<void> {
   token = null;
   events?.clear();
+  await clearLearningOutbox().catch(() => {});
   await tokenStore.clear().catch(() => {});
   setSession({ status: "signedOut", email: null });
 }

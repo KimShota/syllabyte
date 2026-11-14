@@ -3,6 +3,7 @@ import { Modal, Pressable, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "@syllabyte/core/api/client";
 import { useQuery } from "@/state/app";
+import { sendLearning } from "@/state/learningOutbox";
 import { colors, fonts, radius } from "@/theme/tokens";
 import { Button } from "./Button";
 import { T } from "./T";
@@ -24,7 +25,7 @@ export function ReflectionSheet({ pathname }: { pathname: string }) {
 
   const close = () => {
     setClosed(summary.sessionId);
-    void api.dismissReflection(summary.sessionId).catch(() => {});
+    void sendLearning("dismissReflection", summary.sessionId);
   };
   return (
     <Modal transparent animationType="slide" visible onRequestClose={close}>
@@ -43,9 +44,11 @@ export function ReflectionSheet({ pathname }: { pathname: string }) {
           </T>
           <T color={colors.onSurface}>{summary.nextStep}</T>
         </View>
-        <T variant="caption" color={colors.onSurfaceVariant}>
-          {summary.stats}
-        </T>
+        {summary.stats ? (
+          <T variant="caption" color={colors.onSurfaceVariant}>
+            {summary.stats}
+          </T>
+        ) : null}
         <Button label="Got it" onPress={close} />
       </View>
     </Modal>

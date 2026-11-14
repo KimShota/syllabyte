@@ -25,10 +25,11 @@ Students never open a reflection page; the app decides when to offer support, in
 | Returning after 10 min or more | The session ends (reason `gap`); a new one starts | The ended session's reflection |
 | Leaving the feed | The session ends (reason `left`) | The reflection, as a sheet over whatever screen comes next |
 | Next app open after closing it | Sessions idle for 10 min end when the app next asks (`getPendingReflection`) | The latest ended session's reflection ("Your last session") |
+| Feed open, app in front, video paused for any length of time | Keep-alive about once a minute (`keepLearningSessionOpen`), so the session never ends as idle; if it ended anyway (no keep-alive got through for 10 min), the feed starts a new session | Nothing until they leave |
 
 The reflection is one observation and one next step, and only when there is something to say (an answer, a finished video, or a reported drift). Observation priority: certain + wrong, wrong, right while unsure (2+), drift, all right, finished. Shown once; dismissing it also clears older ones. The swipe-to reflection page is removed.
 
-Playback saves, absences, prompts and prompt responses are quiet writes (no refetch). A decision point waits for the page left behind to finish saving (`apps/mobile/src/components/player/learningSync.ts`), so the server decides on everything the student did.
+Playback saves, absences, prompts and prompt responses are quiet writes (no refetch). Writes nobody waits on (prompt answers and actions, absences, ending a session, dismissing a reflection, a page's last playback save) go through a stored outbox on the phone (`apps/mobile/src/state/outbox.ts`): network and server failures are retried with backoff and on returning to the app, refused writes are dropped, at most 200 are kept, and sign-out clears it. All of them are idempotent on the server (absences carry the phone's id). This is not yet the research event queue of phase 1. A decision point waits for the page left behind to finish saving (`apps/mobile/src/components/player/learningSync.ts`), so the server decides on everything the student did.
 
 The API names differ from the "Proposed API operations" table below. Not built yet: the event envelope and persistent, deduplicated queue (phase 1), later retrieval and future-learning judgments in the feed (phase 5), research exports and feature flags (phase 6). Native playback callbacks have not yet been exercised on a device.
 

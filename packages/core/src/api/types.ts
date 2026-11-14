@@ -60,7 +60,10 @@ export interface Api {
   recordLearningFeedbackAction(context: LearningContext, checkInId: string, action: FeedbackAction): Promise<void>;
   getLearningReflection(context: LearningContext): Promise<LearningReflection>;
   /** The student came back to the app after `seconds` away, on `videoId` (null: not on a video). */
-  recordLearningAway(context: LearningContext, input: { seconds: number; videoId: string | null }): Promise<void>;
+  recordLearningAway(context: LearningContext, input: { id: string; seconds: number; videoId: string | null }): Promise<void>;
+  /** The feed is still open with the app in front (sent about once a minute): the session must not end as idle. Says
+   *  whether it had already ended (e.g. no keep-alive got through for 10 minutes), so the phone can start a new one. */
+  keepLearningSessionOpen(context: LearningContext): Promise<{ ended: boolean }>;
   /** A decision point (moved to the next video, came back to the app): the prompt to offer now, if any. Call it after the
    *  playback saves of the page left behind have been acknowledged. */
   evaluateLearningBoundary(context: LearningContext, input: { reason: "next_video" | "return"; videoId: string }): Promise<LearningPrompt | null>;

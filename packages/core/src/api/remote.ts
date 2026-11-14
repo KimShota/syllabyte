@@ -39,7 +39,7 @@ export interface BackendOptions {
 /** Methods that only read (the rest may change data, so the screens refetch after them). */
 const READS = /^(get|list|export)[A-Z]/;
 /** Writes that no screen shows straight away (a playing video's observations, every few seconds): no refetch after them. */
-const QUIET = new Set(["recordLearningPlayback", "recordLearningAway", "evaluateLearningBoundary", "respondToLearningPrompt"]);
+const QUIET = new Set(["recordLearningPlayback", "recordLearningAway", "evaluateLearningBoundary", "respondToLearningPrompt", "keepLearningSessionOpen"]);
 
 export interface SignedIn {
   token: string;
