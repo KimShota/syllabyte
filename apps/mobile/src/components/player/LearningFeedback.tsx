@@ -79,7 +79,6 @@ export function LearningFeedback({ learning, responseId, correct, confidence, on
     {open && !saved ? <View style={{ gap: 14 }}>
       <Segments id="reflectFeel" label="How did this part feel?" options={DIFFICULTY} value={difficulty} onChange={setDifficulty} disabled={submitted || busy} />
       <Segments id="reflectAttention" label="Where was your attention just before the question?" options={ATTENTION} value={attention} onChange={setAttention} disabled={submitted || busy} />
-      <T variant="caption" color="#cbd5e1">You can leave either question unanswered. These answers are saved to your learning reflection; they do not change your course level.</T>
       <Button label={busy ? "Saving…" : submitted ? "Retry saving reflection" : "Save reflection"} disabled={busy} onPress={() => { void save(); }} />
     </View> : null}
     {error ? <>

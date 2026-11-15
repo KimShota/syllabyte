@@ -28,8 +28,9 @@ type Step = "probe" | "recall" | "revealed" | "break" | "check" | "checked" | "p
  *    is not knowing it: Yang et al. 2022), then skip ahead or watch it;
  *  - looking for a specific video: pick it from this feed and go straight there;
  *  - on the videos: carry on.
- * A welcome back asks for the last idea before where the student stopped. Every step can be skipped; nothing here judges
- * the student.
+ * A welcome back asks for the last idea before where the student stopped. The attention question has no "Not now": one
+ * tap on an answer is as quick, and every answer is recorded ("On the videos" simply carries on). Later steps can be
+ * skipped; nothing here judges the student.
  */
 export function EngagementPrompt({ prompt, feed, currentVideoId, onAnswer, onDone }: {
   prompt: LearningPrompt;
@@ -76,7 +77,6 @@ export function EngagementPrompt({ prompt, feed, currentVideoId, onAnswer, onDon
                   <Option key={o.value} label={o.label} role="radio" onPress={() => choose(o.value)} />
                 ))}
               </View>
-              <Button label="Not now" kind="secondary" onPress={() => onDone("continue")} />
             </>
           ) : step === "recall" || step === "revealed" ? (
             recall ? <RecallCheck recall={recall} welcome={welcome} revealed={step === "revealed"} onReveal={() => setStep("revealed")}
