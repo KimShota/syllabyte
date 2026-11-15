@@ -23,6 +23,7 @@ _EXAMPLE_TOPICS = {
     "bar_chart": "a population by group as a bar chart, then a stratified sample in proportion",
     "division": "division with remainder on a number line: 17 = 2 x 7 + 3",
     "volume": "volume under a surface: columns under z = f(x, y), more of them each time",
+    "slicing_views": "a solid and its cross-section: hide and restore views so each diagram has room",
     "riemann": "left Riemann sums with 2, 4, 8, 16 rectangles climbing toward the exact area",
     "tangent": "secant lines through P and Q as Q slides to P, then the tangent",
     "level_curves": "level curves of F(x, y) = x^2 + 2y^2, then its gradient field",
@@ -77,6 +78,13 @@ and it gives way to the picture when room is short, so the lines say what it nam
 view but cells, code and tape) gets the room, so every other view makes it smaller: a 3-line code panel takes a \
 third of the frame. Use one only when the video is about the code's lines, and use the slide's own example over a \
 smaller made-up one. A view too big for the frame is refused with the reason, except where it says it scrolls.
+Every view supports v.hide() and v.show(): hiding keeps its contents but removes it from later snapshots; \
+showing restores it in creation order. Hide a view BEFORE creating its replacement. Up to 12 views may be \
+created over a program, with at most 3 visible at once. The engine computes positions and sizes before \
+rendering, keeps text readable, and scrolls supporting formulas when necessary. You choose which views must \
+be seen together. A 3D scene plus axes plus a formula usually needs separate steps in the dialogue frame \
+(about 3.9 wide by 4.7 high): show the solid with its formula, then hide the solid before showing the slice \
+on axes. Keep the same worked example and all teaching steps; do not squeeze all three into every snapshot.
 """
 
 # each view's rules, in the order the full brief lists them; INDEX is one line each, for the views an area's brief
@@ -287,7 +295,7 @@ pi e factorial comb perm gcd; derivative(f, x), integral(f, a, b), root(f, a, b)
 Fraction(p, q) for exact probabilities (str(Fraction(3, 10)) is '3/10'); complex(x, y) and 1j for complex numbers; \
 bin, hex, oct, format, chr, ord for encodings and ciphers. A probability tree is nodes() with each link's label \
 its probability.
-  - snap(caption, name=None, part=None, wrong=False): records every view as it is now, under a short unique name \
+  - snap(caption, name=None, part=None, wrong=False): records every visible view as it is now, under a short unique name \
 (in a loop, build it: name='pass' + str(k)), as a state of one part of the video (part='prepare', 'initiate', \
 'deliver_1', 'deliver_2' or 'end'; wrong=True for the wrong idea's state). The caption says in a few plain words \
 what this state shows, with its values ("relax 0->2: distTo[2] is now 5"): the line writer reads it as what the \
@@ -333,7 +341,7 @@ AREAS = {
         "logic gate, karnaugh, sequential, combinational, clock"),
     "calculus": (
         ["axes", "space", "surface", "numberline", "geometry", "grid", "formula"],
-        ["geometric", "riemann", "tangent", "level_curves", "volume", "saddle", "heat_map", "z_squared"],
+        ["geometric", "riemann", "tangent", "level_curves", "volume", "slicing_views", "saddle", "heat_map", "z_squared"],
         "derivative, integral, limit, series, converge, differential equation, ode, pde, gradient, surface, volume, "
         "vector field, curve, polar, taylor, complex number, complex plane, newton's method, optimization, "
         "optimisation, convex, fourier, epsilon, continuity, continuous function, tangent, area under, "
@@ -355,7 +363,7 @@ AREAS = {
 }
 FULL_EXAMPLES = ["geometric", "union_find", "llrb", "lcs", "match", "fib_tree", "bar_chart", "division", "riemann",
                  "level_curves", "venn3", "probability_tree", "process", "tcp", "rr", "adder", "linked", "eigen",
-                 "span", "counter", "uml", "mod12"]
+                 "span", "counter", "uml", "mod12", "slicing_views"]
 
 
 def area_of(text: str) -> str | None:

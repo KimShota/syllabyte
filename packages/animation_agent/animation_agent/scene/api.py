@@ -2,10 +2,10 @@
 What a picture program can call (plan/scene-grammar-plan.md). Pure Python, no Manim: it runs inside the sandbox
 (scene/sandbox.py), and the state it records is drawn by scene/draw.py.
 
-A program makes up to MAX_VIEWS views (cells, nodes, code, container; for math: axes, venn, geometry, numberline,
+A program shows up to MAX_VIEWS views at once (cells, nodes, code, container; for math: axes, venn, geometry, numberline,
 surface; diagrams: grid, flow, timeline, sequence, circuit, memory), changes them
 as the algorithm or the math runs, and calls
-snap("what this picture shows") after each step it wants seen. Each snap() records every view's whole state; the
+snap("what this picture shows") after each step it wants seen. Each snap() records every visible view's whole state; the
 storyboard steps through the snapshots one beat at a time, and the engine animates the change between two of them
 by object identity (a node key, a cell index), so a node that moved slides and a recoloured cell recolours.
 
@@ -24,6 +24,7 @@ import re
 from fractions import Fraction
 
 MAX_VIEWS = 3
+MAX_PROGRAM_VIEWS = 12  # hidden views keep their state, but do not occupy the frame
 MAX_SNAPS = 40
 MAX_NODES = 20  # the layout refuses what doesn't fit
 MAX_CELLS = 32  # past what fits across, a window follows the marked cells (scene/layout.py)
@@ -75,14 +76,28 @@ class _View:
     def __init__(self, name: str, title: str | None):
         if name in _views:
             raise PictureError(f"there is already a view named {name!r}")
-        if len(_views) >= MAX_VIEWS:
-            raise PictureError(f"at most {MAX_VIEWS} views on screen")
+        if len(_views) >= MAX_PROGRAM_VIEWS:
+            raise PictureError(f"at most {MAX_PROGRAM_VIEWS} views in a program; reuse existing views")
+        if sum(v.visible for v in _views.values()) >= MAX_VIEWS:
+            raise PictureError(f"at most {MAX_VIEWS} views on screen; call an existing view's hide() before "
+                               "creating another, then show() it again when needed")
         if title is not None and len(str(title)) > MAX_TITLE:
             # left out, not refused: in runs/picture-p4 a 20-character title refused a whole picture, and the
             # redraw lost it (the lines say what a title would)
             title = None
         self.name, self.title = name, None if title is None else str(title)
+        self.visible = True
         _views[name] = self
+
+    def hide(self):
+        """Remove this view from subsequent snapshots, retaining its contents and identity."""
+        self.visible = False
+
+    def show(self):
+        """Restore this view in its original creation order, without resetting its contents."""
+        if not self.visible and sum(v.visible for v in _views.values()) >= MAX_VIEWS:
+            raise PictureError(f"at most {MAX_VIEWS} views on screen; hide another view before show()")
+        self.visible = True
 
     def state(self) -> dict:
         raise NotImplementedError
@@ -2247,13 +2262,15 @@ def snap(caption="", name=None, part=None, wrong=False):
     `part` is the part of the video it belongs to (PARTS), and `wrong` marks the wrong idea's state."""
     if len(_snaps) >= MAX_SNAPS:
         raise PictureError(f"at most {MAX_SNAPS} snapshots")
+    if sum(v.visible for v in _views.values()) > MAX_VIEWS:
+        raise PictureError(f"at most {MAX_VIEWS} views on screen; hide another view before snap()")
     name = str(len(_snaps)) if name is None else str(name)
     if any(s["name"] == name for s in _snaps):
         raise PictureError(f"two snapshots are named {name!r}; give each its own name")
     if part is not None and part not in PARTS:
         raise PictureError(f"snapshot {name!r}: part {part!r} is not one of {', '.join(PARTS)}")
     _snaps.append({"caption": str(caption), "name": name, "part": part, "wrong": bool(wrong),
-                   "views": {k: v.state() for k, v in _views.items()}})
+                   "views": {k: v.state() for k, v in _views.items() if v.visible}})
 
 
 MATH = {k: getattr(math, k) for k in ("sin", "cos", "tan", "asin", "acos", "atan", "atan2", "exp", "log", "log2",

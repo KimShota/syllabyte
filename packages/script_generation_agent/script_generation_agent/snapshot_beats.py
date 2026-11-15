@@ -365,9 +365,15 @@ def program_problems(program: list[str], level: int) -> tuple[list[dict], list[s
 def _feedback(program: list[str], problems: list[str], drawn: bool) -> str:
     # In runs/va4, 3 of 4 first programs didn't fit or didn't run (9 messages in a sequence, a timeline beside a
     # table, a frame title too long): more snapshots tempt a bigger drawing, and a redraw that cut snapshots to fit
-    # would lose the steps. So a drawing that can't be drawn is made smaller, its steps kept.
-    keep = ("" if drawn else " Make the drawing smaller (fewer messages, nodes, frames or views, shorter labels) and "
-            "keep every snapshot, its part and its wrong=True.")
+    # would lose the steps. Keep the example and steps; change the simultaneous views for fit failures,
+    # and fix runtime errors directly rather than telling the planner to shrink an unrelated drawing.
+    layout_failure = any("fit" in p or "views on screen" in p for p in problems)
+    keep = ("" if drawn else
+            " Keep the slide's worked example and every snapshot, its part and its wrong=True. "
+            + ("Change which views are visible: v.hide() keeps its state, v.show() restores it. Hide a view "
+               "before creating its replacement. Show the diagram and supporting working in separate steps "
+               "when needed; do not repeat the refused combination. Code handles sizing and placement."
+               if layout_failure else "Fix the program error without removing the teaching steps."))
     return ("\n\nYour previous program:\n" + "\n".join(program)
             + "\n\nThe automatic checker refused it:\n" + "\n".join(f"  - {p}" for p in problems)
             + "\nWrite it again with these fixed, changing only what you must." + keep)

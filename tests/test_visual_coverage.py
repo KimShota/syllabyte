@@ -27,7 +27,7 @@ def run(source: str) -> list[dict]:
 
 @pytest.mark.parametrize("name", list(COVERAGE_PROGRAMS))
 def test_every_coverage_example_lays_out_in_the_dialogue_frame(name):
-    L.plan(run(COVERAGE_PROGRAMS[name]), *DIALOGUE)
+    L.plan_groups(run(COVERAGE_PROGRAMS[name]), *DIALOGUE)
 
 
 # ---- code and tape -----------------------------------------------------------------------------------------
@@ -273,3 +273,65 @@ def test_a_view_made_after_the_first_snapshot_reads_its_own_snapshots():
     snaps = run(src)
     lay = L.plan(snaps, *DIALOGUE)
     assert len(lay.math["f"].start) == len(snaps) - 1
+
+
+def test_a_supporting_formula_scrolls_to_one_readable_line_before_refusing_the_diagram():
+    snaps = run("s = space('s', x=(-1, 1), y=(-1, 1), z=(-1, 1))\n"
+                "f = formula('f', ['x = 1', 'y = 2', 'z = 3'])\nsnap()")
+    lay = L.plan(snaps, 3.9, 3.5, 1.75)
+    formula = lay.math["f"]
+    assert formula.scrolled and formula.start == [2] and formula.end == [3]
+    assert formula.pitch == [T.FORMULA_FLAT] * 3  # scroll, never shrink the text
+    assert lay.regions["s"].h >= 2.4
+    assert lay.regions["s"].bottom - lay.regions["f"].top >= L.GAP - 1e-9
+    assert lay.regions["f"].bottom >= -1.75 - 1e-9
+
+
+@pytest.mark.parametrize("emphasis", ["f.mark(0)", "f.box(0)", "f.highlight(0, 'x')"])
+def test_compacting_a_formula_does_not_scroll_away_emphasized_working(emphasis):
+    snaps = run("s = space('s', x=(-1, 1), y=(-1, 1), z=(-1, 1))\n"
+                "f = formula('f', ['x = 1', 'y = 2', 'z = 3'])\n" + emphasis + "\nsnap()")
+    with pytest.raises(L.PictureError, match="hide\\(\\)"):
+        L.plan(snaps, 3.9, 3.5, 1.75)
+
+
+def test_a_view_can_leave_and_return_with_its_state_and_full_frame_room():
+    snaps = run("s = space('solid', x=(-1, 1), y=(-1, 1), z=(-1, 1))\n"
+                "s.point('p', 0, 0, 0)\nsnap('solid')\n"
+                "s.hide()\na = axes('slice', x=(0, 1), y=(0, 1))\n"
+                "a.curve('c', lambda t: t, lambda t: t)\nsnap('slice')\n"
+                "a.hide()\ns.point('q', 1, 0, 0)\ns.show()\nsnap('return')")
+    assert [list(s["views"]) for s in snaps] == [["solid"], ["slice"], ["solid"]]
+    assert set(snaps[0]["views"]["solid"]["items"]) == {"p"}
+    assert set(snaps[2]["views"]["solid"]["items"]) == {"p", "q"}
+    layouts = L.plan_groups(snaps, *DIALOGUE)
+    assert len(layouts) == 3
+    assert layouts[0][1].regions["solid"].h == layouts[2][1].regions["solid"].h
+
+
+def test_three_visible_views_is_a_limit_on_the_frame_rather_than_the_whole_program():
+    src = ("a = cells('a', [1])\nb = cells('b', [2])\nc = cells('c', [3])\n"
+           "a.hide()\nd = cells('d', [4])\nsnap('new')\n"
+           "d.hide()\na.show()\na.show()\nsnap('return')")
+    snaps = run(src)
+    assert list(snaps[0]["views"]) == ["b", "c", "d"]
+    assert list(snaps[1]["views"]) == ["a", "b", "c"]  # stable creation order, idempotent show
+    result = run_program(src + "\nd.show()")
+    assert not result.ok and "hide another view" in result.error
+
+
+def test_an_overcrowded_scene_gets_snapshot_names_and_a_concrete_split_instruction():
+    snaps = run("s = space('s', x=(-1, 1), y=(-1, 1), z=(-1, 1))\n"
+                "a = axes('a', x=(0, 1), y=(0, 1))\n"
+                "f = formula('f', ['x = 1'])\nsnap('too much', name='slice')")
+    with pytest.raises(L.PictureError) as refused:
+        L.plan_groups(snaps, 3.9, 4.7, 2.35)
+    message = str(refused.value)
+    assert "'slice'" in message and "'s'" in message and "'a'" in message and "'f'" in message
+    assert "hide()" in message and "show()" in message and "snapshot order" in message
+
+
+@pytest.mark.parametrize("tex", [r"\int_0^1 f\,dx", r"\sum_i x_i", r"\lim_{n} x_n",
+                                  r"\\int_0^1 f\\,dx"])
+def test_operators_with_subscript_limits_reserve_tall_formula_rows(tex):
+    assert T.formula_pitch(tex) == T.FORMULA_TALLER

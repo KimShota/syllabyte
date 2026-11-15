@@ -276,7 +276,7 @@ def test_a_program_that_cant_be_drawn_gets_one_more_redraw_but_one_outside_the_b
     broken = ["a = cells('a', [1, 2])", "a[5] = 3", "snap('x', part='prepare')"]
     script, seen = _run(monkeypatch, [broken, broken, PROGRAM])
     programs = [text for stage, text, _ in seen if stage.startswith("storyboard_program")]
-    assert len(programs) == 3 and "Make the drawing smaller" in programs[2]
+    assert len(programs) == 3 and "Fix the program error" in programs[2]
     assert [len(seg.beats) for seg in script.segments] == [2, 2, 4, 5, 2]
     thin = [line for line in PROGRAM if "part='deliver_2'" not in line]
     script, seen = _run(monkeypatch, [thin, thin])

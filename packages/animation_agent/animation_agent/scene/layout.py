@@ -1,10 +1,9 @@
 """
 Where everything in a picture program's snapshots goes. Pure Python (numpy, networkx), no Manim.
 
-One layout for the whole program, not one per snapshot: each view gets a fixed band of the area (views stack top
-to bottom in the order the program made them; containers made one after another share a row), and nodes and cells
-keep one size throughout, so nothing grows or shrinks between steps. Positions then change only when the
-structure does, and the drawing animates exactly that.
+One layout per run of snapshots with the same visible views: each view gets a fixed band of the area (views
+stack top to bottom in creation order; consecutive containers share a row). Nodes and cells keep one size
+within a run. When a view leaves or returns, space is allocated again and the drawing animates the change.
 
 Sizes are in scene units for the 4.5-unit-wide portrait frame and keep text at the layout audit's minimum font.
 
@@ -164,12 +163,37 @@ def plan_regions(snaps: list[dict], width: float, height: float, top: float) -> 
     most = [max(hi for _, hi in band) for band in sizes]
     spare = height - sum(h) - GAP * (len(bands) - 1)
     if spare < -1e-6:
+        # Preferred sizes are not hard minima: a supporting formula can scroll down to the active
+        # working line. Reclaim only what is needed, keeping the diagram and text readable. Its own
+        # layout function remains the final check, shared by preflight and rendering.
+        from animation_agent.scene.text_layout import formula_min_height
+
+        for i, band in enumerate(bands):
+            if len(band) != 1 or kinds[band[0]] != "formula":
+                continue
+            views = by_name[band[0]]
+            minimum = formula_min_height(views, _title(views))
+            reclaim = min(max(0.0, h[i] - minimum), -spare)
+            h[i] -= reclaim
+            spare += reclaim
+            if spare >= -1e-6:
+                break
+    if spare < -1e-6:
         if len(names) == 1 and (kinds[names[0]] in MATH_KINDS or kinds[names[0]] in TEXT_KINDS):  # one view too big: its own reason says what to cut
             try:
                 _view_layouts()[kinds[names[0]]][1](by_name[names[0]], Region(0.0, top, width, height))
             except PictureError:
                 raise
-        need = ", ".join(f"{_WHAT[kinds[b[0]]]} {x:.1f}" for b, x in zip(bands, h))
+        need = ", ".join(f"{b[0]!r} ({_WHAT[kinds[b[0]]]}) {x:.1f}" for b, x in zip(bands, h))
+        # Give a concrete structural edit instead of asking the planner to guess smaller dimensions.
+        # It owns the teaching sequence; layout must never silently drop a view or a snapshot.
+        support = next((n for n in names if kinds[n] in TEXT_KINDS), names[-1])
+        other = next((n for n in names if n != support), support)
+        split = (f" Keep the example and snapshot order. Split the composition across snapshots: hide the view "
+                 f"named {other!r} with .hide() while showing {support!r}, then hide {support!r} and restore "
+                 f"{other!r} with .show() to return to the diagram. Call these methods on the view variables. "
+                 "Code already allocates positions and readable sizes; do not repeat this combination "
+                 "or shrink its labels.") if len(names) > 1 else ""
         # a view that needs most of the frame by itself can't share it (runs/p5: a full adder's circuit with its
         # truth table, twice, and the video lost its picture): say so plainly
         alone = [(b, x) for b, x in zip(bands, h) if x > 0.7 * height]
@@ -177,10 +201,10 @@ def plan_regions(snaps: list[dict], width: float, height: float, top: float) -> 
             band, x = max(alone, key=lambda bx: bx[1])  # the biggest: the one the rest must give way to
             what = _WHAT[kinds[band[0]]]
             raise PictureError(f"{what} needs {x:.1f} of the {height:.1f} units by itself, so it can't share the "
-                               f"frame: draw {what} as the only view and let the lines say what the others would "
-                               f"show (they need {need})")
-        raise PictureError(f"these views don't fit on screen together: they need {sum(h):.1f} units of the "
-                           f"{height:.1f} ({need}); use fewer or smaller ones")
+                               f"frame (they need {need})." + split)
+        required = sum(h) + GAP * (len(bands) - 1)
+        raise PictureError(f"these views don't fit on screen together: they need {required:.1f} units including "
+                           f"gaps of the {height:.1f} ({need})." + split)
     main = [i for i, band in enumerate(bands) if any(kinds[n] in MAIN_KINDS for n in band)]
     spare = _fill(h, most, main, spare)  # the main picture first
     spare = _fill(h, most, [i for i in range(len(bands)) if i not in main], spare)
@@ -915,7 +939,14 @@ def view_groups(snaps: list[dict]) -> list[list[int]]:
 def plan_groups(snaps: list[dict], width: float, height: float, top: float) -> list[tuple[list[int], PictureLayout]]:
     """A layout for each run of snapshots with the same views (view_groups), each as large as its views allow: the
     picture shrinks, animated, when a view joins it. PictureError if any run can't be drawn."""
-    return [(g, plan([snaps[i] for i in g], width, height, top)) for g in view_groups(snaps)]
+    layouts = []
+    for g in view_groups(snaps):
+        try:
+            layouts.append((g, plan([snaps[i] for i in g], width, height, top)))
+        except PictureError as e:
+            first, last = snaps[g[0]]["name"], snaps[g[-1]]["name"]
+            raise PictureError(f"snapshots {first!r} through {last!r}: {e}") from e
+    return layouts
 
 
 def _plan(snaps: list[dict], width: float, height: float, top: float) -> PictureLayout:

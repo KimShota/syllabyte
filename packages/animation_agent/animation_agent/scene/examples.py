@@ -846,3 +846,21 @@ for i in range(7, -1, -1):
 '''
 
 COVERAGE_PROGRAMS = {"match": MATCH, "float32": FLOAT32, "bsearch_code": BSEARCH_CODE, "fib_tree": FIB_TREE, "btree": BTREE, "uml": UML, "mod12": MOD12, "neural": NEURAL, "matching": MATCHING, "petersen": PETERSEN, "z_squared": Z_SQUARED, "heat_map": HEAT_MAP, "attention": ATTENTION, "span": SPAN, "saddle": SADDLE, "torus": TORUS, "counter": COUNTER, "mux": MUX, "timing": TIMING, "boxplot": BOXPLOT, "stacked": STACKED, "tcp_full": TCP_FULL, "long_array": LONG_ARRAY, "binary_add": BINARY_ADD}
+
+# The same example in 3D and as a cross-section, with room for each picture and its working.
+COVERAGE_PROGRAMS["slicing_views"] = r'''
+s = space('solid', x=(0, 1), y=(0, 1), z=(0, 2))
+s.surface('bowl', lambda x, y: x*x + y*y, n=6)
+snap('the surface z = x squared plus y squared', name='solid', part='prepare')
+f = formula('working', ['z = x^2 + y^2'])
+snap('hold x at one half to take a slice', name='hold', part='deliver_1')
+s.hide()
+a = axes('slice', x=(0, 1), y=(0, 2), xlabel='y', ylabel='z')
+a.curve('section', lambda t: t, lambda t: 0.25 + t*t)
+f.add(r'z = \frac{1}{4} + y^2')
+snap('the slice is a parabola', name='section', part='deliver_1')
+a.hide()
+s.show()
+s.curve('section', lambda t: 0.5, lambda t: t, lambda t: 0.25 + t*t, style='current')
+snap('the same parabola lies on the surface', name='return', part='deliver_2')
+'''

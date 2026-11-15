@@ -436,7 +436,9 @@ FORMULA_TALL = 0.75  # a line with a fraction, a matrix
 FORMULA_TALLER = 0.9  # a line with limits above and below (a sum, an integral): the tallest at font 28
 FORMULA_FLAT = 0.52  # a line of plain symbols
 _TALL = re.compile(r"\\(d?frac|t?frac|binom|begin|over|underbrace|overbrace|matrix|bmatrix|pmatrix|cases|sqrt\[)")
-_TALLER = re.compile(r"\\(sum|int|iint|iiint|oint|prod|lim)\b")
+# TeX command names end before '_' as well as braces or spaces. A regex word boundary
+# misses the usual integral/sum with limits (\int_0, \sum_i) and underestimates its height.
+_TALLER = re.compile(r"\\(sum|int|iint|iiint|oint|prod|lim)(?![A-Za-z])")
 
 
 def formula_pitch(tex: str) -> float:
@@ -459,6 +461,27 @@ def formula_heights(views: list[dict], width: float, title: float) -> tuple[floa
     least = max((sum(p[max(0, len(v["lines"]) - 2):len(v["lines"])]) for v in views), default=p[0])
     scroll = MORE_H if least < sum(p) - 1e-9 else 0.0
     return title + least + scroll, title + sum(p)
+
+
+def formula_min_height(views: list[dict], title: float) -> float:
+    """A compact supporting formula: keep the newest line and any explicitly emphasized working visible.
+    Scroll older working instead of shrinking TeX below its readable pitch. The normal allocation still
+    prefers two lines; this lower bound is used only when the composition otherwise overflows."""
+    p = _pitches(views)
+    if not p:
+        return title + FORMULA_FLAT
+    required = 0.0
+    for v in views:
+        n = len(v["lines"])
+        if not n:
+            continue
+        focus = [int(i) for i, style in v["styles"].items() if style]
+        focus += [int(i) for i, terms in v["terms"].items() if terms]
+        focus += v["boxed"]
+        first = min([n - 1, *focus])
+        required = max(required, sum(p[first:n]))
+    scroll = MORE_H if required < sum(p) - 1e-9 else 0.0
+    return title + required + scroll
 
 
 @dataclass

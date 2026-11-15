@@ -223,3 +223,42 @@ Result on cov1's own refused programs, re-laid out offline: 3 of the 5 fallbacks
 (complex eigenvalues, slicing a solid, the Hessian). The other two are planner mistakes (a network squeezed under
 a table and a diagram; fib's tree 8 leaves wide). 813 tests pass; all 48 worked examples render with no findings.
 Next: commit; rerun the 5 fallback topics (about $1) to see the planner use the room.
+
+## Responsive composition (2026-11-15, after runs/cov2)
+
+The slicing topic spent about 83 seconds across three refused picture programs and two fallback plans. Its
+3D scene, axes and formula did not fit together; two program attempts repeated the same oversized composition.
+
+- Layout can reclaim space from a supporting formula before refusing the composition: older working scrolls,
+  down to one readable line when necessary, without reducing the diagram's minimum size or the formula's pitch.
+  Compaction retains explicitly marked, highlighted or boxed working and the newest line. Normal layouts
+  still prefer two formula lines.
+- Every view supports hide() and show(). Hidden views retain their contents and identity; snapshots include
+  only visible views. At most three views are visible at once, with at most twelve created over the program.
+  The existing renderer reallocates space and animates transitions when the set of visible views changes.
+- Fit errors identify the failing snapshot group and named views, include inter-view gaps in required height,
+  and suggest splitting the composition with hide()/show(). Planner instructions distinguish fit failures
+  from runtime errors and preserve the slide's example, snapshot order and wrong-answer steps.
+- Added a worked solid/cross-section example to the calculus and full briefs. Positioning and sizes remain
+  computed by code; switching the teaching view remains an explicit planner decision.
+
+Validation: 819 tests passed, 102 skipped; two unrelated retry tests cannot bind local sockets in this sandbox.
+The solid/cross-section/solid transition and a compact-formula scene both rendered with no layout findings
+(runs/layout-solver-check). No API spend. Planner retry rate and teaching quality need a later live comparison.
+
+Regression check against cov2's actual refused slicing program: inserting s.hide() before its cross-section
+preserves all 15 snapshots and passes layout. Rendering caught a separate formula-spacing bug: the height
+classifier's regex word boundary missed operators followed by an underscore (such as \\int_0 and \\sum_i), so
+integrals were allocated plain-symbol rows. TeX command detection now treats underscores as command boundaries.
+The same saved program then rendered without layout findings (runs/layout-fix-test/offline-render).
+The fresh single-topic comparison runner at runs/layout-fix-test/live.py records time, cost, program and
+fallback attempts, layout findings and critique scores in a new timestamped directory on each invocation.
+After the operator-spacing fix: 823 tests passed, 102 skipped, with the two sandbox-blocked socket tests
+explicitly deselected.
+
+Live check run from the user's terminal (runs/layout-fix-test/live-20261115-222607-293394): the slicing video
+completed in 50.28 seconds for $0.1654 recorded, versus about 114 seconds and $0.3287 in cov2. The planner used
+hide() to switch views; two program attempts (first refused an empty formula line), no fallback planning calls,
+and no layout findings or remaining render issues. Critic visual alignment rose from 5 to 6 and accuracy from
+7 to 8, but the overall critique still failed. The graph also clips the negative part of S(x) because its
+vertical range starts at zero. This single run supports the layout improvement, not overall teaching quality.
