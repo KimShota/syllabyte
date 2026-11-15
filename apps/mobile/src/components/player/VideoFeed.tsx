@@ -12,6 +12,8 @@ import type { Ku } from "@/data/types";
 import { usePrefs, type Speed } from "@/state/app";
 import { sendLearning } from "@/state/learningOutbox";
 import { EngagementPrompt } from "./EngagementPrompt";
+import { clipDecision } from "./clipTiming";
+import { MisconceptionClipCard, type ReadyClip } from "./MisconceptionClipCard";
 import { whenSaved } from "./learningSync";
 import { PlayerPage, type PlayerCommand } from "./PlayerPage";
 
@@ -33,6 +35,10 @@ export function useDarkStatusBar() {
 const newSession = (): LearningContext => ({ courseId: COURSE.id, sessionId: uid("learning") });
 /** How often an open feed tells the server its session is still going (well inside the 10-minute idle gap). */
 const KEEP_OPEN_MS = 60_000;
+/** How often an open feed asks whether a misconception clip is ready (one takes about a minute to make). */
+const CLIP_POLL_MS = 10_000;
+/** A clip put off with "Later" is offered again at the next move to another video, this many times in a feed visit. */
+const CLIP_REOFFERS = 1;
 
 /**
  * A vertical swipe feed of full-screen videos: one page at a time, and only the page on screen plays. Speed
@@ -65,6 +71,12 @@ export function VideoFeed({ kus, startIndex, end }: { kus: readonly Ku[]; startI
   // the page on screen is waiting for its quick check to be answered
   const [blocked, setBlocked] = useState(false);
   const [prompt, setPrompt] = useState<LearningPrompt | null>(null);
+  // misconception clips (plan: "Misconception clips"): made on demand, offered as soon as they are ready, never mid-video
+  const [clips, setClips] = useState<ReadyClip[]>([]);
+  const [clip, setClip] = useState<ReadyClip | null>(null);
+  const [laterCount, setLaterCount] = useState<Record<string, number>>({});
+  const [deferred, setDeferred] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
   const [command, setCommand] = useState<PlayerCommand | null>(null);
   const list = useRef<FlatList<FeedItem>>(null);
 
@@ -122,6 +134,44 @@ export function VideoFeed({ kus, startIndex, end }: { kus: readonly Ku[]; startI
     const focus = AppState.addEventListener("focus", () => setWindowFocused(true));
     return () => { change.remove(); blur.remove(); focus.remove(); };
   }, []);
+
+  // Misconception clips: ask every few seconds while the feed is open and in front
+  useEffect(() => {
+    if (!(focused && foreground)) return;
+    let alive = true;
+    const poll = () => {
+      api.getMisconceptionClips(current.current).then((list) => { if (alive) setClips(list); }, () => {});
+    };
+    poll();
+    const timer = setInterval(poll, CLIP_POLL_MS);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [focused, foreground]);
+
+  // When to show a ready clip (clipTiming.ts), decided while rendering: state that follows other state.
+  const [clipIndex, setClipIndex] = useState(activeIndex);
+  const moved = clipIndex !== activeIndex;
+  if (moved) setClipIndex(activeIndex);
+  const decision = clipDecision({ clips, deferred, laterCount, moved, canShow: !clip && !prompt && focused && foreground, busy, reoffers: CLIP_REOFFERS });
+  if (decision.deferred !== deferred) setDeferred(decision.deferred as Set<string>);
+  if (decision.show) setClip(decision.show);
+  // the first time each clip is offered is recorded
+  const offeredId = clip?.request.id;
+  useEffect(() => {
+    if (offeredId) void sendLearning("respondToMisconceptionClip", current.current, offeredId, { offered: true });
+  }, [offeredId]);
+
+  function closeClip(action: "watched" | "later") {
+    const c = clip;
+    setClip(null);
+    if (!c) return;
+    void sendLearning("respondToMisconceptionClip", learning, c.request.id, { action });
+    // a watched clip is never offered again in this visit, even if a check lands before the server has recorded it
+    setLaterCount((n) => ({ ...n, [c.request.id]: action === "watched" ? Infinity : (n[c.request.id] ?? 0) + 1 }));
+    setDeferred((d) => new Set(d).add(c.request.id));
+  }
 
   // Decision point: leaving the feed ends the session; its reflection, if any, appears by itself (ReflectionSheet).
   useEffect(() => () => {
@@ -188,7 +238,7 @@ export function VideoFeed({ kus, startIndex, end }: { kus: readonly Ku[]; startI
           data={items}
           keyExtractor={(item) => (item.kind === "video" ? `${item.ku.id}:${item.ku.videoUri ?? "demo"}` : "end")}
           pagingEnabled
-          scrollEnabled={!blocked && !prompt}
+          scrollEnabled={!blocked && !prompt && !clip}
           snapToInterval={height}
           snapToAlignment="start"
           decelerationRate="fast"
@@ -208,11 +258,12 @@ export function VideoFeed({ kus, startIndex, end }: { kus: readonly Ku[]; startI
                 learning={learning}
                 eyebrow={kuEyebrow(item.ku)}
                 height={height}
-                active={index === activeIndex && focused && foreground && windowFocused && !prompt}
+                active={index === activeIndex && focused && foreground && windowFocused && !prompt && !clip}
                 speed={speed}
                 onSpeed={setSpeed}
                 onBlockSwipe={setBlocked}
                 command={index === activeIndex ? command : null}
+                onBusy={index === activeIndex ? setBusy : undefined}
               />
             ) : (
               <View style={{ height }}>{end}</View>
@@ -220,7 +271,8 @@ export function VideoFeed({ kus, startIndex, end }: { kus: readonly Ku[]; startI
           }
         />
       ) : null}
-      {prompt ? (
+      {clip ? <MisconceptionClipCard key={clip.request.id} ready={clip} learning={learning} onDone={closeClip} /> : null}
+      {prompt && !clip ? (
         <EngagementPrompt
           key={prompt.id}
           prompt={prompt}

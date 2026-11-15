@@ -207,6 +207,7 @@ def make_ku_video(
     style: str = "monologue",
     visuals: str = "codegen",
     on_script=None,
+    focus: str | None = None,
 ) -> Path | None:
     """One KU's video: script (at `level` when given) -> tts -> animate ->
     assemble, under `ku_dir`, reusing whatever each stage already wrote there
@@ -216,7 +217,8 @@ def make_ku_video(
     spent tokens. With style="dialogue" (needs `level`) two characters talk
     the idea through: Manim draws the top 70% and the band with the speaking
     character and captions goes underneath (dialogue_band.py). `on_script(script_path)` is called once script.json
-    exists, before the voices and the render."""
+    exists, before the voices and the render. `focus` (storyboard visuals only) is extra direction for the script,
+    such as the misconception a clip must address (script_generation_agent/misconception.py)."""
     # Stage 3: script + critique
     critic_future = None
     script_path = ku_dir / "script.json"
@@ -238,7 +240,7 @@ def make_ku_video(
                 # A storyboard: lines and pictures from one call. Its critique runs beside the voices and the
                 # render, so the video never waits for it (nothing is rewritten from it; it is recorded).
                 script = write_storyboard(ku, corpus, level=level or 2, prereq_titles=prereq_titles,
-                                          manifest=manifest, on_lines_ready=early_voices.start)
+                                          manifest=manifest, on_lines_ready=early_voices.start, focus=focus)
                 if not skip_critic:
                     critic_job = ThreadPoolExecutor(max_workers=1)
                     critic_future = critic_job.submit(critique_storyboard, script, corpus, ku, level=level or 2,

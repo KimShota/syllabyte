@@ -35,11 +35,15 @@ export function PlayerPage({
   onSpeed,
   onBlockSwipe,
   command,
+  onBusy,
 }: {
   ku: Ku;
   learning: LearningContext;
   /** for the page on screen only */
   command?: PlayerCommand | null;
+  /** for the page on screen only: whether its video is in progress (playing, or its quick check open), so the feed
+   *  holds back anything that would interrupt it */
+  onBusy?: (busy: boolean) => void;
   eyebrow: string;
   height: number;
   active: boolean;
@@ -72,6 +76,11 @@ export function PlayerPage({
   }, [shownItem]);
 
   const playbackSave = useLearningPlayback(learning, videoId, pb.measurement, pb.restartMeasurement, active && !checkOpen);
+
+  const busy = (pb.playing && !pb.ended) || checkOpen;
+  useEffect(() => {
+    onBusy?.(busy);
+  }, [onBusy, busy]);
 
   const { seek, pause } = pb;
   const done = useRef(0);

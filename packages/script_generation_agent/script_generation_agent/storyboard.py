@@ -817,6 +817,7 @@ def write_storyboard(
     writer_model: str = STORYBOARD_MODEL,
     picture: PicturePlan | None = None,
     example=_PLAN,
+    focus: str | None = None,
 ) -> TemplatedDialogueScript:
     """A dialogue script with its template calls, from one storyboard call (on `writer_model`; `model` makes
     the fix call and, when `picture` isn't given, the picture plan that picks the templates). For a KU that steps
@@ -837,7 +838,7 @@ def write_storyboard(
 
         return write_storyboard_planned(ku, corpus, level=level, prereq_titles=prereq_titles, model=model,
                                         manifest=manifest, on_lines_ready=on_lines_ready, writer_model=writer_model,
-                                        picture=picture, example=example)
+                                        picture=picture, example=example, focus=focus)
 
     text_context, image_blocks = gather_source_material(corpus, ku)
     if not text_context:
@@ -852,7 +853,7 @@ def write_storyboard(
                                       templates=picture.templates, family=picture.family)
     prompt = build_script_prompt(ku, text_context).replace(
         "Write the 5-segment CLT-bLM script for this Knowledge Unit now.",
-        "Fill in the storyboard for this Knowledge Unit now: every beat's picture, then its line.")
+        (focus or "") + "Fill in the storyboard for this Knowledge Unit now: every beat's picture, then its line.")
     schema = storyboard_model(plan)
     trace = (plan_example(ku, picture, text_context, model=model, manifest=manifest, images=image_blocks)
              if example is _PLAN else example)

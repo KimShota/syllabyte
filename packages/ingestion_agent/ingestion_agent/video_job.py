@@ -49,7 +49,7 @@ def pipeline_make_video() -> Callable[..., Path | None]:
 def run_video_job(
     payload: dict, deck: SlideDeck, work_dir: str | Path, upload: Callable[[str, Path], None], *, model: str = DEFAULT_MODEL,
     critic_model: str | None = None, manifest: RunManifest | None = None, log: Log = print,
-    make_video: Callable[..., Path | None] | None = None,
+    make_video: Callable[..., Path | None] | None = None, focus: str | None = None, dir_name: str | None = None,
 ) -> dict:
     """payload (apps/server/src/uploads.ts videoPayload): deck_id, ku (an UploadKU dict), level, lecture_n, topic_id,
     short_title, course_name, syllabus_text, prereqs ({id, title, short_title} in the order the KU had at its first
@@ -59,7 +59,7 @@ def run_video_job(
     critic_model = critic_model or model
     ku = UploadKU.model_validate(payload["ku"])
     level, prereqs = int(payload["level"]), payload.get("prereqs", [])
-    ku_dir = Path(work_dir) / f"{ku.id}-L{level}"
+    ku_dir = Path(work_dir) / (dir_name or f"{ku.id}-L{level}")
     ku_dir.mkdir(parents=True, exist_ok=True)
 
     corpus = CourseCorpus(course_name=payload["course_name"], syllabus_path="", syllabus_text=payload.get("syllabus_text", ""), decks=[deck])
@@ -89,6 +89,7 @@ def run_video_job(
         final = make_video(
             ku, corpus, ku_dir, manifest=manifest, level=level, prereq_titles=[p["title"] for p in prereqs], style="dialogue",
             visuals="templates", on_script=lambda path: early.append(pool.submit(write_gen, path)),
+            **({"focus": focus} if focus else {}),
         )
         if final is None:
             raise RuntimeError(f"{ku.id}: a segment fell back to the caption template, so the video was not assembled")
@@ -116,3 +117,26 @@ def run_video_job(
         "flags": flags,
         "cost_usd": round(manifest.total_cost_usd(PRICE_PER_MTOK), 4),
     }
+
+
+def run_misconception_job(
+    payload: dict, deck: SlideDeck, work_dir: str | Path, upload: Callable[[str, Path], None], **kw,
+) -> dict:
+    """A misconception clip (plan/engagement-feedback-implementation-plan.md, "Misconception clips"): the KU's video at
+    the student's level, built around one wrong answer given with certainty. payload: a video job's, plus clip_key
+    ("item_id|choice") and misconception (stem, options, correct_index, chosen, explanation). Its questions get ids of
+    their own, so they never clash with the KU's video's; its checkpoint question is the follow-up the app asks."""
+    from script_generation_agent.misconception import misconception_focus
+
+    key = str(payload["clip_key"])
+    tag = "mc-" + "".join(c if c.isalnum() else "-" for c in key)
+    result = run_video_job(payload, deck, work_dir, upload, focus=misconception_focus(payload["misconception"]), dir_name=tag, **kw)
+    renamed = {i["id"]: f"{tag}-{i['id']}" for i in result["items"]}
+    for item in result["items"]:
+        item["id"] = renamed[item["id"]]
+    video = result["video"]
+    video["checkpoint"]["item_id"] = renamed.get(video["checkpoint"]["item_id"], video["checkpoint"]["item_id"])
+    for field in ("next_session_item_id", "prove_it_item_id"):
+        video[field] = renamed.get(video[field], video[field])
+    result["flags"] = [{**f, "id": renamed.get(f.get("id"), f.get("id"))} for f in result.get("flags", [])]
+    return result

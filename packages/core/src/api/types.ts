@@ -1,7 +1,7 @@
 import type { DriftAnswer, LearningContext, LearningPlaybackInput, LearningCheckInInput, LearningCheckIn, LearningPrompt, LearningReflection, FeedbackAction, PromptAction, SessionEndReason, SessionSummary } from "../learning";
 import type { Instrument } from "../content/instruments";
 import type {
-  AppSettings, BatteryRecord, CalibrationView, Choice, Condition, Confidence, Course, CourseMapView, DemoState, Difficulty, Item,
+  AppSettings, BatteryRecord, MisconceptionClip, MisconceptionRequest, CalibrationView, Choice, Condition, Confidence, Course, CourseMapView, DemoState, Difficulty, Item,
   Jol, KuLevel, Level, LevelsView, LevelUpdateCard, NextSessionCardView, PlaylistView, ReportCategory, SittingView,
   StartResultView, VariantView,
 } from "../types";
@@ -59,6 +59,10 @@ export interface Api {
   postLearningCheckIn(input: LearningCheckInInput): Promise<LearningCheckIn>;
   recordLearningFeedbackAction(context: LearningContext, checkInId: string, action: FeedbackAction): Promise<void>;
   getLearningReflection(context: LearningContext): Promise<LearningReflection>;
+  /** Misconception clips that are made and not yet watched, oldest first (plan: "Misconception clips"). */
+  getMisconceptionClips(context: LearningContext): Promise<{ request: MisconceptionRequest; clip: MisconceptionClip; item_title: string }[]>;
+  respondToMisconceptionClip(context: LearningContext, requestId: string, response: { offered?: boolean; action?: "watched" | "later" }): Promise<void>;
+  answerMisconceptionCheck(context: LearningContext, requestId: string, choice: number): Promise<{ correct: boolean; correct_index: number; explanation: string }>;
   /** The student came back to the app after `seconds` away, on `videoId` (null: not on a video). */
   recordLearningAway(context: LearningContext, input: { id: string; seconds: number; videoId: string | null }): Promise<void>;
   /** The feed is still open with the app in front (sent about once a minute): the session must not end as idle. Says

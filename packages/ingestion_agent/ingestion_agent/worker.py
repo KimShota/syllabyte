@@ -44,11 +44,11 @@ from ingestion_agent.upload_jobs import (
     run_deck_job, run_deck_read_job, run_link_pass_job, run_placement_job, run_question_job, run_question_bank_job, run_syllabus_job,
 )
 from ingestion_agent.uploads import UploadError, read_deck
-from ingestion_agent.video_job import run_video_job
+from ingestion_agent.video_job import run_misconception_job, run_video_job
 from ingestion_agent.material_previews import render_material
 from syllabyte_common.models import SlideDeck
 
-KINDS = ("syllabus", "deck_read", "placement", "deck", "question", "link_pass", "video", "preview", "question_bank")
+KINDS = ("syllabus", "deck_read", "placement", "deck", "question", "link_pass", "video", "preview", "question_bank", "misconception")
 
 
 def log(msg: str) -> None:
@@ -94,7 +94,7 @@ class Worker:
         succeeded = False
         try:
             path = None
-            if job.get("file_name") and not (kind in ("question", "question_bank", "video") and payload["deck_id"] in self.decks):
+            if job.get("file_name") and not (kind in ("question", "question_bank", "video", "misconception") and payload["deck_id"] in self.decks):
                 r = self.client.get(f"/api/worker/jobs/{job_id}/file")
                 r.raise_for_status()
                 path = work / Path(job["file_name"]).name
@@ -150,6 +150,11 @@ class Worker:
             return run_link_pass_job(payload, model=self.model, manifest=manifest)
         if kind == "video":
             return run_video_job(
+                payload, self._deck(payload["deck_id"], path), work, lambda name, file: self._put_file(job_id, name, file), model=self.model,
+                critic_model=self.critic_model, manifest=manifest, log=log,
+            )
+        if kind == "misconception":
+            return run_misconception_job(
                 payload, self._deck(payload["deck_id"], path), work, lambda name, file: self._put_file(job_id, name, file), model=self.model,
                 critic_model=self.critic_model, manifest=manifest, log=log,
             )

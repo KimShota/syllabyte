@@ -233,6 +233,46 @@ export interface Fixtures {
   slides: Record<string, string>;
   /** questions that could not be written (the worker gave up): a sitting waiting for one says so */
   question_failures?: QuestionNeed[];
+  /** clips made so far that address a misconception (server only; see MisconceptionClip) */
+  misconception_clips?: MisconceptionClip[];
+}
+
+/**
+ * A short video made on demand to address one misconception (plan/engagement-feedback-implementation-plan.md,
+ * "Misconception clips"): a checkpoint question answered wrong with "Certain", for the option chosen. One clip per
+ * question and wrong option, shared by every student who makes that mistake.
+ */
+export interface MisconceptionClip {
+  /** `${item_id}|${choice}` */
+  key: string;
+  item_id: string;
+  choice: number;
+  /** the clip, with urls the server signed for the student */
+  video: Video;
+  /** a follow-up question on the same idea (the clip's own checkpoint question), or null */
+  check_item: Item | null;
+}
+
+/** A student's request for a misconception clip, and what they did with it. */
+export interface MisconceptionRequest {
+  id: string;
+  /** the clip it waits for: `${item_id}|${choice}` */
+  key: string;
+  item_id: string;
+  choice: number;
+  /** the video whose checkpoint was answered, and its KU and level (the clip is made at that level) */
+  video_id: string;
+  ku_id: string;
+  level: Level;
+  session_id: string | null;
+  requested_at: number;
+  /** first time the app offered it (null: not yet) */
+  offered_at: number | null;
+  /** "later" can still become "watched" */
+  action: "watched" | "later" | null;
+  action_at: number | null;
+  /** the follow-up question after watching, answered once */
+  follow_up: { choice: number; correct: boolean; at: number } | null;
 }
 
 /** A question a sitting is waiting for: a KU at a tier, with no saved question the student has not seen. */
@@ -474,6 +514,8 @@ export interface DemoState {
   upcoming_lecture: number | null;
   responses: ResponseRecord[];
   learning_sessions: Record<string, LearningSession>;
+  /** clips requested to address misconceptions (plan: "Misconception clips"); missing on older states */
+  misconception_requests: MisconceptionRequest[];
   playlist: PlaylistState;
   watched: Record<string, WatchRecord>;
   next_session: NextSessionTask[];
