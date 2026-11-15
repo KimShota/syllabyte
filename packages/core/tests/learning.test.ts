@@ -325,10 +325,22 @@ describe.skipIf(!haveFixtures)("automatic prompts and the session reflection", (
     // nothing new since: no second prompt
     expect(await api.evaluateLearningBoundary(ctx, { reason: "next_video", videoId: FIX.videos[2].id })).toBeNull();
 
+    // the latest video moved on from early, to check "I already know what those videos cover" against
+    expect(p!.skipped?.videoId).toBe(FIX.videos[3].id);
+    expect(p!.skipped!.points.length).toBeGreaterThan(0);
     await api.respondToLearningPrompt(ctx, p!.id, { answer: "drifted" });
     await api.respondToLearningPrompt(ctx, p!.id, { answer: "on_task", action: "rewatch" }); // the first answer stands
     const saved = store.getState().learning_sessions[ctx.sessionId].prompts![0];
     expect(saved).toMatchObject({ answer: "drifted", action: "rewatch", policyVersion: "drift-1" });
+  });
+
+  it("a jump to a chosen video records where it went; an unknown video is refused", async () => {
+    for (const i of [1, 2, 3]) { later(1000); await play(i, 0); }
+    later(1000);
+    const p = await api.evaluateLearningBoundary(ctx, { reason: "next_video", videoId: FIX.videos[0].id });
+    await expect(api.respondToLearningPrompt(ctx, p!.id, { answer: "searching", action: "jump", target: "no-such-video" })).rejects.toThrow();
+    await api.respondToLearningPrompt(ctx, p!.id, { answer: "searching", action: "jump", target: FIX.videos[2].id });
+    expect(store.getState().learning_sessions[ctx.sessionId].prompts![0]).toMatchObject({ answer: "searching", action: "jump", actionTarget: FIX.videos[2].id });
   });
 
   it("swiping straight through (videos that never played) counts as moving on early too", async () => {

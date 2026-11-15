@@ -67,7 +67,7 @@ export interface Api {
   /** A decision point (moved to the next video, came back to the app): the prompt to offer now, if any. Call it after the
    *  playback saves of the page left behind have been acknowledged. */
   evaluateLearningBoundary(context: LearningContext, input: { reason: "next_video" | "return"; videoId: string }): Promise<LearningPrompt | null>;
-  respondToLearningPrompt(context: LearningContext, promptId: string, response: { answer?: DriftAnswer; action?: PromptAction }): Promise<void>;
+  respondToLearningPrompt(context: LearningContext, promptId: string, response: { answer?: DriftAnswer; action?: PromptAction; target?: string }): Promise<void>;
   /** Ends a session; returns the reflection to show, or null when there is nothing worth reflecting on. */
   finishLearningSession(context: LearningContext, reason: SessionEndReason): Promise<SessionSummary | null>;
   /** The latest session reflection not yet seen (ending sessions left idle for 10 minutes first), or null. */

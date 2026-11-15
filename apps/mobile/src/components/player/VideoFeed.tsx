@@ -149,22 +149,29 @@ export function VideoFeed({ kus, startIndex, end }: { kus: readonly Ku[]; startI
     return () => clearInterval(timer);
   }, [live]);
 
-  function closePrompt(action: PromptAction) {
+  /** Scrolls the feed to a video and starts it from `t` once it is the one on screen. */
+  function goTo(videoId: string, t: number) {
+    const index = items.findIndex((it) => it.kind === "video" && it.ku.videoId === videoId);
+    if (index < 0) return;
+    // without animation: scrolling past the videos in between would record them as visits left early
+    list.current?.scrollToIndex({ index, animated: false });
+    setCommand({ id: Date.now(), videoId, kind: "seek", t });
+  }
+
+  function closePrompt(action: PromptAction, target?: string) {
     const p = prompt;
     setPrompt(null);
     if (!p) return;
-    void sendLearning("respondToLearningPrompt", learning, p.id, { action });
+    void sendLearning("respondToLearningPrompt", learning, p.id, target ? { action, target } : { action });
+    if ((action === "jump" || action === "watch") && target) {
+      goTo(target, 0);
+      return;
+    }
     if (action === "pause" && activeVideoId) setCommand({ id: Date.now(), videoId: activeVideoId, kind: "pause" });
     const r = p.recall;
     if (!r) return;
     if (action === "replay") setCommand({ id: Date.now(), videoId: r.videoId, kind: "seek", t: r.replayFrom });
-    if (action === "rewatch") {
-      const index = items.findIndex((it) => it.kind === "video" && it.ku.videoId === r.videoId);
-      if (index >= 0) {
-        list.current?.scrollToIndex({ index, animated: true });
-        setCommand({ id: Date.now(), videoId: r.videoId, kind: "seek", t: r.replayFrom });
-      }
-    }
+    if (action === "rewatch") goTo(r.videoId, r.replayFrom);
   }
 
   // FlatList needs the same function for its whole life
@@ -217,6 +224,8 @@ export function VideoFeed({ kus, startIndex, end }: { kus: readonly Ku[]; startI
         <EngagementPrompt
           key={prompt.id}
           prompt={prompt}
+          feed={items.flatMap((it) => (it.kind === "video" && it.ku.videoId ? [{ videoId: it.ku.videoId, title: it.ku.title }] : []))}
+          currentVideoId={activeVideoId}
           onAnswer={(answer) => { void sendLearning("respondToLearningPrompt", learning, prompt.id, { answer }); }}
           onDone={closePrompt}
         />
