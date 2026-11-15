@@ -304,9 +304,17 @@ def _data_extent(views: list[dict]) -> tuple[list[float], list[float]]:
                 xs += [p[0] for p in it["points"]]
                 ys += [p[1] for p in it["points"]]
             elif t in ("rects", "bars"):
-                for x0, x1, h in it["rects" if t == "rects" else "bars"]:
+                bases = it.get("base") or [0.0] * len(it["rects" if t == "rects" else "bars"])
+                for (x0, x1, h), b0 in zip(it["rects" if t == "rects" else "bars"], bases):
                     xs += [x0, x1]
-                    ys += [0.0, h]
+                    ys += [b0, b0 + h, 0.0]
+            elif t == "box":
+                xs += [it["x"] - it["w"] / 2, it["x"] + it["w"] / 2]
+                ys += it["q"] + it["out"]
+            elif t == "errors":
+                for x, lo, hi, _y in it["bars"]:
+                    xs.append(x)
+                    ys += [lo, hi]
             elif t == "points":
                 xs += [p[0] for p in it["at"]]
                 ys += [p[1] for p in it["at"]]
@@ -328,6 +336,8 @@ def _bar_names(views: list[dict]) -> list[tuple[float, str]]:
             if it["type"] == "bars" and it.get("names"):
                 for (x0, x1, _h), name in zip(it["bars"], it["names"]):
                     out[round((x0 + x1) / 2, 9)] = name
+            elif it["type"] == "box" and it.get("name"):
+                out[round(it["x"], 9)] = it["name"]
     return sorted(out.items())
 
 
@@ -476,7 +486,7 @@ def axes_layout(views: list[dict], region) -> AxesLayout:
     requests: dict[tuple[str, str], Request] = {}
     for i, v in enumerate(views):
         lines = {key: [piece for line in item_polylines(it, lay) for piece in clip_polyline(line, lo, hi)]
-                 for key, it in v["items"].items() if it["type"] not in ("field", "grid")}
+                 for key, it in v["items"].items() if it["type"] not in ("field", "grid", "heat")}
         for key, it in v["items"].items():
             if not it.get("label"):
                 continue
@@ -521,8 +531,9 @@ def axes_layout(views: list[dict], region) -> AxesLayout:
             for j, ((x0, x1, h), text) in enumerate(zip(it["bars"], it["values"])):
                 rk = (f"{key}#{j}", text)
                 if rk not in requests:
-                    top_y = lay.to_screen(((x0 + x1) / 2, max(h, 0.0)))
-                    base_y = lay.to_screen(((x0 + x1) / 2, 0.0))[1]
+                    b0 = (it.get("base") or [0.0] * len(it["bars"]))[j]
+                    top_y = lay.to_screen(((x0 + x1) / 2, b0 + max(h, 0.0)))
+                    base_y = lay.to_screen(((x0 + x1) / 2, b0))[1]
                     bar_w = abs(lay.to_screen((x1, 0))[0] - lay.to_screen((x0, 0))[0])
                     half = text_half(text)
                     cands = [np.array([top_y[0], top_y[1] + half[1] + d]) for d in (0.04, 0.12, 0.22, 0.34, 0.46)]
@@ -587,9 +598,24 @@ def item_polylines(it: dict, lay: AxesLayout) -> list[list[tuple[float, float]]]
         return [[lay.to_screen(p) for p in piece] for piece in it["pieces"]]
     if t in ("rects", "bars"):
         out = []
-        for x0, x1, h in it["rects" if t == "rects" else "bars"]:
-            corners = [(x0, 0), (x0, h), (x1, h), (x1, 0)]
+        bases = it.get("base") or [0.0] * len(it["rects" if t == "rects" else "bars"])
+        for (x0, x1, h), b0 in zip(it["rects" if t == "rects" else "bars"], bases):
+            corners = [(x0, b0), (x0, b0 + h), (x1, b0 + h), (x1, b0)]
             out.append([lay.to_screen(p) for p in corners])
+        return out
+    if t == "box":  # the box, the median, two whiskers and their caps
+        lw, q1, med, q3, hw = it["q"]
+        x0, x1, x = it["x"] - it["w"] / 2, it["x"] + it["w"] / 2, it["x"]
+        cap = it["w"] / 4
+        shapes = [[(x0, q1), (x1, q1), (x1, q3), (x0, q3), (x0, q1)], [(x0, med), (x1, med)],
+                  [(x, q3), (x, hw)], [(x, q1), (x, lw)], [(x - cap, hw), (x + cap, hw)], [(x - cap, lw), (x + cap, lw)]]
+        return [[lay.to_screen(p) for p in sh] for sh in shapes]
+    if t == "errors":
+        out = []
+        for x, lo, hi, _y in it["bars"]:
+            sx, slo = lay.to_screen((x, lo))
+            _sx, shi = lay.to_screen((x, hi))
+            out += [[(sx, slo), (sx, shi)], [(sx - 0.06, slo), (sx + 0.06, slo)], [(sx - 0.06, shi), (sx + 0.06, shi)]]
         return out
     if t == "field":
         return [list(a) for a in field_arrows(it, lay)]
@@ -1094,4 +1120,178 @@ def surface_layout(views: list[dict], region) -> SurfaceLayout:
                 obs = Obstacles(list(obstacles.segments), [(c, text_half(t)) for t, c in lay.names], [])
                 requests.append(Request((key, it["label"]), it["label"], around(p, text_half(it["label"])), obs, {i}))
     lay.labels = place(requests, bounds, "the 3D view", dropped=lay.dropped)
+    return lay
+
+
+# ---- 3D scene (a camera that turns between snapshots; plan/visual-coverage-plan.md, step 7) ------------------
+
+LIGHT = np.array([0.3, -0.2, 0.93]) / np.linalg.norm([0.3, -0.2, 0.93])
+
+
+def camera(view) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The screen's right and up directions and the direction toward the viewer, for (azimuth, elevation) in
+    degrees."""
+    az, el = math.radians(view[0]), math.radians(view[1])
+    right = np.array([-math.sin(az), math.cos(az), 0.0])
+    up = np.array([-math.cos(az) * math.sin(el), -math.sin(az) * math.sin(el), math.cos(el)])
+    toward = np.array([math.cos(az) * math.cos(el), math.sin(az) * math.cos(el), math.sin(el)])
+    return right, up, toward
+
+
+@dataclass
+class SpaceLayout:
+    centre: np.ndarray
+    half: np.ndarray  # each axis's half range: one value for all three when they match (true angles), else each
+    # axis fills the box, so z = -x^2 - 2y^2 over a small square isn't drawn as a thin spike
+    scale: float
+    views: list  # each snapshot's camera
+    origins: list  # each snapshot's screen point for the scene's centre
+    axes: list  # each snapshot's three axes: ((start, end) on screen, name)
+    labels: list  # each snapshot's label centres, by (key, text)
+    dropped: list = field(default_factory=list)
+
+    def unit(self, p) -> np.ndarray:
+        return (np.asarray(p, dtype=float) - self.centre) / self.half
+
+    def to_screen(self, p, i: int) -> tuple[float, float]:
+        right, up, _t = camera(self.views[i])
+        q = self.unit(p)
+        return (self.origins[i][0] + float(q @ right) * self.scale, self.origins[i][1] + float(q @ up) * self.scale)
+
+    def depth(self, p, i: int) -> float:
+        return float(self.unit(p) @ camera(self.views[i])[2])
+
+
+def space_heights(views: list[dict], width: float, title: float) -> tuple[float, float]:
+    return title + 2.4, title + width * 1.1
+
+
+def _box_corners(v: dict) -> list[tuple[float, float, float]]:
+    return [(a, b, c) for a in v["x"] for b in v["y"] for c in v["z"]]
+
+
+def _axis_lines(v: dict) -> list[tuple[list[float], list[float], str]]:
+    """The x, y and z axes across the box, through the origin (or the box's nearest point to it)."""
+    o = [min(max(0.0, lo), hi) for lo, hi in (v["x"], v["y"], v["z"])]
+    out = []
+    for k, name in enumerate("xyz"):
+        a, b = list(o), list(o)
+        a[k], b[k] = (v["x"], v["y"], v["z"])[k]
+        out.append((a, b, name))
+    return out
+
+
+def space_faces(it: dict, lay: SpaceLayout, i: int) -> list[tuple[list[tuple[float, float]], float, float]]:
+    """A thing's faces in snapshot i: (screen corners, depth, light 0-1), far first."""
+    toward = camera(lay.views[i])[2]
+    faces = []
+
+    def face(corners):
+        q = [lay.unit(c) for c in corners]
+        normal = np.cross(q[1] - q[0], q[2] - q[0])
+        if np.linalg.norm(normal) < 1e-12 and len(q) > 3:
+            normal = np.cross(q[2] - q[0], q[3] - q[0])
+        if np.linalg.norm(normal) < 1e-12:
+            return
+        normal /= np.linalg.norm(normal)
+        if normal @ toward < 0:
+            normal = -normal  # both sides of a surface show
+        light = 0.45 + 0.55 * max(0.0, float(normal @ LIGHT))
+        faces.append(([lay.to_screen(c, i) for c in corners], float(np.mean([lay.depth(c, i) for c in corners])),
+                      light))
+
+    if it["type"] == "mesh":
+        g = it["grid"]
+        for a in range(len(g) - 1):
+            for b in range(len(g[0]) - 1):
+                face([g[a][b], g[a + 1][b], g[a + 1][b + 1], g[a][b + 1]])
+    elif it["type"] == "polygon":
+        face(it["points"])
+    return sorted(faces, key=lambda f: f[1])
+
+
+def space_lines(it: dict, lay: SpaceLayout, i: int) -> list[list[tuple[float, float]]]:
+    if it["type"] == "curve":
+        return [[lay.to_screen(p, i) for p in piece] for piece in it["pieces"]]
+    if it["type"] in ("segment", "vector"):
+        return [[lay.to_screen(p, i) for p in it["points"]]]
+    return []
+
+
+def item_depth(it: dict, lay: SpaceLayout, i: int) -> float:
+    pts = (it.get("points") or ([it["at"]] if "at" in it else None)
+           or [p for row in it.get("grid", []) for p in row] or [p for pc in it.get("pieces", []) for p in pc])
+    return float(np.mean([lay.depth(p, i) for p in pts])) if pts else 0.0
+
+
+def space_layout(views: list[dict], region) -> SpaceLayout:
+    title = 0.38 if any(v.get("title") for v in views) else 0.0
+    first = views[0]
+    ranges = [first["x"], first["y"], first["z"]]
+    centre = np.array([(lo + hi) / 2 for lo, hi in ranges])
+    halves = np.array([(hi - lo) / 2 for lo, hi in ranges])
+    same = np.ptp(halves) < 1e-9 * max(halves.max(), 1.0) or first.get("equal")
+    half = np.full(3, halves.max()) if same else halves
+    margin = 0.3  # axis names round the box
+    w, h = region.w - 2 * margin, region.h - title - 2 * margin
+    if w < 1.2 or h < 1.2:
+        raise PictureError(f"the 3D scene needs more room than {region.w:.1f} by {region.h:.1f}")
+    lay = SpaceLayout(centre, half, 1.0, [v["view"] for v in views], [(0.0, 0.0)] * len(views), [], [])
+    # one scale for every camera the program uses, so turning it never makes the scene grow or shrink; the box and
+    # everything drawn (a surface may rise past the box) fit
+    def extent(i):
+        pts = list(_box_corners(first))
+        for it in views[i]["items"].values():
+            pts += (it.get("points") or ([it["at"]] if "at" in it else [])
+                    or [q for row in it.get("grid", []) for q in row] or [q for pc in it.get("pieces", []) for q in pc])
+        return np.array([lay.to_screen(c, i) for c in pts])
+
+    scale = np.inf
+    for i in range(len(views)):
+        pts = extent(i)
+        scale = min(scale, w / max(np.ptp(pts[:, 0]), 1e-9), h / max(np.ptp(pts[:, 1]), 1e-9))
+    lay.scale = float(scale)
+    cx, cy = region.cx, region.top - title - (region.h - title) / 2
+    origins = []
+    for i in range(len(views)):
+        pts = extent(i)  # origins still (0, 0)
+        origins.append((cx - (pts[:, 0].min() + pts[:, 0].max()) / 2, cy - (pts[:, 1].min() + pts[:, 1].max()) / 2))
+    lay.origins = origins
+    bounds = (region.cx - region.w / 2, region.cx + region.w / 2, region.bottom, region.top - title)
+    for i, v in enumerate(views):
+        axes = [((lay.to_screen(a, i), lay.to_screen(b, i)), name) for a, b, name in _axis_lines(v)]
+        lay.axes.append(axes)
+        obstacles = Obstacles()
+        for (a, b), _n in axes:
+            obstacles.segments.append((a, b))
+        for it in v["items"].values():
+            for line in space_lines(it, lay, i):
+                obstacles.add_polyline(line)
+            if it["type"] == "point":
+                obstacles.discs.append((lay.to_screen(it["at"], i), POINT_R + ROOM))
+        requests = []
+        for (a, b), name in axes:  # past each axis's positive end
+            d = np.array(b) - np.array(a)
+            d /= np.linalg.norm(d) or 1
+            half_t = text_half(name)
+            requests.append(Request((f"axis-{name}", name), name,
+                                    [np.array(b) + d * (half_t.max() + 0.06 * k) for k in range(1, 6)],
+                                    Obstacles(list(obstacles.segments), [], list(obstacles.discs)), {i}))
+        for key, it in v["items"].items():
+            if not it.get("label"):
+                continue
+            ht = text_half(it["label"])
+            if it["type"] == "point":
+                cands = around(lay.to_screen(it["at"], i), ht)
+            elif it["type"] == "vector":
+                tail, tip = map(np.array, space_lines(it, lay, i)[0])
+                d = (tip - tail) / (float(np.hypot(*(tip - tail))) or 1e-9)
+                reach = abs(d[0]) * ht[0] + abs(d[1]) * ht[1]
+                cands = [tip + d * (reach + e) for e in (0.08, 0.2)] + around(tuple(tip), ht, 0.22)
+            else:
+                lines = space_lines(it, lay, i)
+                cands = beside(max(lines, key=len), ht) if lines else []
+            requests.append(Request((key, it["label"]), it["label"], cands,
+                                    Obstacles(list(obstacles.segments), [], list(obstacles.discs)), {i}))
+        lay.labels.append(place(requests, bounds, "the 3D scene", dropped=lay.dropped))
     return lay

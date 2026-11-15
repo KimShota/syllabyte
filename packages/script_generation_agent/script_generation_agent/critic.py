@@ -72,7 +72,8 @@ _VIEW_NAMES = {"cells": "an array", "nodes": "a tree or graph", "code": "a code 
                "axes": "axes", "venn": "a Venn diagram", "geometry": "a figure", "numberline": "a number line",
                "surface": "a 3D surface", "grid": "a table", "flow": "a box-and-arrow diagram",
                "timeline": "a timeline", "sequence": "a message diagram", "circuit": "a logic circuit",
-               "memory": "a memory diagram"}
+               "memory": "a memory diagram", "formula": "a formula", "tape": "a tape of characters or bits",
+               "space": "a 3D scene"}
 
 
 def as_seen(script: Script) -> str:

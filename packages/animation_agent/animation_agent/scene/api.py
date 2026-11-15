@@ -25,13 +25,17 @@ from fractions import Fraction
 
 MAX_VIEWS = 3
 MAX_SNAPS = 40
-MAX_NODES = 15
-MAX_CELLS = 12
-MAX_CODE_LINES = 6
-MAX_LABEL = 2  # characters in a node or cell: "10" is 0.35 units wide at the minimum font
+MAX_NODES = 20  # the layout refuses what doesn't fit
+MAX_CELLS = 32  # past what fits across, a window follows the marked cells (scene/layout.py)
+MAX_CODE_LINES = 30  # a longer program scrolls with its current line (scene/text_layout.py)
+MAX_LABEL = 2  # characters in a cell: "10" is 0.35 units wide at the minimum font
+MAX_NODE_LABEL = 4  # a node grows to hold it (f(3), 'cat'), so fewer fit across
 MAX_TITLE = 18
 STYLES = ("current", "visited", "found", "compare", "red", "grey", "new", "blue")
-LAYOUTS = ("tree", "binary", "graph")
+LAYOUTS = ("tree", "binary", "graph", "circle", "bipartite", "layered", "fixed")
+# laid out once for every node and link the program ever shows (the rest are trees: a link moves a child)
+GRAPH_LAYOUTS = ("graph", "circle", "bipartite", "layered", "fixed")
+MAX_KEYS = 4  # in one node of a B-tree
 
 
 class PictureError(Exception):
@@ -49,6 +53,13 @@ def _label(v) -> str:
     s = INFINITY if (isinstance(v, float) and v == float("inf")) or v in ("INF", "inf", "Infinity") else str(v)
     if len(s) > MAX_LABEL:
         raise PictureError(f"label {s!r} is longer than {MAX_LABEL} characters")
+    return s
+
+
+def _node_label(v) -> str:
+    s = INFINITY if (isinstance(v, float) and v == float("inf")) or v in ("INF", "inf", "Infinity") else str(v)
+    if len(s) > MAX_NODE_LABEL:
+        raise PictureError(f"node label {s!r} is longer than {MAX_NODE_LABEL} characters")
     return s
 
 
@@ -129,7 +140,12 @@ class Cells(_View):
 class Nodes(_View):
     """Nodes and links. layout="tree": links go parent -> child, children in `slot` order, roots side by side (a
     forest wraps onto more rows when it is wider than the frame); "binary": the same with slot 0 = left, 1 = right,
-    a missing child keeps its side; "graph": laid out once for every node and link the program ever shows."""
+    a missing child keeps its side; "graph": laid out once for every node and link the program ever shows.
+    The other graph layouts place nodes by rule instead: "circle" round a ring in the order they were added (from
+    the top, clockwise: residues mod n, a ring of servers), "bipartite" in two columns by `layer` 0 or 1 (a
+    matching, a function from A to B), "layered" in columns by `layer` (a neural network, a DAG's levels), and
+    "fixed" where `at` = (x, y) puts each one (the slide's own drawing: K5, the Petersen graph, a map).
+    A tree node may hold up to 4 keys (a B-tree's), its children linked from the gaps between them by slot."""
 
     kind = "nodes"
 
@@ -143,11 +159,41 @@ class Nodes(_View):
         for n in nodes:
             self.add(n)
 
-    def add(self, key, label=None, style=None):
+    def add(self, key, label=None, style=None, at=None, layer=None, keys=None):
         key = str(key)
         if key not in self._nodes and len(self._nodes) >= MAX_NODES:
             raise PictureError(f"{self.name}: at most {MAX_NODES} nodes")
-        self._nodes[key] = {"label": _label(key if label is None else label), "style": _style(style)}
+        node = {"label": None, "style": _style(style)}
+        if keys is not None:
+            if self.layout in GRAPH_LAYOUTS:
+                raise PictureError(f"{self.name}: a node with keys (a B-tree's) is for layout 'tree'")
+            ks = [_label(k) for k in keys]
+            if not 1 <= len(ks) <= MAX_KEYS:
+                raise PictureError(f"{self.name}: a node holds 1-{MAX_KEYS} keys")
+            node["keys"], node["label"] = ks, " ".join(ks)
+        else:
+            node["label"] = _node_label(key if label is None else label)
+        if self.layout == "fixed":
+            old = self._nodes.get(key, {}).get("at")
+            if at is None and old is None:
+                raise PictureError(f"{self.name}: layout 'fixed' places each node at=(x, y); {key} has none")
+            node["at"] = [_num(at[0]), _num(at[1])] if at is not None else old
+        if self.layout in ("bipartite", "layered"):
+            old = self._nodes.get(key, {}).get("layer")
+            if layer is None and old is None:
+                raise PictureError(f"{self.name}: layout {self.layout!r} puts each node in a layer (layer=0, 1, ...)"
+                                   f"; {key} has none")
+            node["layer"] = int(layer) if layer is not None else old
+            if self.layout == "bipartite" and node["layer"] not in (0, 1):
+                raise PictureError(f"{self.name}: a bipartite graph's layers are 0 and 1")
+        self._nodes[key] = node
+
+    def set_keys(self, key, keys):
+        """A B-tree node's keys now (after an insert or a split)."""
+        key = str(key)
+        if key not in self._nodes or "keys" not in self._nodes[key]:
+            raise PictureError(f"{self.name}: {key} is not a node with keys")
+        self.add(key, style=self._nodes[key]["style"], keys=keys)
 
     def remove(self, key):
         key = str(key)
@@ -160,7 +206,7 @@ class Nodes(_View):
         for k in (a, b):
             if k not in self._nodes:
                 raise PictureError(f"{self.name}: no node {k!r} to link")
-        if self.layout != "graph":
+        if self.layout not in GRAPH_LAYOUTS:
             # a tree node has one parent: linking it under a new one moves it
             for e in [e for e in self._links if e[1] == b]:
                 del self._links[e]
@@ -193,8 +239,22 @@ class Nodes(_View):
                 "links": [[a, b, d["style"], d["label"], d["slot"]] for (a, b), d in self._links.items()]}
 
 
+MAX_CODE_CHARS = 40  # a logical line; the layout wraps it onto rows that fit (scene/text_layout.py)
+MAX_WATCHES = 6
+
+
+def _code_line(s) -> str:
+    s = str(s).rstrip().replace("\t", "    ")
+    if len(s) > MAX_CODE_CHARS:
+        raise PictureError(f"a code line is {len(s)} characters ({s!r}); at most {MAX_CODE_CHARS}, and about 14 fit "
+                           "on one row (a longer one wraps)")
+    return s
+
+
 class Code(_View):
-    """Code lines, the current one lit."""
+    """Code lines, the current one lit. A long program scrolls so the current line stays in view, a line too long
+    for a row wraps onto the next, lines can be marked (run, the bug) or rewritten, and watched variables sit in
+    a row under the code with their values."""
 
     kind = "code"
 
@@ -202,14 +262,203 @@ class Code(_View):
         super().__init__(name, title)
         if not 1 <= len(lines) <= MAX_CODE_LINES:
             raise PictureError(f"{name}: 1-{MAX_CODE_LINES} code lines")
-        self.lines = [str(s) for s in lines]
+        self.lines = [_code_line(s) for s in lines]
         self.current = None
+        self._marks: dict[int, str] = {}
+        self._watch: dict[str, str] = {}
+
+    def _i(self, i) -> int:
+        i = int(i)
+        if not -len(self.lines) <= i < len(self.lines):
+            raise PictureError(f"{self.name} has no line {i} (it has {len(self.lines)})")
+        return i % len(self.lines)
 
     def line(self, i):
-        self.current = None if i is None else int(i)
+        self.current = None if i is None else self._i(i)
+
+    def mark(self, i, style="visited"):
+        self._marks[self._i(i)] = _style(style)
+
+    def unmark(self, i=None):
+        if i is None:
+            self._marks.clear()
+        else:
+            self._marks.pop(self._i(i), None)
+
+    def set(self, i, text):
+        """Rewrites line i (a fix, a step of a transformation)."""
+        self.lines[self._i(i)] = _code_line(text)
+
+    def watch(self, name, value):
+        """Shows a variable's value under the code (name and value at most 6 characters each)."""
+        name = str(name)
+        if len(name) > MAX_WORD:
+            raise PictureError(f"{self.name}: a watched name is at most {MAX_WORD} characters ({name!r})")
+        if name not in self._watch and len(self._watch) >= MAX_WATCHES:
+            raise PictureError(f"{self.name}: at most {MAX_WATCHES} watched variables")
+        self._watch[name] = _word(value, what="a watched value")
+
+    def unwatch(self, name=None):
+        if name is None:
+            self._watch.clear()
+        else:
+            self._watch.pop(str(name), None)
 
     def state(self):
-        return {"kind": self.kind, "title": self.title, "lines": list(self.lines), "current": self.current}
+        return {"kind": self.kind, "title": self.title, "lines": list(self.lines), "current": self.current,
+                "marks": {str(k): v for k, v in self._marks.items()}, "watch": dict(self._watch)}
+
+
+MAX_TAPE = 64
+MAX_TAPE_ROWS = 3
+MAX_FIELDS_ON_TAPE = 6
+
+
+def _symbol(v) -> str:
+    s = "" if v is None else str(int(v)) if isinstance(v, bool) else str(v)
+    if s == " ":
+        s = ""
+    if len(s) > 1:
+        raise PictureError(f"a tape holds one character a cell ({s!r}); use cells() for longer values")
+    return s
+
+
+def _symbols(values) -> list[str]:
+    return [_symbol(v) for v in (list(values) if not isinstance(values, str) else list(values))]
+
+
+class Tape(_View):
+    """A long row of one-character cells: a string, a Turing machine's tape, the bits of a word. Up to 64 cells
+    (rows of about 15 wrap when nothing is aligned under it); heads point at cells, brackets name fields (tag,
+    index, offset; sign, exponent, mantissa), and up to 3 more rows sit aligned under it, each starting at its own
+    column (a pattern shifted along a text, a second operand, the carries)."""
+
+    kind = "tape"
+
+    def __init__(self, name, symbols, title=None, group=None, index=False):
+        super().__init__(name, title)
+        self._values = _symbols(symbols)
+        if not 1 <= len(self._values) <= MAX_TAPE:
+            raise PictureError(f"{name}: 1-{MAX_TAPE} symbols")
+        self.group = None if group is None else int(group)
+        if self.group is not None and not 1 <= self.group <= 16:
+            raise PictureError(f"{name}: group is how many cells sit together (1-16)")
+        self.index = bool(index)
+        self._marks: dict[int, str] = {}
+        self._heads: dict[str, int] = {}
+        self._fields: dict[str, list] = {}
+        self._rows: dict[str, dict] = {}
+
+    def __len__(self):
+        return len(self._values)
+
+    def __getitem__(self, i):
+        return self._values[i]
+
+    def __setitem__(self, i, v):
+        self._values[i] = _symbol(v)
+
+    def __iter__(self):
+        return iter(list(self._values))
+
+    def text(self) -> str:
+        return "".join(v or " " for v in self._values)
+
+    def append(self, v):
+        if len(self._values) >= MAX_TAPE:
+            raise PictureError(f"{self.name}: at most {MAX_TAPE} symbols")
+        self._values.append(_symbol(v))
+
+    def _i(self, i) -> int:
+        i = int(i)
+        if not -len(self) <= i < len(self):
+            raise PictureError(f"{self.name} has no cell {i} (it has {len(self)})")
+        return i % len(self)
+
+    def mark(self, i, style="current"):
+        self._marks[self._i(i)] = _style(style)
+
+    def mark_range(self, a, b, style="current"):
+        """Marks cells a to b - 1."""
+        for i in range(int(a), int(b)):
+            self.mark(i, style)
+
+    def unmark(self, i=None):
+        if i is None:
+            self._marks.clear()
+            for r in self._rows.values():
+                r["marks"].clear()
+        else:
+            self._marks.pop(self._i(i), None)
+
+    def head(self, label, i):
+        """A short label (at most 3 characters: 'q0', 'i', 'j') under cell i, with a caret."""
+        label = str(label)
+        if not 1 <= len(label) <= 3:
+            raise PictureError(f"{self.name}: a head's label is 1-3 characters ({label!r})")
+        self._heads[label] = self._i(i)
+
+    def unhead(self, label=None):
+        if label is None:
+            self._heads.clear()
+        else:
+            self._heads.pop(str(label), None)
+
+    def field(self, key, a, b, label=None, style=None):
+        """A bracket under cells a to b - 1, named (a field of a word: 'tag', 'exponent', 'host')."""
+        key, a, b = str(key), int(a), int(b)
+        if not 0 <= a < b <= len(self):
+            raise PictureError(f"{self.name}: a field runs over cells a to b - 1 inside the tape ({a}, {b})")
+        if key not in self._fields and len(self._fields) >= MAX_FIELDS_ON_TAPE:
+            raise PictureError(f"{self.name}: at most {MAX_FIELDS_ON_TAPE} fields")
+        label = None if label is None or not str(label).strip() else str(label).strip()
+        if label is not None and len(label) > 10:
+            label = None  # left out, not refused (the lines say it)
+        self._fields[key] = [a, b, label, _style(style)]
+
+    def unfield(self, key=None):
+        if key is None:
+            self._fields.clear()
+        else:
+            self._fields.pop(str(key), None)
+
+    def row(self, key, symbols, at=0, label=None):
+        """Another row under the tape, its first symbol under column `at` (call it again to shift or change it):
+        a pattern slid along a text, a second number to add, the carries."""
+        key, at = str(key), int(at)
+        if key not in self._rows and len(self._rows) >= MAX_TAPE_ROWS:
+            raise PictureError(f"{self.name}: at most {MAX_TAPE_ROWS} rows under the tape")
+        values = _symbols(symbols)
+        if at < 0 or not values:
+            raise PictureError(f"{self.name}: row {key} needs symbols and a column at or after 0")
+        label = None if label is None else str(label)
+        if label is not None and len(label) > 3:
+            raise PictureError(f"{self.name}: a row's label is at most 3 characters ({label!r})")
+        old = self._rows.get(key)
+        self._rows[key] = {"values": values, "at": at, "label": label,
+                           "marks": {} if old is None or old["at"] != at else old["marks"]}
+
+    def mark_row(self, key, j, style="current"):
+        """Marks symbol j of row `key` (counted from the row's own start)."""
+        r = self._rows.get(str(key))
+        if r is None:
+            raise PictureError(f"{self.name}: no row {key!r}")
+        if not 0 <= int(j) < len(r["values"]):
+            raise PictureError(f"{self.name}: row {key} has no symbol {j}")
+        r["marks"][int(j)] = _style(style)
+
+    def unrow(self, key=None):
+        if key is None:
+            self._rows.clear()
+        else:
+            self._rows.pop(str(key), None)
+
+    def state(self):
+        return {"kind": self.kind, "title": self.title, "values": list(self._values), "group": self.group,
+                "index": self.index, "marks": {str(k): v for k, v in self._marks.items()}, "heads": dict(self._heads),
+                "fields": copy.deepcopy(self._fields),
+                "rows": {k: {"values": list(r["values"]), "at": r["at"], "label": r["label"],
+                             "marks": {str(j): s for j, s in r["marks"].items()}} for k, r in self._rows.items()}}
 
 
 class Container(_View):
@@ -286,6 +535,18 @@ def _pieces(f, lo, hi, n=SAMPLES) -> list[list[list[float]]]:
     if len(cur) > 1:
         pieces.append(cur)
     return pieces
+
+
+def _map_point(f, x, y):
+    """f(x, y) as a point: a pair, or a complex number's (real, imaginary); None where f fails or blows up."""
+    try:
+        q = f(x, y)
+        u, v = (q.real, q.imag) if isinstance(q, complex) else (float(q[0]), float(q[1]))
+    except (ZeroDivisionError, ValueError, OverflowError, TypeError, IndexError):
+        return None
+    if not (math.isfinite(u) and math.isfinite(v)) or abs(u) > BIG or abs(v) > BIG:
+        return None
+    return [u, v]
 
 
 def derivative(f, x, h=1e-5):
@@ -484,11 +745,14 @@ class Axes(_View):
             raise PictureError(f"{self.name}: F never equals {level} on these axes")
         self._put(key, {"type": "curve", "pieces": lines}, style, label)
 
-    def bars(self, key, heights, x=None, labels=None, width=0.8, style="visited", values=False):
+    def bars(self, key, heights, x=None, labels=None, width=0.8, style="visited", values=False, base=None):
         """A bar for each height, at x (default 1, 2, 3...), `width` wide; `labels` names each bar on the x-axis
-        (a bar chart of categories, each name at most 8 characters); values=True writes each height above its bar.
-        Returns the total of the heights."""
+        (a bar chart of categories, each name at most 8 characters); values=True writes each height above its bar;
+        `base` (one per bar) stands each bar on another's top (stacked bars). Returns the total of the heights."""
         heights = [_num(h) for h in heights]
+        bases = None if base is None else [_num(v) for v in base]
+        if bases is not None and len(bases) != len(heights):
+            raise PictureError(f"{self.name}: {key}: one base per bar")
         if not 1 <= len(heights) <= MAX_RECTS:
             raise PictureError(f"{self.name}: 1-{MAX_RECTS} bars")
         xs = [float(i + 1) for i in range(len(heights))] if x is None else [_num(v) for v in x]
@@ -502,8 +766,38 @@ class Axes(_View):
         w = _num(width) * (min(b - a for a, b in zip(sorted(xs), sorted(xs)[1:])) if len(xs) > 1 else 1.0)
         shown = [f"{h:g}" if len(f"{h:g}") <= 6 else f"{h:.3g}" for h in heights] if values else None
         self._put(key, {"type": "bars", "bars": [[cx - w / 2, cx + w / 2, h] for cx, h in zip(xs, heights)],
-                        "names": names, "values": shown}, style)
+                        "names": names, "values": shown, "base": bases}, style)
         return sum(heights)
+
+    def boxplot(self, key, data, x=1, width=0.6, style="visited", name=None):
+        """A box plot of the data at x: the box from the first to the third quartile, the median across it,
+        whiskers to the furthest data within 1.5 box-lengths, and the points past them as outliers. Returns
+        (q1, median, q3). `name` (at most 8 characters) names it on the x-axis, as a bar chart's labels do."""
+        d = sorted(_num(v) for v in data)
+        if len(d) < 4:
+            raise PictureError(f"{self.name}: {key}: a box plot needs at least 4 values")
+
+        def q(f):
+            i = (len(d) - 1) * f
+            lo = int(math.floor(i))
+            return d[lo] + (d[min(lo + 1, len(d) - 1)] - d[lo]) * (i - lo)
+
+        q1, med, q3 = q(0.25), q(0.5), q(0.75)
+        fence = 1.5 * (q3 - q1)
+        inside = [v for v in d if q1 - fence <= v <= q3 + fence]
+        self._put(key, {"type": "box", "x": _num(x), "w": _num(width), "q": [min(inside), q1, med, q3, max(inside)],
+                        "out": [v for v in d if v < q1 - fence or v > q3 + fence],
+                        "name": None if name is None else str(name)[:MAX_MATH_LABEL]}, style)
+        return q1, med, q3
+
+    def errors(self, key, xs, ys, err, style="current"):
+        """A point at each (x, y) with a bar from y - err to y + err (err: one number, or one per point; a
+        confidence interval, a standard error)."""
+        xs, ys = [_num(v) for v in xs], [_num(v) for v in ys]
+        errs = [_num(err)] * len(xs) if isinstance(err, (int, float)) else [_num(v) for v in err]
+        if not (len(xs) == len(ys) == len(errs)) or not 1 <= len(xs) <= MAX_RECTS:
+            raise PictureError(f"{self.name}: {key}: one x, y and err per point (1-{MAX_RECTS})")
+        self._put(key, {"type": "errors", "bars": [[x, y - e, y + e, y] for x, y, e in zip(xs, ys, errs)]}, style)
 
     def histogram(self, key, data, bins=8, range=None, style="visited", values=False):
         """Bars counting how many of `data` fall in each of `bins` equal bins over `range` (default: the data's
@@ -565,9 +859,11 @@ class Axes(_View):
         """The polar curve r = r(theta) for theta from t[0] to t[1]."""
         self.curve(key, lambda s: r(s) * math.cos(s), lambda s: r(s) * math.sin(s), t, style, label)
 
-    def grid(self, key, matrix=None, step=1, style="grey"):
+    def grid(self, key, matrix=None, step=1, style="grey", f=None, over=None):
         """The lines x = k*step and y = k*step across the axes, each point sent through `matrix` [[a, b], [c, d]]
-        when given (what a linear map does to the plane). A background: labels may sit on it."""
+        when given (what a linear map does to the plane), or through any map f(x, y) -> (u, v) or a complex number
+        (z^2 bends the grid, polar coordinates, a Jacobian's change of variables); `over` = (x0, x1, y0, y1) is
+        the square whose lines f sends (default: the axes' own ranges). A background: labels may sit on it."""
         if self.x is None or self.y is None:
             raise PictureError(f"{self.name}: give the axes x and y ranges to draw a grid")
         step = _num(step)
@@ -575,15 +871,61 @@ class Axes(_View):
             raise PictureError(f"{self.name}: a grid's step must be positive")
         (a, b), (c, d) = ((1, 0), (0, 1)) if matrix is None else ((_num(matrix[0][0]), _num(matrix[0][1])),
                                                                    (_num(matrix[1][0]), _num(matrix[1][1])))
-        span = max(abs(v) for v in self.x + self.y)
+        src = list(self.x + self.y) if over is None else [_num(v) for v in over]
+        if len(src) != 4 or not (src[0] < src[1] and src[2] < src[3]):
+            raise PictureError(f"{self.name}: over is (x0, x1, y0, y1), each pair low to high")
+        span = max(abs(v) for v in src)
         k = int(span / step) + 1
         if 2 * k + 1 > 41:
             raise PictureError(f"{self.name}: a grid of step {step:g} has too many lines; use a larger step")
+        if f is not None:  # each line sampled finely, so a curved image stays smooth; it breaks where f fails
+            lines = []
+            lo_x, hi_x, lo_y, hi_y = src
+            xs = [lo_x + (hi_x - lo_x) * t / 40 for t in range(41)]
+            ys = [lo_y + (hi_y - lo_y) * t / 40 for t in range(41)]
+            for i in range(-k, k + 1):
+                for pts in ([(i * step, y) for y in ys] if lo_x <= i * step <= hi_x else [],
+                            [(x, i * step) for x in xs] if lo_y <= i * step <= hi_y else []):
+                    cur = []
+                    for x, y in pts:
+                        q = _map_point(f, x, y)
+                        if q is None:
+                            if len(cur) > 1:
+                                lines.append(cur)
+                            cur = []
+                        else:
+                            cur.append(q)
+                    if len(cur) > 1:
+                        lines.append(cur)
+            self._put(key, {"type": "grid", "pieces": lines}, style)
+            return
         lines = []
         for i in range(-k, k + 1):
             for p, q in (((i * step, -k * step), (i * step, k * step)), ((-k * step, i * step), (k * step, i * step))):
                 lines.append([[a * p[0] + b * p[1], c * p[0] + d * p[1]], [a * q[0] + b * q[1], c * q[0] + d * q[1]]])
         self._put(key, {"type": "grid", "pieces": lines}, style)
+
+    def heat(self, key, F, n=16, lo=None, hi=None):
+        """The plane coloured by F(x, y) on an n x n grid over the axes (dark for low, bright for high): a
+        temperature, a density, a loss surface seen from above. Returns (lowest, highest) value. A background."""
+        if self.x is None or self.y is None:
+            raise PictureError(f"{self.name}: give the axes x and y ranges to draw a heat map")
+        n = max(4, min(int(n), 32))
+        (x0, x1), (y0, y1) = self.x, self.y
+        cells = []
+        for i in range(n):
+            for j in range(n):
+                v = _value(lambda q: F(q[0], q[1]), (x0 + (x1 - x0) * (i + 0.5) / n, y0 + (y1 - y0) * (j + 0.5) / n))
+                if v is not None:
+                    cells.append([x0 + (x1 - x0) * i / n, x0 + (x1 - x0) * (i + 1) / n,
+                                  y0 + (y1 - y0) * j / n, y0 + (y1 - y0) * (j + 1) / n, v])
+        if not cells:
+            raise PictureError(f"{self.name}: F is undefined everywhere on these axes")
+        vals = [c[4] for c in cells]
+        low = min(vals) if lo is None else _num(lo)
+        high = max(vals) if hi is None else _num(hi)
+        self._put(key, {"type": "heat", "cells": cells, "lo": low, "hi": high if high > low else low + 1}, None)
+        return min(vals), max(vals)
 
     def mark(self, key, style="current"):
         if str(key) in self._items:
@@ -892,11 +1234,171 @@ class Surface(_View):
                 "items": copy.deepcopy(self._items)}
 
 
+MAX_SPACE_ITEMS = 14
+MAX_MESH = 16
+
+
+class Space(_View):
+    """A 3D scene seen from a camera that can turn between snapshots (azimuth and elevation in degrees): points,
+    vectors and segments, planes clipped to the box, polygons, parametric curves, surfaces z = f(x, y) and
+    parametric surfaces (a sphere, a torus, a Mobius strip). One scale for x, y and z, so angles and lengths are
+    true. Faces are shaded and drawn far to near; lines, vectors and points are drawn over them."""
+
+    kind = "space"
+
+    def __init__(self, name, x=(-2, 2), y=(-2, 2), z=(-2, 2), title=None, view=(-55, 24)):
+        super().__init__(name, title)
+        self.x, self.y, self.z = ([_num(r[0]), _num(r[1])] for r in (x, y, z))
+        if not (self.x[0] < self.x[1] and self.y[0] < self.y[1] and self.z[0] < self.z[1]):
+            raise PictureError(f"{name}: x, y and z must each run from low to high")
+        self.view = [0.0, 0.0]
+        self.turn(*view)
+        self._items: dict[str, dict] = {}
+
+    def turn(self, azimuth, elevation):
+        """Where the camera looks from (degrees): the next snapshots show the scene from there, and the change
+        animates as the scene turning."""
+        el = _num(elevation)
+        if not -89 <= el <= 89:
+            raise PictureError(f"{self.name}: elevation is between -89 and 89 degrees")
+        self.view = [_num(azimuth), el]
+
+    def _put(self, key, item, style, label=None):
+        key = str(key)
+        if key not in self._items and len(self._items) >= MAX_SPACE_ITEMS:
+            raise PictureError(f"{self.name}: at most {MAX_SPACE_ITEMS} things in one 3D scene")
+        self._items[key] = {**item, "style": _style(style), "label": _math_label(label)}
+
+    @staticmethod
+    def _p(p):
+        if len(p) != 3:
+            raise PictureError(f"a point in space is (x, y, z), not {p!r}")
+        return [_num(p[0]), _num(p[1]), _num(p[2])]
+
+    def point(self, key, x, y, z, label=None, style="current"):
+        self._put(key, {"type": "point", "at": self._p((x, y, z))}, style, label)
+
+    def vector(self, key, x, y, z, origin=(0, 0, 0), style=None, label=None):
+        o = self._p(origin)
+        self._put(key, {"type": "vector", "points": [o, [o[0] + _num(x), o[1] + _num(y), o[2] + _num(z)]]}, style,
+                  label)
+
+    def line(self, key, p, q, style=None, label=None):
+        self._put(key, {"type": "segment", "points": [self._p(p), self._p(q)]}, style, label)
+
+    def polygon(self, key, points, style=None, fill=True):
+        pts = [self._p(q) for q in points]
+        if len(pts) < 3:
+            raise PictureError(f"{self.name}: {key}: a polygon needs at least 3 points")
+        self._put(key, {"type": "polygon", "points": pts, "fill": bool(fill)}, style)
+
+    def plane(self, key, normal, d=0, style="blue"):
+        """The plane normal . (x, y, z) = d, cut to the box (a span, a constraint, a tangent plane)."""
+        n = self._p(normal)
+        if math.hypot(*n) < 1e-12:
+            raise PictureError(f"{self.name}: a plane's normal can't be zero")
+        poly = _clip_plane(n, _num(d), self.x, self.y, self.z)
+        if poly is None:
+            raise PictureError(f"{self.name}: the plane {key} misses the box")
+        self._put(key, {"type": "polygon", "points": poly, "fill": True, "plane": True}, style)
+
+    def curve(self, key, fx, fy, fz, t=(0, 1), style=None, label=None):
+        lo, hi = _num(t[0]), _num(t[1])
+        pts, pieces = [], []
+        for i in range(SAMPLES + 1):
+            s_ = lo + (hi - lo) * i / SAMPLES
+            q = [_value(fx, s_), _value(fy, s_), _value(fz, s_)]
+            if None in q:
+                if len(pts) > 1:
+                    pieces.append(pts)
+                pts = []
+            else:
+                pts.append(q)
+        if len(pts) > 1:
+            pieces.append(pts)
+        if not pieces:
+            raise PictureError(f"{self.name}: {key} is undefined everywhere on t = {lo:g}..{hi:g}")
+        self._put(key, {"type": "curve", "pieces": pieces}, style, label)
+
+    def surface(self, key, f, n=12, style="blue"):
+        """z = f(x, y) over the box's x and y."""
+        n = max(2, min(int(n), MAX_MESH))
+        (x0, x1), (y0, y1) = self.x, self.y
+        grid = [[[x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * j / n,
+                  _value(lambda q: f(q[0], q[1]), (x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * j / n))]
+                 for j in range(n + 1)] for i in range(n + 1)]
+        if any(p[2] is None for row in grid for p in row):
+            raise PictureError(f"{self.name}: f is undefined somewhere on the box; use a smaller x and y range")
+        self._put(key, {"type": "mesh", "grid": grid}, style)
+
+    def param(self, key, fx, fy, fz, u=(0, 1), v=(0, 1), n=12, style="blue"):
+        """The surface (fx(u, v), fy(u, v), fz(u, v)) for u and v in their ranges: a sphere, a cylinder, a torus,
+        a Mobius strip."""
+        n = max(2, min(int(n), MAX_MESH))
+        (u0, u1), (v0, v1) = (_num(u[0]), _num(u[1])), (_num(v[0]), _num(v[1]))
+        grid = []
+        for i in range(n + 1):
+            row = []
+            for j in range(n + 1):
+                a_, b_ = u0 + (u1 - u0) * i / n, v0 + (v1 - v0) * j / n
+                q = [_value(lambda w: fn(w[0], w[1]), (a_, b_)) for fn in (fx, fy, fz)]
+                if None in q:
+                    raise PictureError(f"{self.name}: {key} is undefined at u = {a_:g}, v = {b_:g}")
+                row.append(q)
+            grid.append(row)
+        self._put(key, {"type": "mesh", "grid": grid}, style)
+
+    def mark(self, key, style="current"):
+        if str(key) in self._items:
+            self._items[str(key)]["style"] = _style(style)
+
+    def remove(self, key):
+        self._items.pop(str(key), None)
+
+    def state(self):
+        return {"kind": self.kind, "title": self.title, "x": list(self.x), "y": list(self.y), "z": list(self.z),
+                "view": list(self.view), "items": copy.deepcopy(self._items)}
+
+
+def _clip_plane(n, d, xr, yr, zr):
+    """The polygon where the plane n . p = d crosses the box, its corners in order round it (None: it misses)."""
+    corners = [(x, y, z) for x in xr for y in yr for z in zr]
+    edges = [(a, b) for i, a in enumerate(corners) for b in corners[i + 1:]
+             if sum(1 for k in range(3) if a[k] != b[k]) == 1]
+    pts = []
+    for a, b in edges:
+        fa = sum(n[k] * a[k] for k in range(3)) - d
+        fb = sum(n[k] * b[k] for k in range(3)) - d
+        if abs(fa) < 1e-12:
+            pts.append(list(a))
+        if fa * fb < 0:
+            t = fa / (fa - fb)
+            pts.append([a[k] + (b[k] - a[k]) * t for k in range(3)])
+    uniq = []
+    for q in pts:
+        if not any(sum((q[k] - r[k]) ** 2 for k in range(3)) < 1e-18 for r in uniq):
+            uniq.append(q)
+    if len(uniq) < 3:
+        return None
+    c = [sum(q[k] for q in uniq) / len(uniq) for k in range(3)]
+    # two directions in the plane, then corners sorted by angle round the centre
+    ref = [1.0, 0.0, 0.0] if abs(n[0]) < 0.9 * math.hypot(*n) else [0.0, 1.0, 0.0]
+    e1 = [n[1] * ref[2] - n[2] * ref[1], n[2] * ref[0] - n[0] * ref[2], n[0] * ref[1] - n[1] * ref[0]]
+    e2 = [n[1] * e1[2] - n[2] * e1[1], n[2] * e1[0] - n[0] * e1[2], n[0] * e1[1] - n[1] * e1[0]]
+    uniq.sort(key=lambda q: math.atan2(sum((q[k] - c[k]) * e2[k] for k in range(3)),
+                                       sum((q[k] - c[k]) * e1[k] for k in range(3))))
+    return uniq
+
+
+def space(name, x=(-2, 2), y=(-2, 2), z=(-2, 2), title=None, view=(-55, 24)):
+    return Space(name, x, y, z, title, view)
+
+
 # ---- diagrams (plan/scene-grammar-plan.md, P5): tables, boxes and arrows, timelines, message sequences, logic
 # circuits and memory. Their layouts are in scene/diagram_layout.py.
 
-MAX_GRID_ROWS = 8
-MAX_GRID_COLS = 8
+MAX_GRID_ROWS = 12  # the layout refuses (or turns) what doesn't fit
+MAX_GRID_COLS = 10
 MAX_WORD = 6  # characters in a table entry, a header, a timeline block or a memory value
 
 
@@ -963,6 +1465,7 @@ class Grid(_View):
             raise PictureError(f"{name}: {self.cols} columns but {len(self.col_names)} column names")
         self.matrix = bool(matrix)
         self._marks: dict[tuple[int, int], str] = {}
+        self._heat = None
 
     def _rc(self, rc):
         r, c = rc
@@ -1006,10 +1509,25 @@ class Grid(_View):
         for k in [k for k in self._marks if (r is None or k[0] == r % self.rows) and (c is None or k[1] == c % self.cols)]:
             del self._marks[k]
 
+    def heat(self, lo=None, hi=None, on=True):
+        """Colours each number by its value (dark low, bright high): an attention or confusion matrix, an image's
+        pixels, a DP table's costs. lo and hi fix the scale (default: the numbers shown)."""
+        self._heat = None if not on else [None if lo is None else _num(lo), None if hi is None else _num(hi)]
+
     def state(self):
+        heat = None
+        if self._heat is not None:
+            nums = [float(v) for r in self._raw for v in r if isinstance(v, (int, float)) and not isinstance(v, bool)
+                    and math.isfinite(float(v))]
+            if nums:
+                lo = min(nums) if self._heat[0] is None else self._heat[0]
+                hi = max(nums) if self._heat[1] is None else self._heat[1]
+                heat = {f"{r},{c}": (float(v) - lo) / ((hi - lo) or 1.0) for r, row in enumerate(self._raw)
+                        for c, v in enumerate(row) if isinstance(v, (int, float)) and not isinstance(v, bool)
+                        and math.isfinite(float(v))}
         return {"kind": self.kind, "title": self.title, "values": [[_word(v) for v in r] for r in self._raw],
                 "row_names": self.row_names, "col_names": self.col_names, "matrix": self.matrix,
-                "marks": {f"{r},{c}": s for (r, c), s in self._marks.items()}}
+                "marks": {f"{r},{c}": s for (r, c), s in self._marks.items()}, "heat": heat}
 
 
 def grid(name, rows, row_names=None, col_names=None, title=None, matrix=False):
@@ -1017,8 +1535,11 @@ def grid(name, rows, row_names=None, col_names=None, title=None, matrix=False):
 
 
 SHAPES = ("box", "round", "diamond", "circle", "double", "cylinder", "document", "cloud", "person", "chip",
-          "monitor", "lock", "server")
-MAX_BOXES = 12
+          "monitor", "lock", "server", "record")
+ARROW_KINDS = ("arrow", "line", "dashed", "inherit")  # an arrow, a plain line (an ER link), a dependency, UML's
+MAX_RECORD_FIELDS = 5  # hollow-headed "is a"
+MAX_FIELD_TEXT = 16
+MAX_BOXES = 16  # the layout refuses what doesn't fit
 MAX_ARROW_LABEL = 14  # longer arrow labels are left out; one too long to fit beside its arrow is too
 MAX_BOX_TEXT = 14  # characters in a line of a box's text (two lines at most)
 
@@ -1057,14 +1578,30 @@ class Flow(_View):
         self._boxes: dict[str, dict] = {}
         self._arrows: dict[tuple[str, str], dict] = {}
 
-    def box(self, key, text=None, shape="box", style=None, layer=None):
+    def box(self, key, text=None, shape="box", style=None, layer=None, fields=None):
         key = str(key)
         if key not in self._boxes and len(self._boxes) >= MAX_BOXES:
             raise PictureError(f"{self.name}: at most {MAX_BOXES} boxes")
         if shape not in SHAPES:
             raise PictureError(f"unknown shape {shape!r}; use one of {', '.join(SHAPES)}")
-        self._boxes[key] = {"text": _box_text(key if text is None else text), "shape": shape, "style": _style(style),
-                            "layer": None if layer is None else int(layer)}
+        if fields is not None and shape != "record":
+            shape = "record"  # fields make it a record: a name over a list (a class, an entity, a struct)
+        box = {"text": _box_text(key if text is None else text), "shape": shape, "style": _style(style),
+               "layer": None if layer is None else int(layer)}
+        if shape == "record":
+            fs = [str(f).strip() for f in (fields or [])]
+            if len(fs) > MAX_RECORD_FIELDS or any(len(f) > MAX_FIELD_TEXT for f in fs):
+                raise PictureError(f"{self.name}: a record has at most {MAX_RECORD_FIELDS} fields of "
+                                   f"{MAX_FIELD_TEXT} characters ('id: int', 'deposit()')")
+            box["fields"] = fs
+            if "\n" in box["text"]:
+                raise PictureError(f"{self.name}: a record's name is one line")
+        self._boxes[key] = box
+
+    def fields(self, key, fields):
+        """A record's fields now (a column added, a method renamed)."""
+        b = self._need(key)
+        self.box(key, b["text"], "record", b["style"], b["layer"], fields)
 
     def text(self, key, text):
         """Changes what a box says (a variable's new value, a state's new name)."""
@@ -1075,12 +1612,14 @@ class Flow(_View):
             raise PictureError(f"{self.name}: no box {key!r}; make it with box(key, text)")
         return self._boxes[str(key)]
 
-    def arrow(self, a, b, label=None, style=None):
+    def arrow(self, a, b, label=None, style=None, kind="arrow"):
         self._need(a), self._need(b)
+        if kind not in ARROW_KINDS:
+            raise PictureError(f"unknown arrow kind {kind!r}; use one of {', '.join(ARROW_KINDS)}")
         label = None if label is None or not str(label).strip() else str(label).strip()
         if label is not None and len(label) > MAX_ARROW_LABEL:
             label = None  # left out, not refused (the lines say it): a refused label lost whole pictures in P4/P5
-        self._arrows[(str(a), str(b))] = {"label": label, "style": _style(style)}
+        self._arrows[(str(a), str(b))] = {"label": label, "style": _style(style), "kind": kind}
 
     def unarrow(self, a, b):
         self._arrows.pop((str(a), str(b)), None)
@@ -1110,7 +1649,7 @@ class Flow(_View):
     def state(self):
         return {"kind": self.kind, "title": self.title, "direction": self.direction,
                 "boxes": copy.deepcopy(self._boxes),
-                "arrows": [[a, b, d["style"], d["label"]] for (a, b), d in self._arrows.items()]}
+                "arrows": [[a, b, d["style"], d["label"], d.get("kind", "arrow")] for (a, b), d in self._arrows.items()]}
 
 
 def flow(name, direction="down", title=None):
@@ -1167,6 +1706,15 @@ class Timeline(_View):
         """A line across every lane at time t, labelled above them."""
         self._put(key, {"type": "marker", "t": _num(t)}, style, label)
 
+    def signal(self, key, lane, values, t0=0, step=1, style=None):
+        """A digital signal in `lane`: values[k] (0 or 1) from t0 + k*step to t0 + (k+1)*step, drawn as a square
+        wave (a clock, a flip-flop's input and output: a timing diagram)."""
+        vals = [1 if v else 0 for v in values]
+        if not 1 <= len(vals) <= 64:
+            raise PictureError(f"{self.name}: {key}: 1-64 values in a signal")
+        self._put(key, {"type": "signal", "lane": self._lane(lane), "t0": _num(t0), "step": _num(step),
+                        "values": vals}, style, None)
+
     def mark(self, key, style="current"):
         if str(key) in self._items:
             self._items[str(key)]["style"] = _style(style)
@@ -1184,7 +1732,7 @@ def timeline(name, lanes, t=None, step=None, title=None):
 
 
 MAX_ACTORS = 4
-MAX_MESSAGES = 10
+MAX_MESSAGES = 16  # past what fits, the oldest scroll up out of view (scene/diagram_layout.py)
 MAX_MESSAGE_LABEL = 22  # a longer label is left out: runs/p5's 'SYN ISN=Y ACK X+1' refused the whole picture
 
 
@@ -1248,6 +1796,25 @@ def sequence(name, actors, title=None):
 
 GATES = ("AND", "OR", "NOT", "NAND", "NOR", "XOR", "XNOR", "BUF")
 MAX_PARTS = 14
+# blocks: (input ports, output ports). A DFF holds its Q until c.tick() (a clock edge) copies D into it.
+BLOCKS = {"MUX": (["d0", "d1", "s"], ["y"]), "MUX4": (["d0", "d1", "d2", "d3", "s1", "s0"], ["y"]),
+          "DEC": (["a1", "a0"], ["y0", "y1", "y2", "y3"]), "HA": (["a", "b"], ["s", "c"]),
+          "FA": (["a", "b", "ci"], ["s", "co"]), "DFF": (["D"], ["Q"])}
+
+
+def _block_values(kind: str, ins: list[int], state: int) -> list[int]:
+    if kind == "MUX":
+        return [ins[1] if ins[2] else ins[0]]
+    if kind == "MUX4":
+        return [ins[ins[4] * 2 + ins[5]]]
+    if kind == "DEC":
+        k = ins[0] * 2 + ins[1]
+        return [int(k == i) for i in range(4)]
+    if kind == "HA":
+        return [ins[0] ^ ins[1], ins[0] & ins[1]]
+    if kind == "FA":
+        return [ins[0] ^ ins[1] ^ ins[2], int(ins[0] + ins[1] + ins[2] >= 2)]
+    return [state]  # DFF
 
 
 def _gate_value(kind: str, ins: list[int]) -> int:
@@ -1285,41 +1852,101 @@ class Circuit(_View):
         self._add(key, {"type": "input", "value": 1 if value else 0, "label": str(key if label is None else label),
                         "style": None})
 
+    def _source(self, i, key, forward=False) -> str:
+        """An input wire's source: a part's key, or 'block.port' for one output of a block with several."""
+        i = str(i)
+        base, _, port = i.partition(".")
+        if base not in self._parts:
+            if forward:
+                return i  # a flip-flop's D may come from a gate made later (checked when it is drawn)
+            raise PictureError(f"{self.name}: {key}'s input {i!r} is not an input, gate or block made before it")
+        p = self._parts[base]
+        if p["type"] == "output":
+            raise PictureError(f"{self.name}: {key}'s input {i!r} is an output")
+        if p["type"] == "block":
+            outs = BLOCKS[p["block"]][1]
+            if port and port not in outs or not port and len(outs) > 1:
+                raise PictureError(f"{self.name}: name one of {base}'s outputs: {', '.join(base + '.' + o for o in outs)}")
+            return f"{base}.{port or outs[0]}"
+        if port:
+            raise PictureError(f"{self.name}: {base} has one output; use {base!r}")
+        return base
+
     def gate(self, key, kind, inputs, label=None):
         kind = str(kind).upper()
         if kind not in GATES:
             raise PictureError(f"unknown gate {kind!r}; use one of {', '.join(GATES)}")
-        ins = [str(i) for i in inputs]
-        for i in ins:
-            if i not in self._parts or self._parts[i]["type"] == "output":
-                raise PictureError(f"{self.name}: {key}'s input {i!r} is not an input or gate made before it")
+        ins = [self._source(i, key) for i in inputs]
         _gate_value(kind, [0] * len(ins))  # refuses the wrong number of inputs
         if len(ins) > 4:
             raise PictureError(f"{self.name}: a gate takes at most 4 inputs")
         self._add(key, {"type": "gate", "gate": kind, "inputs": ins, "label": None if label is None else str(label),
                         "style": None})
 
+    def block(self, key, kind, inputs, label=None):
+        """A block with named ports (BLOCKS): MUX (d0, d1, s -> y), MUX4 (d0-d3, s1, s0 -> y), DEC (a1, a0 -> y0-y3),
+        HA (a, b -> s, c), FA (a, b, ci -> s, co), DFF (D -> Q). `inputs` lists each input port's source in order;
+        a later part names one output of a block with several as 'key.port' ('fa.co'). A DFF's D may come from a
+        gate made after it (the wire loops back up), and it keeps Q until tick()."""
+        kind = str(kind).upper()
+        if kind not in BLOCKS:
+            raise PictureError(f"unknown block {kind!r}; use one of {', '.join(BLOCKS)}")
+        ports = BLOCKS[kind][0]
+        if len(inputs) != len(ports):
+            raise PictureError(f"a {kind} takes {len(ports)} inputs, in order: {', '.join(ports)}")
+        ins = [self._source(i, key, forward=kind == "DFF") for i in inputs]
+        self._add(key, {"type": "block", "block": kind, "inputs": ins, "label": None if label is None else str(label),
+                        "state": 0, "style": None})
+
+    def tick(self):
+        """A clock edge: every DFF's Q becomes what its D is now (all at once)."""
+        values = self._values()
+        for k, p in self._parts.items():
+            if p["type"] == "block" and p["block"] == "DFF":
+                if p["inputs"][0] not in values:
+                    raise PictureError(f"{self.name}: {k}'s D comes from {p['inputs'][0]!r}, which isn't made")
+                p["next"] = values[p["inputs"][0]]
+        for p in self._parts.values():
+            if "next" in p:
+                p["state"] = p.pop("next")
+
     def output(self, key, source, label=None):
-        if str(source) not in self._parts or self._parts[str(source)]["type"] == "output":
-            raise PictureError(f"{self.name}: output {key}'s source {source!r} is not an input or gate")
-        self._add(key, {"type": "output", "inputs": [str(source)], "label": str(key if label is None else label),
+        src = self._source(source, key)
+        self._add(key, {"type": "output", "inputs": [src], "label": str(key if label is None else label),
                         "style": None})
 
     def set(self, key, value):
-        if str(key) not in self._parts or self._parts[str(key)]["type"] != "input":
+        p = self._parts.get(str(key))
+        if p is not None and p["type"] == "block" and p["block"] == "DFF":
+            p["state"] = 1 if value else 0  # a flip-flop's stored bit, before any tick
+            return
+        if p is None or p["type"] != "input":
             raise PictureError(f"{self.name}: {key!r} is not an input")
-        self._parts[str(key)]["value"] = 1 if value else 0
+        p["value"] = 1 if value else 0
 
     def value(self, key) -> int:
-        return self._values()[str(key)]
+        values = self._values()
+        if str(key) in values:  # any part, an output too
+            return values[str(key)]
+        return values[self._source(key, "value")]
 
     def _values(self) -> dict[str, int]:
         out: dict[str, int] = {}
-        for k, p in self._parts.items():  # each part made after its inputs, so one pass in order
+        for k, p in self._parts.items():  # flip-flops are sources: their Q is known before anything is computed
+            if p["type"] == "block" and p["block"] == "DFF":
+                out[k] = out[f"{k}.Q"] = p["state"]
+        for k, p in self._parts.items():  # each other part made after its inputs, so one pass in order
             if p["type"] == "input":
                 out[k] = p["value"]
             elif p["type"] == "gate":
                 out[k] = _gate_value(p["gate"], [out[i] for i in p["inputs"]])
+            elif p["type"] == "block":
+                if p["block"] == "DFF":
+                    continue
+                vals = _block_values(p["block"], [out[i] for i in p["inputs"]], p["state"])
+                for port, v in zip(BLOCKS[p["block"]][1], vals):
+                    out[f"{k}.{port}"] = v
+                out[k] = vals[0]
             else:
                 out[k] = out[p["inputs"][0]]
         return out
@@ -1334,6 +1961,10 @@ class Circuit(_View):
                 p["style"] = None
 
     def state(self):
+        for k, p in self._parts.items():
+            for i in p.get("inputs", []):
+                if i.split(".")[0] not in self._parts:
+                    raise PictureError(f"{self.name}: {k}'s input {i!r} is never made")
         return {"kind": self.kind, "title": self.title, "parts": copy.deepcopy(self._parts), "values": self._values()}
 
 
@@ -1354,8 +1985,8 @@ class Ref:
         return f"ref({self.key!r})"
 
 
-MAX_FRAMES = 4
-MAX_OBJECTS = 4
+MAX_FRAMES = 6  # the layout refuses what doesn't fit
+MAX_OBJECTS = 6
 MAX_FIELDS = 5
 
 
@@ -1488,6 +2119,10 @@ def nodes(name, nodes=(), layout="tree", directed=False, title=None):
 
 def code(name, lines, title=None):
     return Code(name, lines, title)
+
+
+def tape(name, symbols, title=None, group=None, index=False):
+    return Tape(name, symbols, title, group, index)
 
 
 def container(name, capacity, level=0, title=None):
@@ -1625,8 +2260,9 @@ MATH = {k: getattr(math, k) for k in ("sin", "cos", "tan", "asin", "acos", "atan
                                        "log10", "sqrt", "floor", "ceil", "pi", "e", "hypot", "radians", "degrees",
                                        "factorial", "comb", "perm", "gcd")}
 
-EXPORTS = {"INF": float("inf"), "cells": cells, "nodes": nodes, "code": code, "container": container, "snap": snap,
-           "axes": axes, "venn": venn, "geometry": geometry, "numberline": numberline, "surface": surface,
+EXPORTS = {"INF": float("inf"), "cells": cells, "nodes": nodes, "code": code, "tape": tape, "container": container,
+           "snap": snap,
+           "axes": axes, "space": space, "venn": venn, "geometry": geometry, "numberline": numberline, "surface": surface,
            "grid": grid, "flow": flow, "timeline": timeline, "sequence": sequence, "circuit": circuit,
            "memory": memory, "formula": formula, "derivative": derivative, "integral": integral, "root": root, "Fraction": Fraction,
            "PictureError": PictureError, **MATH}

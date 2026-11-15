@@ -29,6 +29,8 @@ SAFE_BUILTINS = (
     "abs", "all", "any", "bool", "dict", "divmod", "enumerate", "filter", "float", "int", "isinstance", "len",
     "list", "map", "max", "min", "pow", "range", "reversed", "round", "set", "sorted", "str", "sum", "tuple", "zip",
     "__build_class__", "object", "True", "False", "None", "ValueError", "IndexError", "KeyError", "Exception", "StopIteration", "print",
+    # encodings, ciphers and complex numbers (plan/visual-coverage-plan.md): pure, like the rest
+    "bin", "hex", "oct", "format", "chr", "ord", "complex", "iter", "next", "ZeroDivisionError",
 )
 
 BOOT = r"""

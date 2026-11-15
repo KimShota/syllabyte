@@ -302,7 +302,18 @@ _SECOND = {
 }
 
 
-def program_system_prompt(level: int, prereq_titles: list[str] | None, *, explainer: str, peer: str) -> str:
+def picture_area(ku) -> str | None:
+    """The area whose picture brief a topic gets (scene/brief.py), from its title and summary; None (the whole
+    brief) when no area leads, or with SYLLABYTE_BRIEF=full."""
+    from animation_agent.scene.brief import area_of
+
+    if os.environ.get("SYLLABYTE_BRIEF") == "full":
+        return None
+    return area_of(f"{ku.title}. {getattr(ku, 'summary', '') or ''}")
+
+
+def program_system_prompt(level: int, prereq_titles: list[str] | None, *, explainer: str, peer: str,
+                          area: str | None = None) -> str:
     from animation_agent.scene.brief import brief
 
     from script_generation_agent.prompts import LEVEL_BRIEF, SHARED_RUBRIC
@@ -315,7 +326,7 @@ def program_system_prompt(level: int, prereq_titles: list[str] | None, *, explai
         _PLAN_INTRO
         + _PROGRAM_TASK.format(explainer=explainer, peer=peer, second=_SECOND[level], max_deliver=MAX_DELIVER)
         + "The viewer's level\n" + LEVEL_BRIEF[level].format(prereq_line=prereq_line) + "\n"
-        + brief()
+        + brief(area)
         + SHARED_RUBRIC + "\n"
     )
 
@@ -370,7 +381,9 @@ def plan_by_snapshots(ku, *, head: str, image_blocks: list, text_context: str, l
     from script_generation_agent.fidelity import example_problem
     from script_generation_agent.storyboard import STORYBOARD_EFFORT, _log
 
-    system = program_system_prompt(level, prereq_titles, explainer=explainer, peer=peer)
+    area = picture_area(ku)
+    print(f"[storyboard] {ku.id}: picture brief for {area or 'every area'}", file=sys.stderr, flush=True)
+    system = program_system_prompt(level, prereq_titles, explainer=explainer, peer=peer, area=area)
     prompt = head + "Write the picture program for this Knowledge Unit now: the whole video's steps, each tagged."
     feedback, board, snaps, problems = "", None, [], []
     for attempt in range(MAX_PROGRAMS):

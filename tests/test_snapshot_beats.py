@@ -70,7 +70,10 @@ def test_a_formula_takes_a_band_under_the_picture():
     assert result.ok, result.error
     layout = lay_out(result.snapshots, *_dialogue_area("full"))
     axes, formula = layout.regions["a"], layout.regions["f"]
-    assert axes.top > formula.top and formula.h == pytest.approx(3 * 0.9)
+    assert axes.top > formula.top and axes.h > formula.h  # the picture gets the room
+    lay = layout.math["f"]
+    for i in range(len(result.snapshots)):  # the newest two lines (or all) always show
+        assert lay.end[i] - lay.start[i] >= min(2, lay.end[i])
 
 
 # ---- snapshots tagged with their part -------------------------------------------------------------------------

@@ -51,8 +51,10 @@ from animation_agent.layout_audit import BACKGROUND_ATTR
 from manim import DashedLine, RoundedRectangle
 
 from animation_agent.scene import diagram_layout as D
+from animation_agent.scene.api import GRAPH_LAYOUTS
 from animation_agent.scene import layout as L
 from animation_agent.scene import math_layout as M
+from animation_agent.scene import text_layout as T
 
 FONT = 30
 MONO = "Menlo"
@@ -61,6 +63,26 @@ STYLE_COLOUR = {None: WHITE, "current": YELLOW, "visited": TEAL, "found": GREEN,
 CURVE_COLOURS = (BLUE_C, ORANGE, PINK, TEAL)  # unstyled curves, in the order they were drawn
 FILL = 0.4  # shaded areas, rectangles and Venn regions: translucent, so what is under them shows
 LIQUID = BLUE_D
+
+
+HEAT = ("#1d2b53", "#2a6f97", "#2a9d8f", "#8ab17d", "#e9c46a")  # low to high: dark navy to yellow
+
+
+def heat_colour(t: float):
+    """A value's colour on the heat scale, t from 0 (low) to 1 (high)."""
+    from manim import ManimColor
+
+    t = min(max(float(t), 0.0), 1.0) * (len(HEAT) - 1)
+    i = min(int(t), len(HEAT) - 2)
+    return interpolate_color(ManimColor(HEAT[i]), ManimColor(HEAT[i + 1]), t - i)
+
+
+def readable_on(fill):
+    """White or black, whichever reads better on this fill (the layout audit's contrast rule)."""
+    from animation_agent.layout_audit import contrast_ratio
+
+    rgb = np.array(fill.to_rgb())
+    return WHITE if contrast_ratio(np.array([1.0, 1.0, 1.0]), rgb) >= contrast_ratio(np.zeros(3), rgb) else BLACK
 
 
 def _bg(m: VMobject) -> VMobject:
@@ -89,9 +111,18 @@ class PictureRunner:
         if area is None:
             w, h = scene_safe_size()
             area = (w, h, h / 2)
-        self.layout = L.plan(snaps, *area)
-        if self.layout.untitled:  # left out to give the picture room
-            self.snaps = snaps = L.without_titles(snaps, self.layout.untitled)
+        # a layout for each run of snapshots with the same views, so the picture has the whole frame until a
+        # formula or code panel joins it (layout.plan_groups); titles a run leaves out to give the picture room
+        # are left out of its snapshots
+        self.where: list[tuple[int, int]] = [(0, 0)] * len(snaps)
+        self.layouts, self.drawn = [], []
+        for gi, (members, layout) in enumerate(L.plan_groups(snaps, *area)):
+            run = [snaps[i] for i in members]
+            self.layouts.append(layout)
+            self.drawn.append(L.without_titles(run, layout.untitled) if layout.untitled else run)
+            for k, i in enumerate(members):
+                self.where[i] = (gi, k)
+        self.layout = self.layouts[0]
         self.group = group
         self.on_screen: dict[str, VMobject] = {}
         # containers are drawn to one scale, so a 3-litre jug is shorter than a 5-litre one
@@ -103,7 +134,13 @@ class PictureRunner:
 
     def parts(self, i: int) -> dict[str, VMobject]:
         out: dict[str, VMobject] = {}
-        for name, view in self.snaps[i]["views"].items():
+        gi, k = self.where[i]
+        self.layout = self.layouts[gi]
+        group = self.drawn[gi]
+        for name, view in group[k]["views"].items():
+            # a view laid out snapshot by snapshot (a scrolled code panel, a turning 3D scene) is laid out over the
+            # snapshots of its run it appears in, so it reads its own index among them
+            self._snap = sum(1 for s in group[:k] if name in s["views"])
             region = self.layout.regions[name]
             if view.get("title") and view["kind"] != "container":
                 t = _text(M.pretty(view["title"]), GREY_B)
@@ -117,14 +154,19 @@ class PictureRunner:
         r = scale.r
         font = min(42, round(FONT * r / L.NODE_R))
         pos = L.layout_nodes(view, region, self.layout.graph_pos.get(name), scale)
-        graph = view["layout"] == "graph"
+        graph = view["layout"] in GRAPH_LAYOUTS
         spots = self.layout.labels.get(name, {}) if graph else (L.tree_labels(view, region, scale) or {})
         label_font = self.layout.label_font.get(name, FONT)
         present = {(a, b) for a, b, *_ in view["links"]}
-        for a, b, style, label, _slot in view["links"]:
+        for a, b, style, label, slot in view["links"]:
             if a not in pos or b not in pos:
                 continue
             start, end = L.link_segment(pos, a, b, r, bool(view["directed"]) and (b, a) in present)
+            keys = view["nodes"][a].get("keys")
+            if keys and slot is not None and not graph:  # a B-tree's child hangs from the gap between two keys
+                left = pos[a][0] - L.KEY_W * len(keys) / 2
+                start = np.array([left + L.KEY_W * min(max(int(slot), 0), len(keys)), pos[a][1] - r, 0.0])
+                end = pos[b] + np.array([0.0, r, 0.0])
             colour = STYLE_COLOUR.get(style, WHITE) if style else GREY_B
             width = 7 if style == "red" else 3
             spot = spots.get(f"{a}>{b}") if label else None
@@ -150,6 +192,25 @@ class PictureRunner:
                 out[f"{name}:linklabel:{a}>{b}"] = t.move_to(spot if spot is not None else (pos[a] + pos[b]) / 2)
         for k, node in view["nodes"].items():
             colour = STYLE_COLOUR[node["style"]]
+            if node.get("keys") and not graph:  # a B-tree node: its keys side by side in one box
+                n = len(node["keys"])
+                box = Rectangle(width=L.KEY_W * n, height=2 * r, stroke_color=colour,
+                                stroke_width=6 if node["style"] else 3, fill_color=BLACK, fill_opacity=1)
+                parts = VGroup(box)
+                for j, key_text in enumerate(node["keys"]):
+                    x = -L.KEY_W * n / 2 + L.KEY_W * (j + 0.5)
+                    parts.add(Text(key_text, font_size=L.PILL_FONT, color=colour).move_to([x, 0, 0]))
+                    if j:
+                        parts.add(Line([x - L.KEY_W / 2, -r, 0], [x - L.KEY_W / 2, r, 0], stroke_width=2, color=colour))
+                out[f"{name}:node:{k}"] = parts.move_to(pos[k])
+                continue
+            if not graph and len(node["label"]) > 2:  # a pill round a longer label (layout.pill_w)
+                pill = RoundedRectangle(width=max(L.pill_w(node["label"]), 2 * r), height=2 * r, corner_radius=r,
+                                        stroke_color=colour, stroke_width=6 if node["style"] else 3, fill_color=BLACK,
+                                        fill_opacity=1)
+                label = Text(node["label"], font_size=L.PILL_FONT, color=colour)
+                out[f"{name}:node:{k}"] = VGroup(pill, label).move_to(pos[k])
+                continue
             circle = Circle(radius=r, stroke_color=colour, stroke_width=6 if node["style"] else 3,
                             fill_color=BLACK, fill_opacity=1)
             size = font
@@ -164,8 +225,18 @@ class PictureRunner:
         n = len(view["values"])
         title = L.TITLE_H if view.get("title") else 0.0
         y = region.top - title - size / 2
-        left = region.cx - size * n / 2
+        first, shown = 0, n
+        if name in self.layout.windows:  # a long array: a window onto it, "…" on the side it goes on
+            shown, starts = self.layout.windows[name]
+            first = starts[self._snap]
+            for side, more, x in (("l", first > 0, region.cx - size * shown / 2 - L.ELLIPSIS_W / 2),
+                                  ("r", first + shown < n, region.cx + size * shown / 2 + L.ELLIPSIS_W / 2)):
+                if more:
+                    out[f"{name}:more:{side}"] = _text("…", GREY_B).move_to([x, y, 0])
+        left = region.cx - size * shown / 2 - size * first
         for i, v in enumerate(view["values"]):
+            if not first <= i < first + shown:
+                continue
             style = view["marks"].get(str(i))
             colour = STYLE_COLOUR[style]
             box = Square(side_length=size, stroke_color=colour, stroke_width=6 if style else 3,
@@ -187,6 +258,8 @@ class PictureRunner:
         below = y - size / 2 - (L.INDEX_H if view["index"] else 0.0)
         stacked: dict[int, int] = {}
         for label, i in sorted(view["pointers"].items()):  # pointers under one cell stack, a row each
+            if not first <= i < first + shown:
+                continue
             row = stacked.get(i, 0)
             stacked[i] = row + 1
             t = _text(label, YELLOW)
@@ -194,19 +267,104 @@ class PictureRunner:
             out[f"{name}:pointer:{label}"] = t
 
     def _code(self, name, view, region, out):
-        title = L.TITLE_H if view.get("title") else 0.0
-        left = region.cx - region.w / 2 + 0.3
-        for j, line in enumerate(view["lines"]):
-            current = view["current"] == j
-            t = _text(line, YELLOW if current else WHITE, mono=True)
-            y = region.top - title - L.CODE_LINE_H * (j + 0.5)
-            t.move_to([left + t.width / 2, y, 0])
-            out[f"{name}:line:{j}"] = t
+        """The rows in the snapshot's window (scene/text_layout.py), each keyed by its logical line and part, so a
+        scroll slides them; the current line yellow with a marker, a marked line in its style; watched variables
+        in chips under the code."""
+        lay: T.CodeLayout = self.layout.math[name]
+        snap = self._snap
+        rows, start = lay.rows[snap], lay.start[snap]
+        marks = view.get("marks", {})
+        shown = range(start, min(len(rows), start + lay.window))
+        part: dict[int, int] = {}
+        for k, (i, text, _cont) in enumerate(rows):
+            part[k] = sum(1 for kk in range(k) if rows[kk][0] == i)
+            if k not in shown or not text.strip():
+                continue
+            colour = YELLOW if view["current"] == i else STYLE_COLOUR.get(marks.get(str(i)), WHITE)
+            t = Text(text.strip(), font_size=lay.font, color=colour, font=MONO)
+            lead = len(text) - len(text.lstrip(" "))
+            t.move_to([lay.left + lead * T.INDENT * T.char_w(lay.font) + t.width / 2, T.code_row_y(lay, k, snap), 0])
+            out[f"{name}:line:{i}:{part[k]}"] = t
         if view["current"] is not None:
-            y = region.top - title - L.CODE_LINE_H * (view["current"] + 0.5)
-            marker = Triangle(color=YELLOW, fill_color=YELLOW, fill_opacity=1).scale(0.08).rotate(-np.pi / 2)
-            marker.move_to([left - 0.17, y, 0])
-            out[f"{name}:marker"] = marker
+            mine = [k for k in shown if rows[k][0] == view["current"]]
+            if mine:
+                marker = Triangle(color=YELLOW, fill_color=YELLOW, fill_opacity=1).scale(0.08).rotate(-np.pi / 2)
+                marker.move_to([lay.left - 0.17, T.code_row_y(lay, mine[0], snap), 0])
+                out[f"{name}:marker"] = marker
+        if lay.scrolled:  # small grey arrows say more code is above or below the window
+            for side, more in (("up", start > 0), ("down", start + lay.window < len(rows))):
+                if not more:
+                    continue
+                y = (lay.top + T.MORE_H / 2) if side == "up" else (lay.top - T.CODE_LINE_H * lay.window - T.MORE_H / 2)
+                tri = Triangle(color=GREY_B, fill_color=GREY_B, fill_opacity=1).scale(0.07)
+                if side == "down":
+                    tri.rotate(np.pi)
+                out[f"{name}:more:{side}"] = tri.move_to([lay.left - 0.17, y, 0])
+        for wname, value in view.get("watch", {}).items():
+            cx, cy, w = lay.watch[wname]
+            box = RoundedRectangle(width=w, height=T.WATCH_H - 0.08, corner_radius=0.1, stroke_color=TEAL,
+                                   stroke_width=3, fill_color=BLACK, fill_opacity=1).move_to([cx, cy, 0])
+            label = Text(T.watch_text(wname, value), font_size=FONT, color=WHITE).move_to([cx, cy, 0])
+            out[f"{name}:watch:{wname}"] = VGroup(box, label)
+
+    def _tape(self, name, view, region, out):
+        """One-character cells on one line or wrapped onto more, the rows aligned under them (keyed by their own
+        index, so a row that shifts slides along), then the index, heads and field brackets."""
+        lay: T.TapeLayout = self.layout.math[name]
+        start = FONT if lay.h < 0.5 else 34
+
+        def cell(text, colour, style, x, y):
+            box = Rectangle(width=lay.w, height=lay.h, stroke_color=colour, stroke_width=6 if style else 3,
+                            fill_color=BLACK, fill_opacity=1).move_to([x, y, 0])
+            group = VGroup(box)
+            if text:
+                font = start
+                t = Text(text, font_size=font, color=colour)
+                while t.width > lay.w - 0.05 and font > 28:  # down to the audit's minimum in a narrow cell
+                    font -= 2
+                    t = Text(text, font_size=font, color=colour)
+                group.add(t.move_to([x, y, 0]))
+            return group
+
+        # an index under every cell when the numbers fit the cells, else under every 2nd or 5th
+        every = next((k for k in (1, 2, 5, 10) if M.text_width(str(len(view["values"]) - 1)) * 28 / 30 + 0.06
+                      <= lay.w * k), 10)
+        for j, v in enumerate(view["values"]):
+            style = view["marks"].get(str(j))
+            out[f"{name}:cell:{j}"] = cell(v, STYLE_COLOUR[style], style, lay.x(j), lay.y(j))
+            if lay.index and j % every == 0:
+                out[f"{name}:index:{j}"] = Text(str(j), font_size=28, color=GREY_B).move_to(
+                    [lay.x(j), T.index_y(lay, j), 0])
+        for r, key in enumerate(lay.rows):
+            row = view["rows"].get(key)
+            if row is None:
+                continue
+            for jj, v in enumerate(row["values"]):
+                j = row["at"] + jj
+                style = row["marks"].get(str(jj))
+                out[f"{name}:row:{key}:{jj}"] = cell(v, STYLE_COLOUR[style], style, lay.x(j), lay.y(j, r))
+            if row.get("label"):
+                t = _text(row["label"], GREY_B)
+                out[f"{name}:rowname:{key}"] = t.move_to([lay.label_x - t.width / 2, lay.y(0, r), 0])
+        stacked: dict[int, int] = {}
+        for label, j in sorted(view["heads"].items()):
+            k = stacked.get(j, 0)
+            stacked[j] = k + 1
+            c = T.head_spot(lay, j, k)
+            caret = Triangle(color=YELLOW, fill_color=YELLOW, fill_opacity=1).scale(0.06).move_to(
+                [c[0] - 0.02 - 0.09 * len(label), c[1], 0])
+            t = _text(label, YELLOW).move_to([c[0] + 0.08, c[1], 0])
+            out[f"{name}:head:{label}"] = VGroup(caret, t)
+        for key, (a, b, label, style) in view["fields"].items():
+            colour = STYLE_COLOUR[style] if style else GREY_B
+            parts = VGroup()
+            for x0, x1, y in T.field_segments(lay, a, b):
+                parts.add(VMobject(stroke_width=3, color=colour).set_points_as_corners(
+                    [[x0, y + 0.08, 0], [x0, y, 0], [x1, y, 0], [x1, y + 0.08, 0]]))
+            spot = lay.field_spots.get((key, label)) if label else None
+            if spot is not None:  # placed clear of the other fields' labels (text_layout.place_field_labels)
+                parts.add(Text(label, font_size=FONT, color=colour).move_to([spot[0], spot[1], 0]))
+            out[f"{name}:field:{key}"] = parts
 
     def _formula(self, name, view, region, out):
         """Each TeX line centred in its row, scaled down to fit the band (visuals/base.tex: a line LaTeX can't
@@ -215,17 +373,29 @@ class PictureRunner:
 
         from animation_agent.visuals.base import fit_width, tex
 
-        title = L.TITLE_H if view.get("title") else 0.0
+        lay: T.FormulaLayout = self.layout.math[name]
+        snap = self._snap
+        if lay.start[snap] > 0:  # older lines scrolled up out of view
+            tri = Triangle(color=GREY_B, fill_color=GREY_B, fill_opacity=1).scale(0.07)
+            out[f"{name}:more"] = tri.move_to([region.cx - region.w / 2 + 0.12, lay.top + T.MORE_H / 2, 0])
         for j, line in enumerate(view["lines"]):
+            if not lay.start[snap] <= j < lay.end[snap]:
+                continue
+            y, pitch = T.formula_row(lay, j, snap)
             terms = view["terms"].get(str(j), [])
             colour = STYLE_COLOUR.get(view["styles"].get(str(j)), WHITE)
             t = tex(line, col=colour, isolate=[term for term, _ in terms])
             for term, style in terms:
                 t.set_color_by_tex(term, STYLE_COLOUR[style])
             fit_width(t, region.w - 0.3)
-            if t.height > L.FORMULA_LINE_H * 0.86:
-                t.scale_to_fit_height(L.FORMULA_LINE_H * 0.86)
-            t.move_to([region.cx, region.top - title - L.FORMULA_LINE_H * (j + 0.5), 0])
+            cap = pitch * (0.7 if j in view["boxed"] else 0.86)  # a boxed result leaves room for its box
+            if t.height > cap:
+                t.scale_to_fit_height(cap)
+            # never below the audit's minimum font (28 of 40): a line too wide or tall for that overruns a little
+            # rather than becoming unreadable; the layout gives tall lines room so this rarely happens
+            if t.font_size < 28:
+                t.scale(28 / t.font_size)
+            t.move_to([region.cx, y, 0])
             out[f"{name}:formula:{j}"] = t
             if j in view["boxed"]:
                 out[f"{name}:box:{j}"] = SurroundingRectangle(t, color=GREEN, buff=0.08, stroke_width=4)
@@ -320,6 +490,15 @@ class PictureRunner:
                 (ax, ay), (bx, by) = M.item_polylines(it, lay)[0]
                 part = Arrow([ax, ay, 0], [bx, by, 0], buff=0, stroke_width=5, color=colour, tip_length=0.16,
                              max_tip_length_to_length_ratio=0.35)
+            elif t == "heat":  # behind everything else on the axes
+                span = (it["hi"] - it["lo"]) or 1.0
+                squares = []
+                for cx0, cx1, cy0, cy1, v in it["cells"]:
+                    (sx0, sy0), (sx1, sy1) = lay.to_screen((cx0, cy0)), lay.to_screen((cx1, cy1))
+                    squares.append(Rectangle(width=abs(sx1 - sx0) + 0.004, height=abs(sy1 - sy0) + 0.004,
+                                             stroke_width=0, fill_color=heat_colour((v - it["lo"]) / span),
+                                             fill_opacity=0.85).move_to([(sx0 + sx1) / 2, (sy0 + sy1) / 2, 0]))
+                part = _bg(VGroup(*squares)).set_z_index(-1)
             elif t == "grid":
                 # a coordinate grid (the plane before or after a linear map): a background, thin and faint
                 lines = [VMobject(stroke_width=1.5, color=colour).set_points_as_corners([[x, y, 0] for x, y in piece])
@@ -332,6 +511,14 @@ class PictureRunner:
                     rects.append(Polygon(*[[x, y, 0] for x, y in pts], stroke_width=2, color=colour,
                                          fill_color=colour, fill_opacity=FILL))
                 part = VGroup(*rects)
+            elif t in ("box", "errors"):  # a box plot's box, median and whiskers; error bars with their points
+                lines = [VMobject(stroke_width=3, color=colour).set_points_as_corners([[x, y, 0] for x, y in poly])
+                         for poly in M.item_polylines(it, lay)]
+                dots = ([Dot([sx, sy, 0], radius=M.POINT_R, color=colour)
+                         for sx, sy in (lay.to_screen((it["x"], v)) for v in it["out"])] if t == "box" else
+                        [Dot([sx, sy, 0], radius=M.POINT_R, color=colour)
+                         for sx, sy in (lay.to_screen((x, y)) for x, _lo, _hi, y in it["bars"])])
+                part = VGroup(*lines, *dots)
             elif t == "points":
                 dots = [Dot([sx, sy, 0], radius=M.POINT_R, color=colour) for sx, sy in map(lay.to_screen, it["at"])
                         if x0 - 1e-6 <= sx <= x1 + 1e-6 and y0 - 1e-6 <= sy <= y1 + 1e-6]
@@ -488,6 +675,47 @@ class PictureRunner:
             solid.syllabyte_solid = True
             out[f"{name}:item:{key}"] = solid
 
+    def _space(self, name, view, region, out):
+        """The 3D scene from this snapshot's camera: its axes, then faces (far things first, each shaded by how it
+        faces the light), then lines, vectors and points over them, then the labels."""
+        lay: M.SpaceLayout = self.layout.math[name]
+        i = self._snap
+        for (a, b), axis in lay.axes[i]:
+            out[f"{name}:axis:{axis}"] = _bg(_path_arrow([np.array(a), np.array(b)], GREY_B, 2))
+            spot = lay.labels[i].get((f"axis-{axis}", axis))
+            if spot is not None:
+                out[f"{name}:axisname:{axis}"] = Text(axis, font_size=FONT, color=GREY_B).move_to([spot[0], spot[1], 0])
+        order = sorted(view["items"].items(), key=lambda kv: M.item_depth(kv[1], lay, i))
+        for rank, (key, it) in enumerate(order):
+            colour = self._colour({**it, "type": "curve"}, list(view["items"]).index(key))
+            t = it["type"]
+            if t in ("mesh", "polygon"):
+                plane = t == "polygon"
+                faces = [Polygon(*[[x, y, 0] for x, y in corners], stroke_width=2 if plane else 1.2,
+                                 stroke_color=colour,
+                                 fill_color=colour if plane else interpolate_color(BLACK, colour, 0.2 + 0.55 * light),
+                                 fill_opacity=0.35 if plane else 1)
+                         for corners, _d, light in M.space_faces(it, lay, i)]
+                solid = _bg(VGroup(*faces)).set_z_index(rank)
+                solid.syllabyte_solid = True
+                out[f"{name}:item:{key}"] = solid
+            elif t in ("curve", "segment"):
+                lines = [VMobject(stroke_width=4, color=colour).set_points_as_corners([[x, y, 0] for x, y in line])
+                         for line in M.space_lines(it, lay, i)]
+                out[f"{name}:item:{key}"] = VGroup(*lines).set_z_index(100)
+            elif t == "vector":
+                (ax, ay), (bx, by) = M.space_lines(it, lay, i)[0]
+                out[f"{name}:item:{key}"] = Arrow([ax, ay, 0], [bx, by, 0], buff=0, stroke_width=5, color=colour,
+                                                  tip_length=0.16, max_tip_length_to_length_ratio=0.35).set_z_index(100)
+            elif t == "point":
+                sx, sy = lay.to_screen(it["at"], i)
+                out[f"{name}:item:{key}"] = Dot([sx, sy, 0], radius=M.POINT_R,
+                                                color=STYLE_COLOUR[it.get("style")]).set_z_index(100)
+            if it.get("label") and (key, it["label"]) in lay.labels[i]:
+                c = lay.labels[i][(key, it["label"])]
+                self._label(name, key, it["label"], c, STYLE_COLOUR[it["style"]] if it.get("style") else colour, out)
+                out[f"{name}:label:{key}"].set_z_index(101)
+
     # ---- diagrams --------------------------------------------------------------------------------------
 
     def _grid(self, name, view, region, out):
@@ -495,16 +723,32 @@ class PictureRunner:
         if lay.transposed:
             view = D.transpose(view)
         font = max(FONT, lay.font)
+        heat = view.get("heat") or {}
+        snap = self._snap
+        if lay.window:  # a tall table: a window of rows, arrows where more is above or below
+            n = len(view["values"])
+            for side, more, y in (("up", lay.start[snap] > 0, lay.top + D.GRID_MORE / 2 - 0.02),
+                                  ("down", lay.start[snap] + lay.window < n, lay.bottom - D.GRID_MORE / 2 + 0.02)):
+                if more:
+                    tri = Triangle(color=GREY_B, fill_color=GREY_B, fill_opacity=1).scale(0.07)
+                    out[f"{name}:more:{side}"] = (tri.rotate(np.pi) if side == "down" else tri).move_to(
+                        [(lay.left + lay.right) / 2, y, 0])
         for r, row in enumerate(view["values"]):
+            if not lay.shown(r, snap):
+                continue
             for c, text in enumerate(row):
                 style = view["marks"].get(f"{r},{c}")
                 colour = STYLE_COLOUR[style]
-                x, y, w, h = lay.x[c], lay.y[r], lay.w[c], lay.h
-                if not view["matrix"]:
+                x, y, w, h = lay.x[c], lay.row_y(r, snap), lay.w[c], lay.h
+                fill = heat_colour(heat[f"{r},{c}"]) if f"{r},{c}" in heat else BLACK
+                if not view["matrix"] or f"{r},{c}" in heat:
                     out[f"{name}:cell:{r},{c}"] = Rectangle(width=w, height=h, stroke_color=GREY_B, stroke_width=2,
-                                                            fill_color=BLACK, fill_opacity=1).move_to([x, y, 0])
+                                                            fill_color=fill, fill_opacity=1).move_to([x, y, 0])
+                # on a heat colour the number is black or white, whichever reads (a mark's style shows in its
+                # outline)
+                ink = readable_on(fill) if f"{r},{c}" in heat else colour
                 if text:
-                    out[f"{name}:val:{r},{c}"] = Text(text, font_size=font, color=colour).move_to([x, y, 0])
+                    out[f"{name}:val:{r},{c}"] = Text(text, font_size=font, color=ink).move_to([x, y, 0])
                 if style:  # inside the cell, so it never covers a neighbour's border
                     out[f"{name}:mark:{r},{c}"] = Rectangle(width=w - 0.08, height=h - 0.08, stroke_color=colour,
                                                             stroke_width=4, fill_opacity=0).move_to([x, y, 0])
@@ -515,8 +759,9 @@ class PictureRunner:
                 out[f"{name}:bracket:{side}"] = VMobject(stroke_width=3, color=WHITE).set_points_as_corners(
                     [[x + t * lip, lay.top, 0], [x, lay.top, 0], [x, lay.bottom, 0], [x + t * lip, lay.bottom, 0]])
         for r, text in enumerate(view["row_names"] or []):
-            if text:
-                out[f"{name}:rowname:{r}"] = Text(text, font_size=font, color=GREY_B).move_to([lay.name_x, lay.y[r], 0])
+            if text and lay.shown(r, snap):
+                out[f"{name}:rowname:{r}"] = Text(text, font_size=font, color=GREY_B).move_to(
+                    [lay.name_x, lay.row_y(r, snap), 0])
         for c, text in enumerate(view["col_names"] or []):
             if text:
                 out[f"{name}:colname:{c}"] = Text(text, font_size=font, color=GREY_B).move_to([lay.x[c], lay.head_y, 0])
@@ -536,6 +781,23 @@ class PictureRunner:
             style = b["style"]
             colour = STYLE_COLOUR[style]
             shape = _flow_shape(b["shape"], c, w, h, colour, 5 if style else 3, k)
+            if b["shape"] == "record":  # its name, a rule, its fields left-aligned
+                rfont = max(D.RECORD_FONT, round(D.RECORD_FONT * k))
+                top = c[1] + h / 2 - D.BOX_PAD_Y * k
+                title_t = Text(b["text"], font_size=rfont, color=colour).move_to(
+                    [c[0], top - D.LINE_H * k / 2, 0])
+                group = VGroup(shape, title_t)
+                fields = b.get("fields") or []
+                if fields:
+                    rule_y = top - D.LINE_H * k - D.RECORD_RULE * k / 2
+                    group.add(Line([c[0] - w / 2, rule_y, 0], [c[0] + w / 2, rule_y, 0], stroke_width=2, color=colour))
+                    for j, f in enumerate(fields):
+                        t = Text(f, font_size=rfont, color=WHITE)
+                        t.move_to([c[0] - w / 2 + D.RECORD_PAD * k + t.width / 2,
+                                   rule_y - D.RECORD_RULE * k / 2 - D.LINE_H * k * (j + 0.5), 0])
+                        group.add(t)
+                out[f"{name}:box:{key}"] = group
+                continue
             text = self._lines(b["text"], font, colour)
             if b["shape"] in D.ICON_SHAPES:
                 icon_x = c[0] - w / 2 + D.BOX_PAD_X * k + D.ICON_H * k / 2
@@ -546,7 +808,8 @@ class PictureRunner:
                 text.move_to([c[0], c[1] - (0.08 * k if b["shape"] == "cylinder" else 0.03 * k if b["shape"] ==
                                             "document" else 0.0), 0])
             out[f"{name}:box:{key}"] = VGroup(shape, text)
-        for a, b, style, label in view["arrows"]:
+        for a, b, style, label, *rest in view["arrows"]:
+            kind = rest[0] if rest else "arrow"
             colour = STYLE_COLOUR[style] if style else GREY_B
             width = 5 if style else 3
             if a == b:
@@ -562,7 +825,9 @@ class PictureRunner:
                 path = lay.arrows.get(f"{a}>{b}")
                 if path is None:
                     continue
-                out[f"{name}:arrow:{a}>{b}"] = _path_arrow(path, colour, width)
+                out[f"{name}:arrow:{a}>{b}"] = _path_arrow(path, colour, width, dashed=kind == "dashed",
+                                                           tip="none" if kind == "line" else
+                                                           "hollow" if kind == "inherit" else "solid")
             spot = lay.labels.get((f"{a}>{b}", label)) if label else None
             if spot is not None:
                 out[f"{name}:arrowlabel:{a}>{b}"] = Text(label, font_size=FONT, color=colour if style else GREY_B
@@ -582,6 +847,21 @@ class PictureRunner:
         bh = lay.lane_h * 0.76
         for key, it in view["items"].items():
             colour = STYLE_COLOUR[it.get("style")] if it.get("style") else BLUE_C
+            if it["type"] == "signal":  # a square wave: high at the lane's top, low at its bottom
+                y = lay.lane_y[it["lane"]]
+                pts, prev = [], None
+                for k, v in enumerate(it["values"]):
+                    level = y + (bh / 2 if v else -bh / 2)
+                    x0, x1 = lay.at(it["t0"] + k * it["step"]), lay.at(it["t0"] + (k + 1) * it["step"])
+                    if prev is not None and prev != level:
+                        pts.append([x0, level, 0])
+                    elif prev is None:
+                        pts.append([x0, level, 0])
+                    pts.append([x1, level, 0])
+                    prev = level
+                out[f"{name}:item:{key}"] = VMobject(stroke_width=4, color=colour if it.get("style") else TEAL
+                                                     ).set_points_as_corners(pts)
+                continue
             if it["type"] == "block":
                 a, b = lay.at(it["a"]), lay.at(it["b"])
                 y = lay.lane_y[it["lane"]]
@@ -601,6 +881,8 @@ class PictureRunner:
 
     def _sequence(self, name, view, region, out):
         lay: D.SequenceLayout = self.layout.math[name]
+        snap = self._snap
+        gaps = D.sequence_gaps(view, lay, snap)
         for i, actor in enumerate(view["actors"]):
             x = lay.x[i]
             box = Rectangle(width=lay.box_w, height=D.ACTOR_H, stroke_color=WHITE, stroke_width=3, fill_color=BLACK,
@@ -608,16 +890,21 @@ class PictureRunner:
             out[f"{name}:actor:{i}"] = VGroup(box, Text(actor, font_size=FONT, color=WHITE).move_to(box))
             # broken round any label it would cross (a long label spans the lifelines between its ends)
             y, pieces = lay.top - D.ACTOR_H, []
-            for g0, g1 in sorted(lay.gaps.get(i, []), key=lambda g: -g[1]):
+            for g0, g1 in sorted(gaps.get(i, []), key=lambda g: -g[1]):
                 if g1 < y - 0.05:
                     pieces.append(DashedLine([x, y, 0], [x, g1, 0], stroke_width=2, color=GREY_B, dash_length=0.1))
                 y = min(y, g0)
             if y - lay.bottom > 0.05:
                 pieces.append(DashedLine([x, y, 0], [x, lay.bottom, 0], stroke_width=2, color=GREY_B, dash_length=0.1))
             out[f"{name}:life:{i}"] = VGroup(*pieces)
+        if lay.start[snap] > 0:  # older messages scrolled up out of view
+            tri = Triangle(color=GREY_B, fill_color=GREY_B, fill_opacity=1).scale(0.07)
+            out[f"{name}:more"] = tri.move_to([lay.x[0] - lay.box_w / 2 + 0.08, lay.first_row - 0.06, 0])
         for key, m in view["messages"].items():
+            if not lay.shown(m["row"], snap):
+                continue
             colour = STYLE_COLOUR[m.get("style")] if m.get("style") else WHITE
-            y = lay.rows[m["row"]]
+            y = lay.row_y(m["row"], snap)
             a, b = lay.x[m["a"]], lay.x[m["b"]]
             if m["a"] == m["b"]:
                 path = [(a, y + 0.12), (a + lay.self_w, y + 0.12), (a + lay.self_w, y - 0.12), (a, y - 0.12)]
@@ -625,8 +912,8 @@ class PictureRunner:
                 path = [(a, y), (b, y)]
             out[f"{name}:item:{key}"] = _path_arrow([np.array(p) for p in path], colour, 3, dashed=m["dashed"])
             if key in lay.labels:
-                c = lay.labels[key]
-                out[f"{name}:label:{key}"] = Text(m["label"], font_size=FONT, color=colour).move_to([c[0], c[1], 0])
+                cx, dy = lay.labels[key]
+                out[f"{name}:label:{key}"] = Text(m["label"], font_size=FONT, color=colour).move_to([cx, y + dy, 0])
 
     def _circuit(self, name, view, region, out):
         lay: D.CircuitLayout = self.layout.math[name]
@@ -640,14 +927,21 @@ class PictureRunner:
         for key, p in view["parts"].items():
             c, (w, h) = lay.pos[key], lay.size[key]
             style = p.get("style")
-            if p["type"] == "gate":
+            if p["type"] in ("gate", "block"):
                 colour = STYLE_COLOUR[style] if style else WHITE
-                body = _gate(p["gate"], c, w, h, colour, 5 if style else 3)
+                if p["type"] == "gate":
+                    body = _gate(p["gate"], c, w, h, colour, 5 if style else 3)
+                else:  # a block: a box with its kind inside (a DFF shows the bit it holds)
+                    text = p["block"] + (f" {p['state']}" if p["block"] == "DFF" else "")
+                    body = VGroup(Rectangle(width=w, height=h, stroke_color=colour, stroke_width=5 if style else 3,
+                                            fill_color=BLACK, fill_opacity=1).move_to([c[0], c[1], 0]),
+                                  Text(text, font_size=28, color=colour).move_to([c[0], c[1], 0]))
                 n = len(p["inputs"])
                 pins = [Line([px, c[1] + h / 2, 0], [px, py, 0], stroke_width=3, color=colour)
                         for px, py in (D._port(lay.pos, lay.size, view["parts"], key, j) for j in range(n))]
-                ox, oy = D._port(lay.pos, lay.size, view["parts"], key)
-                pins.append(Line([ox, c[1] - h / 2, 0], [ox, oy, 0], stroke_width=3, color=colour))
+                for o in range(len(D._outs(p))):
+                    ox, oy = D._port(lay.pos, lay.size, view["parts"], key, None, o)
+                    pins.append(Line([ox, c[1] - h / 2, 0], [ox, oy, 0], stroke_width=3, color=colour))
                 out[f"{name}:part:{key}"] = VGroup(*pins, body)
             else:
                 v = values[key]
@@ -743,23 +1037,25 @@ class PictureRunner:
 # ---- shapes the diagrams draw ----------------------------------------------------------------------------
 
 
-def _path_arrow(path, colour, width, dashed: bool = False) -> VGroup:
-    """A polyline ending in an arrowhead (solid, or dashed for a reply)."""
+def _path_arrow(path, colour, width, dashed: bool = False, tip: str = "solid") -> VGroup:
+    """A polyline ending in an arrowhead (solid; hollow for UML's "is a"; none for a plain line), dashed for a
+    reply or a dependency."""
     pts = [np.array([p[0], p[1], 0.0]) for p in path]
     end, before = pts[-1], pts[-2]
     d = (end - before) / (float(np.linalg.norm(end - before)) or 1e-9)
-    tip_l = min(0.16, float(np.linalg.norm(end - before)) * 0.5)
+    tip_l = 0.0 if tip == "none" else min(0.22 if tip == "hollow" else 0.16, float(np.linalg.norm(end - before)) * 0.5)
     base = end - d * tip_l
     normal = np.array([-d[1], d[0], 0.0])
-    tip = Polygon(end, base + normal * tip_l * 0.45, base - normal * tip_l * 0.45, stroke_width=0, fill_color=colour,
-                  fill_opacity=1)
+    head = [] if tip == "none" else [Polygon(end, base + normal * tip_l * 0.5, base - normal * tip_l * 0.5,
+                                            stroke_width=2 if tip == "hollow" else 0, stroke_color=colour,
+                                            fill_color=BLACK if tip == "hollow" else colour, fill_opacity=1)]
     body = pts[:-1] + [base]
     if dashed:
         lines = [DashedLine(p, q, stroke_width=width, color=colour, dash_length=0.08) for p, q in zip(body, body[1:])
                  if np.linalg.norm(q - p) > 1e-6]
     else:
         lines = [VMobject(stroke_width=width, color=colour).set_points_as_corners(body)]
-    return VGroup(*lines, tip)
+    return VGroup(*lines, *head)
 
 
 def _curve(points, colour, width, fill: bool = True) -> VMobject:

@@ -512,3 +512,337 @@ snap('an endless sum with a finite value: 2', name='idea', part='end')
 '''
 
 DIAGRAM_PROGRAMS = {"lcs": LCS, "matmul": MATMUL, "process": PROCESS_STATES, "web": WEB_REQUEST, "dfa": DFA, "rr": ROUND_ROBIN, "tcp": TCP_HANDSHAKE, "adder": FULL_ADDER, "linked": LINKED_LIST, "eigen": EIGENVECTOR, "polar": POLAR, "geometric": GEOMETRIC}
+
+
+# ---- coverage (plan/visual-coverage-plan.md): the views and calls added for the rest of CS and Math
+
+MATCH = '''
+text = 'abababacaba'
+pat = 'ababaca'
+t = tape('t', text, title='naive matching', index=True)
+t.row('p', pat, at=0, label='P')
+snap('the pattern starts under the text', name='start', part='prepare')
+for s in range(len(text) - len(pat) + 1):
+    t.unmark(); t.row('p', pat, at=s, label='P')
+    j = 0
+    while j < len(pat) and text[s + j] == pat[j]:
+        t.mark(s + j, 'found'); t.mark_row('p', j, 'found'); j += 1
+    if j == len(pat):
+        snap('a match at shift ' + str(s), name='hit', part='deliver_2')
+        break
+    t.mark(s + j, 'red'); t.mark_row('p', j, 'red')
+    snap('shift ' + str(s) + ': ' + str(j) + ' match, then a mismatch', name='s' + str(s), part='deliver_1')
+'''
+
+FLOAT32 = '''
+x = -6.25
+sign = '1' if x < 0 else '0'
+m = abs(x); e = 0
+while m >= 2:
+    m /= 2; e += 1
+frac = ''
+f = m - 1
+for k in range(23):
+    f *= 2
+    frac += '1' if f >= 1 else '0'
+    f -= int(f)
+exp = format(e + 127, '08b')
+bits = sign + exp + frac
+t = tape('t', bits, title='-6.25 as float32', group=4)
+snap('32 bits', name='bits', part='prepare')
+t.field('s', 0, 1, 'sign', 'red')
+snap('the sign bit is 1: negative', name='sign', part='deliver_1')
+t.field('e', 1, 9, 'exponent', 'compare')
+snap('exponent ' + exp + ' = ' + str(e + 127) + ', so 2 to the ' + str(e), name='exp', part='deliver_1')
+t.field('f', 9, 32, 'fraction', 'visited')
+snap('fraction: 1.5625 = 1.1001 in binary', name='frac', part='deliver_2')
+'''
+
+BSEARCH_CODE = '''
+a = [2, 5, 8, 12, 16, 23, 38, 56]
+c = code('c', ['def find(a, x):', '  l, h = 0, n-1', '  while l <= h:', '    m = (l+h)//2', '    if a[m] == x:', '      return m', '    if a[m] < x:', '      l = m + 1', '    else:', '      h = m - 1', '  return -1'])
+x = 23
+lo, hi = 0, len(a) - 1
+c.line(1); c.watch('l', lo); c.watch('h', hi)
+snap('l and h start at the two ends', name='start', part='prepare')
+k = 0
+while lo <= hi:
+    mid = (lo + hi) // 2
+    c.line(3); c.watch('m', mid); c.watch('a[m]', a[mid])
+    snap('m = ' + str(mid) + ', a[m] = ' + str(a[mid]), name='mid' + str(k), part='deliver_1')
+    if a[mid] == x:
+        c.line(5); c.mark(5, 'found')
+        snap('found ' + str(x) + ' at ' + str(mid), name='found', part='deliver_2')
+        break
+    if a[mid] < x:
+        lo = mid + 1; c.line(7)
+    else:
+        hi = mid - 1; c.line(9)
+    c.watch('l', lo); c.watch('h', hi)
+    snap('now l = ' + str(lo) + ', h = ' + str(hi), name='move' + str(k), part='deliver_1')
+    k += 1
+'''
+
+FIB_TREE = '''
+t = nodes('t', title='calls of fib(4)')
+def call(n, parent, path):
+    key = path
+    t.add(key, 'f(' + str(n) + ')', 'current')
+    if parent is not None: t.link(parent, key)
+    if n < 2:
+        t.mark(key, 'found'); return n
+    r = call(n - 1, key, path + 'L') + call(n - 2, key, path + 'R')
+    t.mark(key, 'visited')
+    return r
+r = call(4, None, 'r')
+snap('fib(4) makes ' + str(9) + ' calls; fib(2) is computed twice', name='all', part='deliver_1')
+for k in ('rLL', 'rR'):
+    t.mark(k, 'red')
+snap('the two fib(2) calls repeat the same work', name='dup', part='deliver_2', wrong=False)
+'''
+
+BTREE = '''
+t = nodes('t', title='B-tree, 3 keys max')
+t.add('r', keys=[10, 20, 30])
+snap('a full node: 10, 20, 30', name='full', part='prepare')
+t.set_keys('r', [10, 20, 30])
+t.mark('r', 'red')
+snap('inserting 25 would make 4 keys: too many', name='over', part='deliver_1', wrong=True)
+t.unmark()
+t.set_keys('r', [20])
+t.add('a', keys=[10]); t.add('b', keys=[25, 30])
+t.link('r', 'a', slot=0); t.link('r', 'b', slot=1)
+t.mark('r', 'new')
+snap('split: 20 moves up, 10 left, 25 and 30 right', name='split', part='deliver_2')
+'''
+
+UML = '''
+f = flow('f', title='classes')
+f.box('acct', 'Account', fields=['id: int', 'bal: float', 'deposit(x)'])
+f.box('sav', 'Savings', fields=['rate', 'interest()'])
+f.box('chk', 'Checking', fields=['fee'])
+f.arrow('sav', 'acct', kind='inherit'); f.arrow('chk', 'acct', kind='inherit')
+snap('Savings and Checking are Accounts', name='isa', part='deliver_1')
+f.mark('sav', 'current')
+snap('Savings adds a rate and interest()', name='sav', part='deliver_1')
+'''
+
+MOD12 = '''
+c = nodes('c', layout='circle', directed=True, title='adding 5 mod 12')
+for k in range(12):
+    c.add(k)
+x = 0
+c.mark(0, 'current')
+snap('start at 0', name='s0', part='prepare')
+for step in range(1, 5):
+    y = (x + 5) % 12
+    c.link(x, y, style='current')
+    c.mark(x, 'visited'); c.mark(y, 'current')
+    snap(str(x) + ' + 5 = ' + str(y) + ' (mod 12)', name='s' + str(step), part='deliver_1')
+    x = y
+'''
+
+NEURAL = '''
+n = nodes('n', layout='layered', directed=True, title='a 3-4-2 network')
+for i in range(3): n.add('x' + str(i), layer=0)
+for j in range(4): n.add('h' + str(j), layer=1)
+for k in range(2): n.add('y' + str(k), layer=2)
+for i in range(3):
+    for j in range(4): n.link('x' + str(i), 'h' + str(j))
+for j in range(4):
+    for k in range(2): n.link('h' + str(j), 'y' + str(k))
+snap('inputs, a hidden layer of 4, two outputs', name='net', part='prepare')
+for i in range(3): n.restyle_link('x' + str(i), 'h1', 'current')
+n.mark('h1', 'current')
+snap('h1 sums all three inputs', name='h1', part='deliver_1')
+'''
+
+MATCHING = '''
+g = nodes('g', layout='bipartite', title='jobs to workers')
+for w in ['A', 'B', 'C', 'D']: g.add(w, layer=0)
+for j in ['1', '2', '3', '4']: g.add('j' + j, label=j, layer=1)
+edges = [('A', 'j1'), ('A', 'j2'), ('B', 'j1'), ('C', 'j2'), ('C', 'j3'), ('D', 'j3'), ('D', 'j4')]
+for a, b in edges: g.link(a, b, style='grey')
+snap('who can do which job', name='all', part='prepare')
+for a, b in [('A', 'j2'), ('B', 'j1'), ('C', 'j3'), ('D', 'j4')]:
+    g.restyle_link(a, b, 'found'); g.mark(a, 'found'); g.mark(b, 'found')
+snap('a perfect matching: everyone gets a job', name='match', part='deliver_2')
+'''
+
+PETERSEN = '''
+g = nodes('g', layout='fixed', title='Petersen graph')
+for i in range(5):
+    a = pi / 2 + 2 * pi * i / 5
+    g.add('o' + str(i), str(i), at=(2 * cos(a), 2 * sin(a)))
+    g.add('i' + str(i), str(i + 5), at=(0.9 * cos(a), 0.9 * sin(a)))
+for i in range(5):
+    g.link('o' + str(i), 'o' + str((i + 1) % 5)); g.link('o' + str(i), 'i' + str(i)); g.link('i' + str(i), 'i' + str((i + 2) % 5))
+snap('10 vertices, each of degree 3', name='g', part='prepare')
+'''
+
+Z_SQUARED = '''
+a = axes('a', x=(-1.5, 1.5), y=(-1.5, 1.5), equal=True, title='w = z squared')
+sq = (0, 1, 0, 1)
+a.grid('g', step=0.25, over=sq, f=lambda x, y: (x, y))
+snap('the unit square in the z-plane', name='before', part='prepare')
+a.grid('g', step=0.25, over=sq, f=lambda x, y: complex(x, y) ** 2)
+snap('after z squared: the square opens into a half-disc', name='after', part='deliver_1')
+'''
+
+HEAT_MAP = '''
+a = axes('a', x=(-2, 2), y=(-2, 2), equal=True, title='f = x^2 + 2y^2')
+F = lambda x, y: x * x + 2 * y * y
+a.heat('h', F, n=20)
+snap('dark is low, bright is high', name='heat', part='prepare')
+for level in (1, 4):
+    a.contour('c' + str(level), F, level, style='current', label=str(level))
+snap('level curves 1 and 4 on top', name='levels', part='deliver_1')
+x, y = 1.8, 1.0
+for k in range(5):
+    a.point('p' + str(k), x, y, style='red')
+    x, y = x - 0.2 * 2 * x, y - 0.2 * 4 * y
+snap('gradient descent walks downhill', name='gd', part='deliver_2')
+'''
+
+ATTENTION = '''
+words = ['I', 'saw', 'a', 'cat']
+w = [[70, 10, 10, 10], [20, 60, 10, 10], [10, 50, 30, 10], [10, 20, 40, 30]]
+g = grid('g', w, row_names=words, col_names=words, title='attention, %')
+g.heat(lo=0, hi=100)
+snap('each row sums to 100: who each word attends to', name='w', part='prepare')
+g.mark_row(2, 'current')
+snap('a looks mostly at cat', name='sat', part='deliver_1')
+'''
+
+SPAN = '''
+s = space('s', x=(-2, 2), y=(-2, 2), z=(-2, 2), title='span of u and v')
+u, v = (1, 0, 1), (0, 1, 1)
+s.vector('u', *u, style='current', label='u'); s.vector('v', *v, style='compare', label='v')
+snap('two vectors in R3', name='uv', part='prepare')
+n = (u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0])
+s.plane('P', n, 0)
+snap('their span is a plane through 0', name='plane', part='deliver_1')
+s.vector('n', *n, style='red', label='u x v')
+snap('u x v is normal to it', name='normal', part='deliver_1')
+s.turn(20, 10)
+snap('turned: the plane edge-on', name='turned', part='deliver_2')
+'''
+
+SADDLE = '''
+s = space('s', x=(-1.5, 1.5), y=(-1.5, 1.5), z=(-1.5, 1.5), title='z = x^2 - y^2')
+s.surface('f', lambda x, y: x * x - y * y, n=12)
+s.point('o', 0, 0, 0, label='saddle', style='red')
+snap('a saddle at the origin', name='saddle', part='deliver_1')
+s.plane('t', (0, 0, 1), 0, style='visited')
+snap('its tangent plane is z = 0', name='tan', part='deliver_2')
+'''
+
+TORUS = '''
+s = space('s', x=(-3, 3), y=(-3, 3), z=(-1.5, 1.5), title='a torus')
+R, r = 2, 0.7
+s.param('T', lambda u, v: (R + r * cos(v)) * cos(u), lambda u, v: (R + r * cos(v)) * sin(u), lambda u, v: r * sin(v), u=(0, 2 * pi), v=(0, 2 * pi), n=16)
+snap('a torus: a circle swept round a circle', name='t', part='prepare')
+s.curve('c', lambda t: (R + r) * cos(t), lambda t: (R + r) * sin(t), lambda t: 0 * t, t=(0, 2 * pi), style='current')
+snap('one loop round the hole', name='loop', part='deliver_1')
+'''
+
+COUNTER = '''
+c = circuit('c', title='2-bit counter')
+c.block('f0', 'DFF', ['n0'])
+c.block('f1', 'DFF', ['n1'])
+c.gate('n0', 'NOT', ['f0'])
+c.gate('n1', 'XOR', ['f1', 'f0'])
+c.output('q1', 'f1', 'Q1'); c.output('q0', 'f0', 'Q0')
+snap('the count is ' + str(c.value('q1')) + str(c.value('q0')), name='c0', part='prepare')
+for k in range(1, 4):
+    c.tick()
+    snap('after tick ' + str(k) + ': ' + str(c.value('q1')) + str(c.value('q0')), name='c' + str(k), part='deliver_1')
+'''
+
+MUX = '''
+c = circuit('c', title='a 2-to-1 MUX')
+c.input('a', 1, 'd0'); c.input('b', 0, 'd1'); c.input('s', 0, 's')
+c.block('m', 'MUX', ['a', 'b', 's'])
+c.output('y', 'm', 'y')
+snap('s = 0 picks d0: y = ' + str(c.value('y')), name='s0', part='deliver_1')
+c.set('s', 1)
+snap('s = 1 picks d1: y = ' + str(c.value('y')), name='s1', part='deliver_1')
+'''
+
+TIMING = '''
+tl = timeline('tl', ['clk', 'D', 'Q'], t=(0, 8), step=1, title='a D flip-flop')
+clk = [1, 0] * 4
+d = [0, 0, 1, 1, 1, 0, 0, 0]
+q, cur = [], 0
+for k in range(8):
+    if k % 2 == 0: cur = d[k]
+    q.append(cur)
+tl.signal('c', 'clk', clk); tl.signal('d', 'D', d)
+snap('the clock and the input D', name='in', part='prepare')
+tl.signal('q', 'Q', q, style='current')
+snap('Q copies D at each rising edge', name='q', part='deliver_1')
+'''
+
+BOXPLOT = '''
+a = axes('a', title='two classes')
+A = [52, 55, 58, 60, 61, 63, 64, 66, 70, 90]
+B = [40, 45, 47, 50, 52, 53, 55, 58, 60]
+a.boxplot('A', A, x=1, style='visited', name='A'); a.boxplot('B', B, x=2, style='compare', name='B')
+snap('class A: median ' + str(a.boxplot('A', A, x=1, style='visited', name='A')[1]) + '; 90 is an outlier', name='box', part='deliver_1')
+'''
+
+STACKED = '''
+a = axes('a', title='sales by quarter')
+x = [10, 12, 9]; y = [4, 6, 8]
+a.bars('x', x, labels=['Q1', 'Q2', 'Q3'], style='visited')
+snap('product X', name='x', part='prepare')
+a.bars('y', y, labels=['Q1', 'Q2', 'Q3'], style='compare', base=x)
+snap('product Y stacked on top', name='y', part='deliver_1')
+'''
+
+TCP_FULL = '''
+s = sequence('s', ['client', 'server'], title='TCP: open, send, close')
+msgs = [('client', 'server', 'SYN seq=100', False), ('server', 'client', 'SYN-ACK 300', True), ('client', 'server', 'ACK 301', False),
+        ('client', 'server', 'GET / (40 B)', False), ('server', 'client', 'ACK 141', True), ('server', 'client', '200 OK (1 KB)', True),
+        ('client', 'server', 'ACK 1325', False), ('client', 'server', 'FIN', False), ('server', 'client', 'ACK', True), ('server', 'client', 'FIN', True)]
+for k, (a, b, label, d) in enumerate(msgs):
+    s.message('m' + str(k), a, b, label, style='current', dashed=d)
+    if k > 0: s.mark('m' + str(k - 1), None)
+    snap(label, name='m' + str(k), part='deliver_1' if k < 5 else 'deliver_2')
+'''
+
+LONG_ARRAY = '''
+a = cells('a', [2, 4, 7, 9, 13, 15, 18, 21, 24, 29, 33, 36, 40, 45, 51, 56, 60, 64, 71, 77], title='20 sorted keys')
+lo, hi, x = 0, 19, 64
+a.point('lo', lo); a.point('hi', hi)
+snap('search for 64 in 20 keys', name='start', part='prepare')
+while lo <= hi:
+    mid = (lo + hi) // 2
+    a.unmark(); a.mark(mid, 'compare')
+    snap('mid ' + str(mid) + ' holds ' + str(a[mid]), name='m' + str(mid), part='deliver_1')
+    if a[mid] == x:
+        a.mark(mid, 'found'); snap('found', name='found', part='deliver_2'); break
+    if a[mid] < x: lo = mid + 1
+    else: hi = mid - 1
+    a.point('lo', lo); a.point('hi', hi)
+'''
+
+BINARY_ADD = '''
+a, b = '01101101', '00111011'
+t = tape('t', a, title='binary addition', group=4)
+t.row('b', b, label='+')
+snap('two 8-bit numbers', name='start', part='prepare')
+carry = 0
+s = ['_'] * 8
+cs = ['0'] * 9
+for i in range(7, -1, -1):
+    total = int(a[i]) + int(b[i]) + carry
+    s[i] = str(total % 2); carry = total // 2; cs[i] = str(carry)
+    t.row('c', ''.join(cs[:8]), label='c')
+    t.row('s', ''.join(x if x != '_' else ' ' for x in s), label='=')
+    t.unmark(); t.mark(i, 'current')
+    if i in (7, 6, 3, 0):
+        snap('bit ' + str(7 - i) + ': sum ' + s[i] + ', carry ' + str(carry), name='b' + str(i), part='deliver_1')
+'''
+
+COVERAGE_PROGRAMS = {"match": MATCH, "float32": FLOAT32, "bsearch_code": BSEARCH_CODE, "fib_tree": FIB_TREE, "btree": BTREE, "uml": UML, "mod12": MOD12, "neural": NEURAL, "matching": MATCHING, "petersen": PETERSEN, "z_squared": Z_SQUARED, "heat_map": HEAT_MAP, "attention": ATTENTION, "span": SPAN, "saddle": SADDLE, "torus": TORUS, "counter": COUNTER, "mux": MUX, "timing": TIMING, "boxplot": BOXPLOT, "stacked": STACKED, "tcp_full": TCP_FULL, "long_array": LONG_ARRAY, "binary_add": BINARY_ADD}

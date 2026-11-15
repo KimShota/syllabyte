@@ -94,9 +94,32 @@ def test_a_tree_too_deep_for_the_frame_is_refused_with_a_reason():
         L.plan(run(chain), *DIALOGUE)
 
 
-def test_too_many_cells_are_refused():
-    with pytest.raises(PictureError, match="cells don't fit"):
-        L.plan(run("cells('a', list(range(12))); snap()"), *DIALOGUE)
+def test_a_long_array_shows_a_window_that_follows_its_marks():
+    snaps = run("a = cells('a', list(range(20)))\nsnap()\na.mark(15)\nsnap()\na.unmark()\na.mark(13)\nsnap()\n"
+                "a.unmark()\na.mark(2)\nsnap()")
+    lay = L.plan(snaps, *DIALOGUE)
+    shown, starts = lay.windows["a"]
+    assert 3 <= shown < 20
+    for i, focus in enumerate([None, 15, 13, 2]):
+        if focus is not None:
+            assert starts[i] <= focus < starts[i] + shown
+    assert starts[1] == starts[2]  # 13 is already in view: the window doesn't move
+
+
+def test_seventeen_messages_are_refused_and_twelve_scroll():
+    src = "s = sequence('s', ['a', 'b'])\nfor k in range(12):\n    s.message(k, 'a', 'b', str(k))\n    snap()"
+    lay = L.plan(run(src), *DIALOGUE).math["s"]
+    assert lay.window < 12 and lay.start[-1] == 12 - lay.window and lay.start[0] == 0
+    assert "at most 16" in run_program("s = sequence('s', ['a', 'b'])\nfor k in range(17):\n"
+                                       "    s.message(k, 'a', 'b')\nsnap()").error
+
+
+def test_a_node_label_of_four_characters_gets_a_node_big_enough():
+    snaps = run("t = nodes('t')\nt.add('f4', 'f(4)')\nt.add('f3', 'f(3)')\nt.add('f2', 'f(2)')\n"
+                "t.link('f4', 'f3'); t.link('f4', 'f2')\nsnap()")
+    lay = L.plan(snaps, *DIALOGUE)
+    assert lay.nodes["t"].r >= L.node_r([snaps[0]["views"]["t"]]) > L.NODE_R
+    assert "longer than 4" in run_program("t = nodes('t'); t.add('a', 'fib(3)'); snap()").error
 
 
 def test_a_forest_shrinks_its_gaps_before_it_wraps():
@@ -139,7 +162,7 @@ def test_stepping_past_the_last_snapshot_is_refused():
 
 @pytest.mark.parametrize("source, why", [
     ("a = cells('a', [1, 2])\nsnap()\nx = 1 / 0", "ZeroDivisionError"),
-    ("cells('a', list(range(12)))\nsnap()", "doesn't fit"),
+    ("t = nodes('t', range(12))\nfor i in range(11):\n    t.link(i, i + 1)\nsnap()", "doesn't fit"),
     ("import os", "no imports"),
 ])
 def test_a_broken_picture_program_is_sent_back_with_its_error(source, why):
@@ -482,7 +505,7 @@ def test_a_dp_table_and_a_matrix_product_are_computed():
     ("f = flow('f'); f.box('a', shape='star')", "unknown shape"),
     ("f = flow('f'); f.box('a'); f.arrow('a', 'b')", "no box 'b'"),
     ("c = circuit('c'); c.input('a'); c.gate('g', 'NAND', ['a'])", "two or more inputs"),
-    ("c = circuit('c'); c.gate('g', 'AND', ['x', 'y'])", "not an input or gate"),
+    ("c = circuit('c'); c.gate('g', 'AND', ['x', 'y'])", "not an input, gate or block"),
     ("m = memory('m'); m.frame('f'); m.set('f', 'p', m.ref('f')); snap()", "not a heap object"),
     ("s = sequence('s', ['a']); snap()", "2-4 actors"),
     ("t = timeline('t', ['cpu']); t.block('b', 'gpu', 0, 1)", "no lane 'gpu'"),
@@ -564,11 +587,14 @@ def test_round_robin_is_computed_and_drawn_on_its_lanes():
 def test_a_message_label_wider_than_its_lifelines_breaks_them_instead_of_crossing():
     snaps = run("s = sequence('s', ['a', 'b', 'c'])\ns.message('m', 'a', 'c', 'a long label!')\nsnap()")
     lay = L.plan(snaps, *FULL).math["s"]
-    c = lay.labels["m"]
+    view = snaps[0]["views"]["s"]
+    cx, dy = lay.labels["m"]
+    c = (cx, lay.row_y(view["messages"]["m"]["row"], 0) + dy)
     half = DL.text_half("a long label!")
+    gaps = DL.sequence_gaps(view, lay, 0)
     for i, x in enumerate(lay.x):
         if c[0] - half[0] < x < c[0] + half[0]:
-            assert any(g0 <= c[1] - half[1] + M2.ROOM and c[1] + half[1] - M2.ROOM <= g1 for g0, g1 in lay.gaps[i])
+            assert any(g0 <= c[1] - half[1] + M2.ROOM and c[1] + half[1] - M2.ROOM <= g1 for g0, g1 in gaps[i])
 
 
 def test_a_full_adder_adds_every_row_of_its_truth_table():

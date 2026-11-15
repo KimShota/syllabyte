@@ -60,10 +60,18 @@ class GridLayout:
     right: float
     top: float
     bottom: float
+    window: int = 0  # rows shown at once when the table is too tall for its band (0: all of them)
+    start: list = field(default_factory=list)  # each snapshot's first row shown
 
     @property
     def font(self) -> int:
         return round(30 * self.k)
+
+    def row_y(self, r: int, snap: int) -> float:
+        return self.y[r - (self.start[snap] if self.window else 0)]
+
+    def shown(self, r: int, snap: int) -> bool:
+        return not self.window or self.start[snap] <= r < self.start[snap] + self.window
 
 
 def _grid_size(views: list[dict]) -> tuple[list[float], float, float, float]:
@@ -88,7 +96,9 @@ def transpose(view: dict) -> dict:
     """A table on its side: row r, column c drawn at row c, column r (its names swap too)."""
     return {**view, "values": [list(col) for col in zip(*view["values"])], "row_names": view["col_names"],
             "col_names": view["row_names"], "marks": {f"{k.split(',')[1]},{k.split(',')[0]}": s
-                                                      for k, s in view["marks"].items()}}
+                                                      for k, s in view["marks"].items()},
+            "heat": None if not view.get("heat") else {f"{k.split(',')[1]},{k.split(',')[0]}": t
+                                                        for k, t in view["heat"].items()}}
 
 
 def _turned(views: list[dict], width: float) -> list[dict]:
@@ -100,11 +110,34 @@ def _turned(views: list[dict], width: float) -> list[dict]:
     return turned if _grid_width(turned) < _grid_width(views) else views
 
 
+GRID_WINDOW = 4  # rows a tall table shows at least, scrolling to its marked rows
+GRID_MORE = 0.24  # above and below a scrolled table: room for the arrows that say more is there
+
+
 def grid_heights(views: list[dict], width: float, title: float) -> tuple[float, float]:
     views = _turned(views, width)
     _widths, _names, head, body = _grid_size(views)
     k = max(1.0, min(MAX_GROW, (width - 0.1) / _grid_width(views)))
-    return title + head + body + 0.08, title + (head + body) * k + 0.08
+    rows = len(views[0]["values"])
+    least = body if rows <= GRID_WINDOW + 1 or views[0]["matrix"] else ROW_H * GRID_WINDOW + 2 * GRID_MORE
+    return title + head + least + 0.08, title + (head + body) * k + 0.08
+
+
+def grid_starts(views: list[dict], window: int) -> list[int]:
+    """Each snapshot's first row shown: the window moves as little as it can to keep the marked rows in view."""
+    out, s = [], 0
+    for v in views:
+        n = len(v["values"])
+        rows = sorted({int(key.split(",")[0]) for key in v["marks"]})
+        if rows:
+            lo, hi = rows[0], rows[-1]
+            if hi - lo + 1 > window or lo < s:
+                s = lo
+            elif hi >= s + window:
+                s = hi - window + 1
+        s = max(0, min(s, n - window))
+        out.append(s)
+    return out
 
 
 def grid_layout(views: list[dict], region) -> GridLayout:
@@ -116,20 +149,28 @@ def grid_layout(views: list[dict], region) -> GridLayout:
     total = _grid_width(views)
     room_h = region.h - title - 0.08
     k = min(MAX_GROW, (region.w - 0.1) / total, room_h / (head + body))
+    window = 0
     if k < 1 - 1e-9:
         if (region.w - 0.1) / total < 1:
             raise PictureError(f"the table is {total:.1f} units wide and {region.w:.1f} fit: use shorter entries "
                                "or fewer columns")
-        raise PictureError(f"the table needs {head + body:.1f} units of height and gets {room_h:.1f}: use fewer rows")
+        # too tall: a window of rows that follows the marked ones, so the picture beside it keeps its room
+        window = int((room_h - head - 2 * GRID_MORE) / ROW_H + 1e-9)
+        if views[0]["matrix"] or window < GRID_WINDOW - 1:
+            raise PictureError(f"the table needs {head + body:.1f} units of height and gets {room_h:.1f}: use "
+                               "fewer rows")
+        k, body = 1.0, ROW_H * window
     w = [x * k for x in widths]
     cx = region.cx + (names * k) / 2  # the body centred with its row names
     left = cx - sum(w) / 2
     xs = list(np.cumsum([0.0] + w[:-1]) + np.array(w) / 2 + left)
-    top = region.top - title - (room_h - (head + body) * k) / 2 - head * k
+    more = GRID_MORE if window else 0.0
+    top = region.top - title - (room_h - (head + body) * k - 2 * more) / 2 - head * k - more
     h = ROW_H * k
-    ys = [top - h * (i + 0.5) for i in range(len(views[0]["values"]))]
-    return GridLayout(k, transposed, xs, w, ys, h, top + head * k / 2 if head else None,
-                      left - names * k / 2 if names else None, left, left + sum(w), top, top - h * len(ys))
+    ys = [top - h * (i + 0.5) for i in range(window or len(views[0]["values"]))]
+    return GridLayout(k, transposed, xs, w, ys, h, top + head * k / 2 + more if head else None,
+                      left - names * k / 2 if names else None, left, left + sum(w), top, top - h * len(ys),
+                      window, grid_starts(views, window) if window else [])
 
 
 # ---- flow (labelled boxes and arrows) ----------------------------------------------------------------------
@@ -146,8 +187,22 @@ ICON_SHAPES = ("person", "chip", "monitor", "lock", "server")
 LOOP_R = 0.16
 
 
-def box_size(text: str, shape: str, k: float = 1.0) -> tuple[float, float]:
+RECORD_RULE = 0.1  # between a record's name and its fields
+RECORD_PAD = 0.12  # each side of a record's text
+RECORD_FONT = 28  # records hold more text than a box: classes side by side must fit the narrow frame
+
+
+def bsize(box: dict, k: float = 1.0) -> tuple[float, float]:
+    return box_size(box["text"], box["shape"], k, box.get("fields"))
+
+
+def box_size(text: str, shape: str, k: float = 1.0, fields=None) -> tuple[float, float]:
     lines = text.split("\n") if text else [""]
+    if shape == "record":  # its name over a rule, then its fields one a line, at the audit's minimum font (28)
+        lines = lines + list(fields or [])
+        w = max(text_w(line, k * RECORD_FONT / 30) for line in lines) + 2 * RECORD_PAD * k
+        h = LINE_H * k * len(lines) + 2 * BOX_PAD_Y * k + (RECORD_RULE * k if fields else 0.0)
+        return max(w, 0.5 * k), max(h, 0.46 * k)
     w = max(text_w(line, k) for line in lines) + 2 * BOX_PAD_X * k
     h = LINE_H * k * len(lines) + 2 * BOX_PAD_Y * k
     if shape == "diamond":  # the text sits in the middle half
@@ -184,7 +239,8 @@ def _union(views: list[dict]):
         for k, b in v["boxes"].items():
             old = boxes.get(k)
             # the largest text a box ever shows decides its size, so it doesn't change size between steps
-            if old is None or len(b["text"]) > len(old["text"]):
+            if old is None or (len(b["text"]) + sum(len(f) for f in b.get("fields") or [])
+                               > len(old["text"]) + sum(len(f) for f in old.get("fields") or [])):
                 boxes[k] = b
         for a, b, *_ in v["arrows"]:
             if (a, b) not in arrows:
@@ -310,7 +366,7 @@ def flow_heights(views: list[dict], width: float, title: float) -> tuple[float, 
     across = views[0]["direction"] == "right"
     ranked, order, chains = _chains(list(boxes), arrows, rank)
     layers = flow_order(list(ranked), order, ranked)
-    sizes = {k: box_size(b["text"], b["shape"]) for k, b in boxes.items()}
+    sizes = {k: bsize(b) for k, b in boxes.items()}
     sizes.update({d: (0.01, DUMMY) if across else (DUMMY, 0.01) for ds in chains.values() for d in ds})
     if across:  # layers left to right: the height is the tallest layer's, with room for labels and loops
         h = max(sum(sizes[k][1] for k in layer) + SLOT_GAP * (len(layer) - 1) for layer in layers)
@@ -335,13 +391,13 @@ def flow_layout(views: list[dict], region) -> FlowLayout:
     room_w, room_h = region.w - 0.1, region.h - title - 0.1
     labelled = {}
     for v in views:
-        for a, b, _s, label in v["arrows"]:
+        for a, b, _s, label, *_ in v["arrows"]:
             if label:
                 labelled[(a, b)] = label
     loops = [(a, b) for a, b in arrows if a == b]
 
     def attempt(k: float, gap: float) -> FlowLayout | str:
-        sizes = {key: box_size(boxes[key]["text"], boxes[key]["shape"], k) for key in keys}
+        sizes = {key: bsize(boxes[key], k) for key in keys}
         sizes.update({d: (0.01, DUMMY) if across else (DUMMY, 0.01) for d in dummies})
         # the main axis runs through the layers; the cross axis through the boxes of a layer
         main = [max(sizes[key][1 if not across else 0] for key in layer) for layer in layers]
@@ -435,7 +491,7 @@ def flow_layout(views: list[dict], region) -> FlowLayout:
     best, why = None, []
     room_main = room_h if not across else room_w
     for k in (MAX_GROW, 1.25, 1.1, 1.0):
-        sized = {key: box_size(boxes[key]["text"], boxes[key]["shape"], k) for key in keys}
+        sized = {key: bsize(boxes[key], k) for key in keys}
         used = sum(max([sized[key][1 if not across else 0] for key in layer if key in sized] or [0.01])
                    for layer in layers)
         # the layers as far apart as the room allows (labels sit in the gaps), then closer
@@ -529,7 +585,7 @@ def _flow_labels(views, lay: FlowLayout, labelled, region, title, dropped) -> di
     requests = []
     for (a, b), text in labelled.items():
         half = text_half(text)
-        shown = {i for i, v in enumerate(views) if any(x == a and y == b and lab for x, y, _s, lab in v["arrows"])}
+        shown = {i for i, v in enumerate(views) if any(x == a and y == b and lab for x, y, _s, lab, *_ in v["arrows"])}
         cands = []
         if a == b:
             c, d = lay.loops[f"{a}>{a}"]
@@ -581,8 +637,9 @@ def _t_range(views: list[dict]) -> tuple[float, float]:
     first = views[0]
     if first["t"] is not None:
         return float(first["t"][0]), float(first["t"][1])
-    ts = [x for v in views for it in v["items"].values() for x in ((it["a"], it["b"]) if it["type"] == "block"
-                                                                       else (it["t"],))]
+    ts = [x for v in views for it in v["items"].values() for x in (
+        (it["a"], it["b"]) if it["type"] == "block" else
+        (it["t0"], it["t0"] + it["step"] * len(it["values"])) if it["type"] == "signal" else (it["t"],))]
     if not ts:
         return 0.0, 10.0
     lo, hi = min(0.0, min(ts)), max(ts)
@@ -696,12 +753,27 @@ class SequenceLayout:
     x: list[float]  # each actor's lifeline
     box_w: float
     top: float  # the actor boxes' top
-    rows: dict[int, float]  # each message row's arrow height
+    first_row: float  # the top of the first message row
+    row_h: float
+    window: int  # message rows shown at once
+    start: list[int]  # each snapshot's first row shown (old messages scroll up out of view)
+    order: list[int]  # the rows in order
     bottom: float  # where the lifelines end
-    labels: dict[str, np.ndarray]  # a message's label centre, by key
+    labels: dict[str, np.ndarray]  # a message's label centre, by key, as (x, height above its arrow)
     self_w: float = 0.36  # how far a message to itself loops out
     dropped: list = field(default_factory=list)
-    gaps: dict = field(default_factory=dict)  # each lifeline's breaks round the labels it would cross: [(y0, y1)]
+
+    def row_y(self, row: int, snap: int) -> float:
+        """The arrow's height of message row `row` in snapshot `snap`."""
+        k = self.order.index(row) - self.start[snap]
+        return self.first_row - self.row_h * (k + 0.5) - (TEXT_H / 2 - 0.02)
+
+    def shown(self, row: int, snap: int) -> bool:
+        k = self.order.index(row)
+        return self.start[snap] <= k < self.start[snap] + self.window
+
+
+MIN_MSG_WINDOW = 4
 
 
 def _rows(views) -> list[int]:
@@ -710,7 +782,8 @@ def _rows(views) -> list[int]:
 
 def sequence_heights(views: list[dict], width: float, title: float) -> tuple[float, float]:
     rows = max(1, len(_rows(views)))
-    return title + ACTOR_H + 0.15 + rows * MSG_ROW + 0.1, title + ACTOR_H + 0.15 + rows * MAX_MSG_ROW + 0.1
+    least = min(rows, MIN_MSG_WINDOW)
+    return title + ACTOR_H + 0.15 + least * MSG_ROW + 0.1, title + ACTOR_H + 0.15 + rows * MAX_MSG_ROW + 0.1
 
 
 def sequence_layout(views: list[dict], region) -> SequenceLayout:
@@ -726,13 +799,20 @@ def sequence_layout(views: list[dict], region) -> SequenceLayout:
     xs = [region.cx - span / 2 + span * i / (n - 1) for i in range(n)]
     rows = _rows(views)
     room = region.h - title - ACTOR_H - 0.15 - 0.1
-    row_h = min(MAX_MSG_ROW, room / max(1, len(rows)))
-    if row_h < MSG_ROW - 1e-9:
-        raise PictureError(f"{len(rows)} messages need {len(rows) * MSG_ROW:.1f} units of height and get {room:.1f}")
-    top = region.top - title - (room - row_h * len(rows)) / 2
+    if room / max(1, len(rows)) >= MSG_ROW - 1e-9:
+        window, row_h = len(rows), min(MAX_MSG_ROW, room / max(1, len(rows)))
+    else:  # more messages than fit: the newest stay in view and the oldest scroll up out of it
+        window, row_h = int(room / MSG_ROW + 1e-9), MSG_ROW
+        if window < min(MIN_MSG_WINDOW, len(rows)):
+            raise PictureError(f"the message diagram gets {room:.1f} units of height, room for {window} messages; "
+                               f"it needs room for {MIN_MSG_WINDOW} (drop a view)")
+    top = region.top - title - (room - row_h * window) / 2
     first_row = top - ACTOR_H - 0.15
-    ys = {r: first_row - row_h * (i + 0.5) - (TEXT_H / 2 - 0.02) for i, r in enumerate(rows)}
-    lay = SequenceLayout(xs, box_w, top, ys, first_row - row_h * len(rows), {})
+    start = []
+    for v in views:
+        last = max((rows.index(m["row"]) for m in v["messages"].values()), default=0)
+        start.append(max(0, last - window + 1))
+    lay = SequenceLayout(xs, box_w, top, first_row, row_h, window, start, rows, first_row - row_h * window, {})
     x_lo, x_hi = region.cx - region.w / 2, region.cx + region.w / 2
     for v in views:
         for key, m in v["messages"].items():
@@ -741,26 +821,39 @@ def sequence_layout(views: list[dict], region) -> SequenceLayout:
             half = text_half(m["label"])
             a, b = xs[m["a"]], xs[m["b"]]
             if m["a"] == m["b"]:  # beside the loop
-                c = np.array([a + lay.self_w + 0.08 + half[0], ys[m["row"]] - 0.12])
+                c = np.array([a + lay.self_w + 0.08 + half[0], -0.12])
                 if a + lay.self_w + 0.08 + 2 * half[0] > x_hi:  # no room right of the loop: above it
-                    c = np.array([min(max(a, x_lo + half[0]), x_hi - half[0]), ys[m["row"]] + 0.18 + half[1]])
+                    c = np.array([min(max(a, x_lo + half[0]), x_hi - half[0]), 0.18 + half[1]])
             else:
                 # centred over its arrow, inside the frame; a lifeline it covers is drawn with a gap round it
-                c = np.array([min(max((a + b) / 2, x_lo + half[0]), x_hi - half[0]), ys[m["row"]] + 0.06 + half[1]])
+                c = np.array([min(max((a + b) / 2, x_lo + half[0]), x_hi - half[0]), 0.06 + half[1]])
             if 2 * half[0] > region.w:
                 if m["label"] not in lay.dropped:
                     lay.dropped.append(m["label"])
                 continue
             lay.labels[key] = c
-            for i, x in enumerate(xs):
-                if c[0] - half[0] - 0.04 < x < c[0] + half[0] + 0.04:
-                    lay.gaps.setdefault(i, []).append((c[1] - half[1] - 0.03, c[1] + half[1] + 0.03))
     return lay
+
+
+def sequence_gaps(view: dict, lay: SequenceLayout, snap: int) -> dict[int, list[tuple[float, float]]]:
+    """Each lifeline's breaks round the labels it would cross in this snapshot."""
+    gaps: dict[int, list[tuple[float, float]]] = {}
+    for key, m in view["messages"].items():
+        if key not in lay.labels or not lay.shown(m["row"], snap):
+            continue
+        cx, dy = lay.labels[key]
+        cy = lay.row_y(m["row"], snap) + dy
+        half = text_half(m["label"])
+        for i, x in enumerate(lay.x):
+            if cx - half[0] - 0.04 < x < cx + half[0] + 0.04:
+                gaps.setdefault(i, []).append((cy - half[1] - 0.03, cy + half[1] + 0.03))
+    return gaps
 
 
 # ---- circuit (drawn top to bottom: the portrait frame is tall, not wide) ----------------------------------
 
 GATE_LEN = 0.44  # a gate along the signal (down the frame)
+BLOCK_H = 0.5  # a block (MUX, DFF...): its name inside
 PIN = 0.06  # the stubs into and out of a gate
 TERM = 0.36  # an input's or output's value box
 NAME_H = TEXT_H + 0.04  # an input's name above its box, an output's below
@@ -769,10 +862,34 @@ CHANNEL_GAP = 0.08  # between two wires turning in one gap
 MAX_WIRE_GAP = 0.7
 PART_GAP = 0.34  # between two parts side by side
 DUMMY_W = 0.16  # a wire passing a level
+LANE = 0.14  # a wire looping back up to a flip-flop runs in a lane of its own at the right
 
 
 def gate_wid(n_inputs: int) -> float:
     return max(0.56, 0.22 * n_inputs + 0.16)
+
+
+def _outs(p: dict) -> list[str]:
+    from animation_agent.scene.api import BLOCKS
+
+    return BLOCKS[p["block"]][1] if p["type"] == "block" else [""]
+
+
+def part_size(p: dict) -> tuple[float, float]:
+    if p["type"] == "gate":
+        return gate_wid(len(p["inputs"])), GATE_LEN
+    if p["type"] == "block":
+        n = max(len(p["inputs"]), len(_outs(p)))
+        return max(0.8, 0.24 * n + 0.2, text_w(p["block"], 28 / 30) + 0.24), BLOCK_H
+    return TERM, TERM
+
+
+def _base(src: str) -> str:
+    return src.split(".")[0]
+
+
+def _is_ff(p: dict) -> bool:
+    return p["type"] == "block" and p["block"] == "DFF"
 
 
 @dataclass
@@ -784,12 +901,15 @@ class CircuitLayout:
 
 
 def _depths(parts: dict) -> dict[str, int]:
+    """Each part's level: inputs and flip-flops (sources: their Q is known before anything else) first, each gate
+    or block one below its deepest input, the outputs last."""
     depth: dict[str, int] = {}
     for k, p in parts.items():
-        if p["type"] == "input":
+        if p["type"] == "input" or _is_ff(p):
             depth[k] = 0
-        elif p["type"] == "gate":
-            depth[k] = 1 + max(depth[i] for i in p["inputs"])
+    for k, p in parts.items():
+        if p["type"] in ("gate", "block") and not _is_ff(p):
+            depth[k] = 1 + max(depth[_base(i)] for i in p["inputs"])
     last = max(depth.values(), default=0) + 1
     for k, p in parts.items():
         if p["type"] == "output":
@@ -797,15 +917,27 @@ def _depths(parts: dict) -> dict[str, int]:
     return depth
 
 
+def _back(parts, depth) -> list[tuple[str, int, str]]:
+    """The wires that loop back up into a flip-flop: (flip-flop, input, source)."""
+    return [(k, j, src) for k, p in parts.items() if _is_ff(p) for j, src in enumerate(p["inputs"])]
+
+
 def _turns(parts, depth) -> dict[int, list[str]]:
-    """The sources whose wires turn in each gap between levels (each gets a channel of its own there)."""
+    """The sources whose wires turn in each gap between levels (each gets a channel of its own there); a wire back
+    up to a flip-flop turns in the gap below its source."""
     users: dict[int, list[str]] = {}
     for k, p in parts.items():
+        if _is_ff(p):
+            continue
         for src in p.get("inputs", []):
-            for d in range(depth[src], depth[k]):
+            for d in range(depth[_base(src)], depth[k]):
                 users.setdefault(d, [])
                 if src not in users[d]:
                     users[d].append(src)
+    for _k, _j, src in _back(parts, depth):
+        users.setdefault(depth[_base(src)], [])
+        if src not in users[depth[_base(src)]]:
+            users[depth[_base(src)]].append(src)
     return users
 
 
@@ -815,7 +947,20 @@ def _gap_need(n: int) -> float:
 
 def _level_lens(parts, depth) -> list[float]:
     levels = max(depth.values()) + 1
-    return [TERM + NAME_H if d in (0, levels - 1) else GATE_LEN + 2 * PIN for d in range(levels)]
+    out = []
+    for d in range(levels):
+        here = [p for k, p in parts.items() if depth[k] == d]
+        if d in (0, levels - 1):
+            out.append(max([TERM + NAME_H] + [BLOCK_H + 2 * PIN for p in here if p["type"] == "block"]))
+        else:
+            out.append(max(BLOCK_H if p["type"] == "block" else GATE_LEN for p in here) + 2 * PIN)
+    return out
+
+
+def _top_room(parts, depth) -> float:
+    """Above the first level, a channel for each wire looping back to a flip-flop."""
+    n = len(_back(parts, depth))
+    return 0.1 + CHANNEL_GAP * (n + 1) if n else 0.0
 
 
 def circuit_heights(views: list[dict], width: float, title: float) -> tuple[float, float]:
@@ -824,17 +969,28 @@ def circuit_heights(views: list[dict], width: float, title: float) -> tuple[floa
     lens = _level_lens(parts, depth)
     users = _turns(parts, depth)
     need = [_gap_need(len(users.get(d, []))) for d in range(len(lens) - 1)]
-    return title + sum(lens) + sum(need) + 0.12, title + sum(lens) + sum(max(g, MAX_WIRE_GAP) for g in need) + 0.12
+    top = _top_room(parts, depth)
+    return (title + top + sum(lens) + sum(need) + 0.12,
+            title + top + sum(lens) + sum(max(g, MAX_WIRE_GAP) for g in need) + 0.12)
 
 
-def _port(pos, size, parts, key, j=None) -> tuple[float, float]:
+def _port(pos, size, parts, key, j=None, out=0) -> tuple[float, float]:
+    """A part's input pin j (along its top), or output pin `out` (along its bottom)."""
     c, (w, h) = pos[key], size[key]
-    pin = PIN if parts[key]["type"] == "gate" else 0.0
-    if j is None:  # the output, at the bottom
-        return (float(c[0]), float(c[1] - h / 2 - pin))
+    pin = PIN if parts[key]["type"] in ("gate", "block") else 0.0
+    if j is None:
+        n = len(_outs(parts[key]))
+        span = w - 0.2
+        return (float(c[0] - span / 2 + span * out / (n - 1)) if n > 1 else float(c[0]), float(c[1] - h / 2 - pin))
     n = len(parts[key]["inputs"])
     span = w - 0.2
     return (float(c[0] - span / 2 + span * j / (n - 1)) if n > 1 else float(c[0]), float(c[1] + h / 2 + pin))
+
+
+def source_port(pos, size, parts, src: str) -> tuple[float, float]:
+    base, _, port = src.partition(".")
+    outs = _outs(parts[base])
+    return _port(pos, size, parts, base, None, outs.index(port) if port in outs else 0)
 
 
 def circuit_layout(views: list[dict], region) -> CircuitLayout:
@@ -845,59 +1001,66 @@ def circuit_layout(views: list[dict], region) -> CircuitLayout:
     for v in views:  # the last snapshot has every part; a part may not be removed
         if set(v["parts"]) - set(parts):
             raise PictureError("a circuit keeps its parts once made (set the inputs to show a change)")
-    if not any(p["type"] == "input" for p in parts.values()) or len(parts) < 2:
+    if not any(p["type"] in ("input",) or _is_ff(p) for p in parts.values()) or len(parts) < 2:
         raise PictureError("a circuit needs inputs and a gate or output")
     depth = _depths(parts)
     lens = _level_lens(parts, depth)
     users = _turns(parts, depth)
+    back = _back(parts, depth)
     need = [_gap_need(len(users.get(d, []))) for d in range(len(lens) - 1)]
-    room = region.h - title - 0.12
+    top_room = _top_room(parts, depth)
+    room = region.h - title - 0.12 - top_room
     spare = room - sum(lens) - sum(need)
     if spare < -1e-9:
         raise PictureError(f"the circuit is {len(lens)} levels deep (inputs, gates, outputs) and needs "
-                           f"{sum(lens) + sum(need):.1f} units of height; it gets {room:.1f}: use fewer levels of "
-                           "gates or fewer wires")
+                           f"{sum(lens) + sum(need) + top_room:.1f} units of height; it gets {room + top_room:.1f}: "
+                           "use fewer levels of gates or fewer wires")
     gaps = [min(g + spare / max(1, len(need)), max(g, MAX_WIRE_GAP)) for g in need]
     total = sum(lens) + sum(gaps)
-    y = region.top - title - 0.06 - (room - total) / 2
+    y = region.top - title - top_room - 0.06 - (room - total) / 2
+    top_channel = y + top_room - 0.04  # the back wires' channels sit between here and the first level
     centre_y = []  # an input's name sits above its box, an output's below
     for d, L in enumerate(lens):
         centre_y.append(y - NAME_H - TERM / 2 if d == 0 else y - TERM / 2 if d == len(lens) - 1 else y - L / 2)
         y -= L + (gaps[d] if d < len(gaps) else 0.0)
-    size = {k: ((gate_wid(len(p["inputs"])), GATE_LEN) if p["type"] == "gate" else (TERM, TERM))
-            for k, p in parts.items()}
+    size = {k: part_size(p) for k, p in parts.items()}
     # a wire that skips a level passes it at a slot of its own (one per source and level, a dummy part, as
     # layered drawings route long edges), so it runs between the parts there, not through them
     passing: dict[int, list[str]] = {}
     for k, p in parts.items():
+        if _is_ff(p):
+            continue
         for src in p.get("inputs", []):
-            for d in range(depth[src] + 1, depth[k]):
+            for d in range(depth[_base(src)] + 1, depth[k]):
                 passing.setdefault(d, [])
                 if src not in passing[d]:
                     passing[d].append(src)
     levels = [[k for k in parts if depth[k] == d] + [f"~{src}~{d}" for src in passing.get(d, [])]
               for d in range(len(lens))]
+    lanes = LANE * len(back)  # room at the right for the wires back up
+    width = region.w - 0.1 - lanes
+    left_x = region.cx - (region.w - 0.1) / 2
 
     def wide(k: str) -> float:
         return DUMMY_W if k.startswith("~") else size[k][0]
 
     for d, level in enumerate(levels):
-        need = sum(wide(k) for k in level) + PART_GAP * (len(level) - 1)
-        if need > region.w - 0.1:
-            raise PictureError(f"{len(level)} parts and wires side by side need {need:.1f} units and "
-                               f"{region.w - 0.1:.1f} fit: use fewer gates in a level")
+        need_w = sum(wide(k) for k in level) + PART_GAP * (len(level) - 1)
+        if need_w > width:
+            raise PictureError(f"{len(level)} parts and wires side by side need {need_w:.1f} units and "
+                               f"{width:.1f} fit: use fewer gates in a level")
     # left to right in each level by where its inputs are (barycentre), so wires run mostly straight down
     x: dict[str, float] = {}
     for d, level in enumerate(levels):
         if d:
             def bary(k: str) -> float:
                 ins = [k.split("~")[1]] if k.startswith("~") else parts[k]["inputs"]
-                return sum(x[i] for i in ins) / len(ins)
+                return sum(x[_base(i)] for i in ins) / len(ins)
 
             level.sort(key=bary)
-        slot = (region.w - 0.1) / len(level)
+        slot = width / len(level)
         for j, k in enumerate(level):
-            x[k] = region.cx - (region.w - 0.1) / 2 + slot * (j + 0.5)
+            x[k] = left_x + slot * (j + 0.5)
     pos = {k: np.array([x[k], centre_y[depth[k]]]) for k in parts}
     names = {}
     for k, p in parts.items():
@@ -907,17 +1070,21 @@ def circuit_layout(views: list[dict], region) -> CircuitLayout:
             names[k] = np.array([x[k], pos[k][1] - TERM / 2 - NAME_H / 2])
     real = [[k for k in level if not k.startswith("~")] for level in levels]
 
+    def bottom_of(k):
+        return pos[k][1] - size[k][1] / 2 - (PIN if parts[k]["type"] in ("gate", "block") else 0)
+
     def gap_between(d: int) -> tuple[float, float]:
-        above = min(_port(pos, size, parts, k)[1] for k in real[d])
-        below = max(pos[k][1] + size[k][1] / 2 + (PIN if parts[k]["type"] == "gate" else 0) for k in real[d + 1])
+        above = min(bottom_of(k) for k in real[d])
+        below = max(pos[k][1] + size[k][1] / 2 + (PIN if parts[k]["type"] in ("gate", "block") else 0)
+                    for k in real[d + 1])
         return below + 0.03, above - 0.03
 
     def clear(path, src, k) -> str | None:
         for other in parts:  # a wire may pass no part but its own two
-            if other in (src, k):
+            if other in (_base(src), k):
                 continue
             c, (w, h) = pos[other], size[other]
-            pin = PIN if parts[other]["type"] == "gate" else 0.0
+            pin = PIN if parts[other]["type"] in ("gate", "block") else 0.0
             lo = (c[0] - w / 2 - 0.04, c[1] - h / 2 - pin - 0.04)
             hi = (c[0] + w / 2 + 0.04, c[1] + h / 2 + pin + 0.04)
             if any(seg_hits_box(s, t, lo, hi) for s, t in zip(path, path[1:])):
@@ -934,24 +1101,38 @@ def circuit_layout(views: list[dict], region) -> CircuitLayout:
 
     wires = {}
     for k, p in parts.items():
+        if _is_ff(p):
+            continue
         for j, src in enumerate(p.get("inputs", [])):
-            a, b = _port(pos, size, parts, src), _port(pos, size, parts, k, j)
+            a, b = source_port(pos, size, parts, src), _port(pos, size, parts, k, j)
             path = [a]
             at = a[0]
-            for d in range(depth[src], depth[k]):  # down to the channel, across to the next slot, down again
+            for d in range(depth[_base(src)], depth[k]):  # down to the channel, across to the next slot, down again
                 nxt = x[f"~{src}~{d + 1}"] if d + 1 < depth[k] else b[0]
                 path += [(at, ch(d, src)), (nxt, ch(d, src))]
                 at = nxt
             path.append(b)
-            if abs(a[0] - b[0]) < 1e-6 and depth[k] == depth[src] + 1:
+            if abs(a[0] - b[0]) < 1e-6 and depth[k] == depth[_base(src)] + 1:
                 path = [a, b]
             path = [q for i, q in enumerate(path) if i == 0 or (abs(q[0] - path[i - 1][0]) > 1e-9
                                                               or abs(q[1] - path[i - 1][1]) > 1e-9)]
             if (other := clear(path, src, k)) is not None:
                 raise PictureError(f"the wire from {src} to {k} would cross {other}; use fewer gates or levels")
             wires[f"{src}>{k}#{j}"] = path
+    right = left_x + width  # the back wires' lanes, one each, right of every part
+    for n, (k, j, src) in enumerate(back):
+        if _base(src) not in parts:
+            raise PictureError(f"{k}'s D comes from {src!r}, which is never made")
+        a, b = source_port(pos, size, parts, src), _port(pos, size, parts, k, j)
+        lane = right + LANE * (n + 0.6)
+        ytop = top_channel - CHANNEL_GAP * (n + 1)
+        down = ch(depth[_base(src)], src)
+        path = [a, (a[0], down), (lane, down), (lane, ytop), (b[0], ytop), b]
+        if (other := clear(path, src, k)) is not None:
+            raise PictureError(f"the wire from {src} back up to {k} would cross {other}; use fewer gates")
+        wires[f"{src}>{k}#{j}"] = path
     # two different wires may cross but never run along one another
-    segs = [(key.split(">")[0], s, t) for key, path in wires.items() for s, t in zip(path, path[1:])]
+    segs = [(key.split(">")[0], s_, t) for key, path in wires.items() for s_, t in zip(path, path[1:])]
     for i, (n1, s1, t1) in enumerate(segs):
         for n2, s2, t2 in segs[i + 1:]:
             if n1 == n2:

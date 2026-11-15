@@ -2949,14 +2949,14 @@ def _init_picture_check(p: PictureParams) -> str | None:
 def _picture_problem(source: str, area: str) -> str | None:
     """Why the program can't be drawn in the area, or None. Cached: the checker asks again on every pass."""
     from animation_agent.scene.api import PictureError
-    from animation_agent.scene.layout import plan
+    from animation_agent.scene.layout import plan_groups
     from animation_agent.scene.sandbox import run_cached
 
     result = run_cached(source)
     if not result.ok:
         return f"the program failed: {result.error}"
     try:
-        plan(result.snapshots, *_dialogue_area(area))
+        plan_groups(result.snapshots, *_dialogue_area(area))
     except PictureError as e:
         return f"the picture doesn't fit the frame: {e}"
     return None

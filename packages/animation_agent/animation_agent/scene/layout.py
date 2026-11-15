@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 import networkx as nx
 import numpy as np
 
-from animation_agent.scene.api import PictureError
+from animation_agent.scene.api import GRAPH_LAYOUTS, PictureError
 
 NODE_R = 0.2  # the smallest node: "10" at the minimum font just fits
 NODE_UNIT = 0.48  # the least horizontal room per leaf
@@ -88,20 +88,13 @@ def _heights(kind: str, views: list[dict], width: float) -> tuple[float, float]:
     """The least height a view can be drawn legibly in, and the most it can use."""
     title = _title(views)
     if kind == "cells":
-        n = max(len(v["values"]) for v in views)
-        most = min(MAX_CELL, width / n)
+        most = _cell(views, width)
         return _cells_height(views, min(CELL, most)), _cells_height(views, most)
-    if kind == "code":
-        h = title + CODE_LINE_H * max(len(v["lines"]) for v in views)
-        return h, h
-    if kind == "formula":
-        h = title + FORMULA_LINE_H * max(1, max(len(v["lines"]) for v in views))
-        return h, h
     if kind == "container":
         return title + CONTAINER_H, title + 0.1 + CONTAINER_LABEL_H + CONTAINER_MAX
-    if kind in MATH_KINDS:
+    if kind in MATH_KINDS or kind in TEXT_KINDS:
         return _view_layouts()[kind][0](views, width, title)
-    if views[0]["layout"] == "graph":
+    if views[0]["layout"] in GRAPH_LAYOUTS:
         return title + LEVEL_H, title + width  # about square at most: taller only stretches the links
     _unit, _gap, levels = _tree_shape(views, width)
     level_h = LABELLED_LEVEL_H if _labelled(views) else MAX_LEVEL_H
@@ -125,24 +118,29 @@ def _fill(h: list[float], most: list[float], which: list[int], spare: float) -> 
 _WHAT = {"cells": "an array", "code": "the code panel", "container": "a container", "nodes": "the diagram",
          "axes": "the axes", "venn": "the Venn diagram", "geometry": "the figure", "numberline": "the number line",
          "surface": "the 3D view", "grid": "the table", "flow": "the flow diagram", "timeline": "the timeline",
-         "sequence": "the message diagram", "circuit": "the circuit", "memory": "the memory diagram", "formula": "the formula"}
+         "sequence": "the message diagram", "circuit": "the circuit", "memory": "the memory diagram", "formula": "the formula",
+         "tape": "the tape", "space": "the 3D scene"}
 # views laid out by their own module (scene/math_layout.py, scene/diagram_layout.py): (heights, layout) each
 MATH_KINDS = ("axes", "venn", "geometry", "numberline", "surface", "grid", "flow", "timeline", "sequence", "circuit",
-              "memory")
+              "memory", "space")
 MAIN_KINDS = ("nodes", "container") + MATH_KINDS  # what gets the room first
+TEXT_KINDS = ("code", "tape", "formula")  # laid out by scene/text_layout.py, but not the main picture
 
 
 def _view_layouts() -> dict:
     from animation_agent.scene import diagram_layout as D
     from animation_agent.scene import math_layout as M
+    from animation_agent.scene import text_layout as T
 
     return {"axes": (M.axes_heights, M.axes_layout), "venn": (M.venn_heights, M.venn_layout),
             "geometry": (M.geometry_heights, M.geometry_layout),
             "numberline": (M.numberline_heights, M.numberline_layout),
             "surface": (M.surface_heights, M.surface_layout), "grid": (D.grid_heights, D.grid_layout),
+            "space": (M.space_heights, M.space_layout),
             "flow": (D.flow_heights, D.flow_layout), "timeline": (D.timeline_heights, D.timeline_layout),
             "sequence": (D.sequence_heights, D.sequence_layout), "circuit": (D.circuit_heights, D.circuit_layout),
-            "memory": (D.memory_heights, D.memory_layout)}
+            "memory": (D.memory_heights, D.memory_layout), "code": (T.code_heights, T.code_layout),
+            "tape": (T.tape_heights, T.tape_layout), "formula": (T.formula_heights, T.formula_layout)}
 
 
 def plan_regions(snaps: list[dict], width: float, height: float, top: float) -> dict[str, Region]:
@@ -166,7 +164,7 @@ def plan_regions(snaps: list[dict], width: float, height: float, top: float) -> 
     most = [max(hi for _, hi in band) for band in sizes]
     spare = height - sum(h) - GAP * (len(bands) - 1)
     if spare < -1e-6:
-        if len(names) == 1 and kinds[names[0]] in MATH_KINDS:  # one view too big: its own reason says what to cut
+        if len(names) == 1 and (kinds[names[0]] in MATH_KINDS or kinds[names[0]] in TEXT_KINDS):  # one view too big: its own reason says what to cut
             try:
                 _view_layouts()[kinds[names[0]]][1](by_name[names[0]], Region(0.0, top, width, height))
             except PictureError:
@@ -283,9 +281,39 @@ NODE_TEXT_H = 0.285
 
 
 def node_r(views: list[dict]) -> float:
-    """The least node radius that holds the view's longest label inside its circle at the minimum font."""
-    longest = max((len(n["label"]) for v in views for n in v["nodes"].values()), default=1)
+    """The least node radius that holds the view's longest label inside its circle at the minimum font. In a
+    tree, a label longer than 2 characters is drawn in a pill instead (pill_w), so only the short ones count."""
+    tree = views[0]["layout"] not in GRAPH_LAYOUTS
+    longest = max((len(n["label"]) for v in views for n in v["nodes"].values()
+                   if not (tree and len(n["label"]) > 2)), default=1)
     return max(NODE_R, float(np.hypot(NODE_CHAR_W * longest / 2, NODE_TEXT_H / 2)) + 0.03)
+
+
+PILL_FONT = 28
+
+
+def pill_w(label: str) -> float:
+    """A tree node's width when its label is longer than 2 characters (f(3), 'cat'): a pill round the text at
+    the audit's minimum font, so a recursion tree's leaves still fit across."""
+    from animation_agent.scene.math_layout import text_width
+
+    return text_width(label, PILL_FONT) + 0.14
+
+
+KEY_W = 0.48  # one key of a B-tree node: two digits at the audit's minimum font, with room
+
+
+def node_w(node: dict) -> float:
+    """A tree node's width drawn as a pill or a row of keys (0 for a plain circle)."""
+    if node.get("keys"):
+        return KEY_W * len(node["keys"])
+    return pill_w(node["label"]) if len(node["label"]) > 2 else 0.0
+
+
+def widest_pill(views: list[dict]) -> float:
+    if views[0]["layout"] in GRAPH_LAYOUTS:
+        return 0.0
+    return max((node_w(n) for v in views for n in v["nodes"].values()), default=0.0)
 
 
 LABELLED_UNIT = 1.4  # a tree whose links carry labels (a probability tree) spreads out further
@@ -299,7 +327,7 @@ def _labelled(views: list[dict]) -> bool:
 def _tree_shape(views: list[dict], width: float) -> tuple[float, float, int]:
     """A forest view's leaf unit, gap between trees and levels in all (rows of trees stack) at this width."""
     forests = [_tree_units(v) for v in views]
-    least = max(NODE_UNIT, node_r(views) / 0.42)  # a leaf's room holds its node
+    least = max(NODE_UNIT, node_r(views) / 0.42, widest_pill(views) + 0.06)  # a leaf's room holds its node
     # the gap between trees shrinks (to none) before a forest wraps onto a second row, which reads as children
     leaves = max((sum(t[2] for t in ts) for ts in forests if ts), default=1.0)
     most = max((len(ts) for ts in forests), default=1)
@@ -329,7 +357,7 @@ def node_scale(views: list[dict], region: Region) -> NodeScale:
 
 def layout_nodes(view: dict, region: Region, graph_pos: dict[str, np.ndarray] | None,
                  scale: NodeScale) -> dict[str, np.ndarray]:
-    if view["layout"] == "graph":
+    if view["layout"] in GRAPH_LAYOUTS:
         return {k: graph_pos[k] for k in view["nodes"]}
     out: dict[str, np.ndarray] = {}
     depth0 = 0
@@ -500,9 +528,9 @@ def place_labels(pos: dict[str, np.ndarray], labelled: dict[tuple[str, str], str
     return None
 
 
-def _clearance(pos: dict[str, np.ndarray], segments: dict, r: float) -> float | None:
+def _clearance(pos: dict[str, np.ndarray], segments: dict, r: float, angles: bool = True) -> float | None:
     """The least free space between two nodes or between a link and a node it doesn't join, or None when it is
-    under the minimum or two links leave a node at nearly the same angle."""
+    under the minimum or (with `angles`) two links leave a node at nearly the same angle."""
     keys = list(pos)
     least = np.inf
     for i, a in enumerate(keys):
@@ -523,10 +551,12 @@ def _clearance(pos: dict[str, np.ndarray], segments: dict, r: float) -> float | 
         for x, y in ((a, b), (b, a)):
             v = pos[y][:2] - pos[x][:2]
             leaving.setdefault(x, []).append(float(np.arctan2(v[1], v[0])))
-    for angles in leaving.values():
-        angles = sorted(set(round(t, 9) for t in angles))  # a->b and b->a leave along one line, apart by side
-        for i, t in enumerate(angles):
-            gap = (angles[(i + 1) % len(angles)] - t) % (2 * np.pi) if len(angles) > 1 else 2 * np.pi
+    if not angles:  # a layered drawing's links fan out by design (a dense layer of a network)
+        return least
+    for ts in leaving.values():
+        ts = sorted(set(round(t, 9) for t in ts))  # a->b and b->a leave along one line, apart by side
+        for i, t in enumerate(ts):
+            gap = (ts[(i + 1) % len(ts)] - t) % (2 * np.pi) if len(ts) > 1 else 2 * np.pi
             if gap < MIN_ANGLE:
                 return None
     return least
@@ -607,6 +637,35 @@ def _refine(raw: dict, edges: list[tuple[str, str]], r: float, box: tuple[float,
 REFINED = 8  # arrangements refined when none is clear as it stands
 
 
+def _ruled(views: list[dict], g: nx.Graph, region: Region) -> tuple[dict, bool]:
+    """A circle, bipartite, layered or fixed layout's node positions in its own coordinates, and whether they
+    keep their shape (one scale for x and y) when fitted to the band."""
+    layout = views[0]["layout"]
+    nodes: dict[str, dict] = {}
+    for v in views:
+        nodes.update(v["nodes"])
+    order = [k for k in nodes if k in g]
+    if layout == "circle":
+        n = len(order)
+        return {k: np.array([np.cos(a), np.sin(a)]) for k, a in
+                zip(order, np.pi / 2 - 2 * np.pi * np.arange(n) / n)}, True
+    if layout == "fixed":
+        return {k: np.array(nodes[k]["at"], dtype=float) for k in order}, True
+    layers: dict[int, list[str]] = {}
+    for k in order:
+        layers.setdefault(nodes[k]["layer"], []).append(k)
+    keys = sorted(layers)
+    tallest = max(len(x) for x in layers.values())
+    across = len(keys) * 0.9 <= region.w or region.w >= region.h  # columns left to right, else rows top down
+    out = {}
+    for li, layer in enumerate(keys):
+        members = layers[layer]
+        for j, k in enumerate(members):
+            off = (j - (len(members) - 1) / 2) * (1.0 if tallest > 1 else 0.0)
+            out[k] = np.array([li, -off]) if across else np.array([off, -li])
+    return out, False
+
+
 def graph_positions(views: list[dict], region: Region) -> GraphLayout:
     """One layout for every node and link any snapshot shows, so nodes stay put while the graph is explored."""
     g = nx.Graph()
@@ -628,14 +687,15 @@ def graph_positions(views: list[dict], region: Region) -> GraphLayout:
             if label:
                 labelled[(a, b)] = str(label)
     band = Region(region.cx, region.top - title, region.w, region.h - title)
-    raws = _candidates(g)
+    layout = views[0]["layout"]
+    ruled = layout != "graph"
     edges = list(g.edges)
     best = None
 
     def consider(pos: dict, r: float) -> None:
         nonlocal best
         segments = _link_segments(pos, links, r, directed)
-        if (room := _clearance(pos, segments, r)) is None:
+        if (room := _clearance(pos, segments, r, angles=layout not in ("layered", "bipartite"))) is None:
             return
         for font in dict.fromkeys((label_font(r), LABEL_FONT)):  # larger labels with larger nodes, if they fit
             spots = place_labels(pos, labelled, segments, r, band, font)
@@ -649,6 +709,28 @@ def graph_positions(views: list[dict], region: Region) -> GraphLayout:
 
     least = node_r(views)
     radii = [r for r in GRAPH_RS if r >= least] or [least]
+    if ruled:  # placed by rule (or by the program): fitted to the band, never moved to get clear
+        raw, keep = _ruled(views, g, region)
+        for r in radii:
+            w, h = region.w - 2 * r - 0.1, region.h - title - 2 * r - 0.1
+            if h <= 0:
+                continue
+            pts = np.array(list(raw.values()))
+            span = np.maximum(np.ptp(pts, axis=0), 1e-9)
+            if keep:  # one scale, so a circle stays round and the program's drawing keeps its shape
+                k = min(w / span[0], h / span[1])
+                w, h = (span[0] * k if np.ptp(pts[:, 0]) > 1e-9 else 0.0), (span[1] * k if np.ptp(pts[:, 1]) > 1e-9 else 0.0)
+            else:  # a layer's nodes spread no further apart than the frame's width allows a row of them
+                w = w if np.ptp(pts[:, 0]) > 1e-9 else 0.0
+                h = h if np.ptp(pts[:, 1]) > 1e-9 else 0.0
+            consider(_stretch(raw, region.cx, cy, w, h), r)
+        if best is None:
+            what = f"{len(g)} nodes and {g.number_of_edges()} links" + (" with their labels" if labelled else "")
+            raise PictureError(f"the {layout} layout of {what} can't be drawn clearly in a band {region.w:.1f} wide "
+                               f"and {region.h:.1f} tall: links pass too near nodes they don't join, or nodes "
+                               "crowd; use fewer nodes or move them apart")
+        return best[1]
+    raws = _candidates(g)
     for r in radii:
         # each arrangement stretched to fill the band (a portrait band is wide and short, so one uniform scale
         # wastes most of it)
@@ -721,24 +803,51 @@ def tree_labels(view: dict, region: Region, scale: NodeScale) -> dict[str, np.nd
 # ---- the rest ----------------------------------------------------------------------------------------------
 
 
+ELLIPSIS_W = 0.32  # beside a window onto a long array: room for the "…" that says it goes on
+
+
+def cell_window(views: list[dict], width: float) -> int | None:
+    """How many cells a long array shows at once (a window that follows what the program marks or points at),
+    or None when every cell fits across."""
+    n = max(len(v["values"]) for v in views)
+    if width / n >= MIN_CELL - 1e-9:
+        return None
+    # two-digit indices (past 9) need a little more than a cell's usual width to stand apart
+    return max(3, int((width - 2 * ELLIPSIS_W) / (0.5 if n > 10 else CELL)))
+
+
 def _cell(views: list[dict], width: float) -> float:
     n = max(len(v["values"]) for v in views)
-    return min(MAX_CELL, width / n)
+    k = cell_window(views, width)
+    return min(MAX_CELL, width / n if k is None else (width - 2 * ELLIPSIS_W) / k)
 
 
 def cell_size(views: list[dict], region: Region) -> float:
-    n = max(len(v["values"]) for v in views)
     size = min(_cell(views, region.w), region.h - _cells_height(views, 0.0) + 1e-9)
     if size < MIN_CELL:
-        raise PictureError(f"{n} cells don't fit across the frame; at most {int(region.w / MIN_CELL)}")
+        raise PictureError(f"the array needs {_cells_height(views, MIN_CELL):.1f} units of height and gets "
+                           f"{region.h:.1f}")
     return size
 
 
-def check_code(views: list[dict], region: Region) -> None:
-    longest = max(len(line) for v in views for line in v["lines"])
-    fits = int((region.w - 0.3) / CODE_CHAR_W)
-    if longest > fits:
-        raise PictureError(f"a code line is {longest} characters; at most {fits} fit across the frame")
+def cell_starts(views: list[dict], k: int) -> list[int]:
+    """Each snapshot's first shown cell: the window moves as little as it can to keep the marked and pointed-at
+    cells in view."""
+    out, s = [], 0
+    for v in views:
+        n = len(v["values"])
+        focus = sorted({int(i) for i in v["marks"]} | set(v["pointers"].values()))
+        if focus:
+            lo, hi = focus[0], focus[-1]
+            if hi - lo + 1 > k:
+                s = lo
+            elif lo < s:
+                s = lo
+            elif hi >= s + k:
+                s = hi - k + 1
+        s = max(0, min(s, n - k))
+        out.append(s)
+    return out
 
 
 @dataclass
@@ -750,7 +859,8 @@ class PictureLayout:
     labels: dict[str, dict[str, np.ndarray]] = field(default_factory=dict)  # a graph's link labels, by "a>b"
     label_font: dict[str, int] = field(default_factory=dict)
     untitled: frozenset = frozenset()
-    math: dict = field(default_factory=dict)  # an axes, Venn or geometry view's layout (scene/math_layout.py)  # views whose titles were left out to give the picture room
+    math: dict = field(default_factory=dict)  # an axes, Venn or geometry view's layout (scene/math_layout.py)
+    windows: dict = field(default_factory=dict)  # a long array's window: (cells shown, each snapshot's first)
 
 
 def without_titles(snaps: list[dict], names) -> list[dict]:
@@ -788,14 +898,34 @@ def plan(snaps: list[dict], width: float, height: float, top: float) -> PictureL
     return layout
 
 
+def view_groups(snaps: list[dict]) -> list[list[int]]:
+    """The snapshots in runs that show the same views: a view made later (a formula, a code panel) starts a new
+    run, so the picture before it gets the whole frame instead of leaving that view's band empty."""
+    groups: list[list[int]] = []
+    last = None
+    for i, s in enumerate(snaps):
+        names = tuple(s["views"])
+        if names != last:
+            groups.append([])
+            last = names
+        groups[-1].append(i)
+    return groups
+
+
+def plan_groups(snaps: list[dict], width: float, height: float, top: float) -> list[tuple[list[int], PictureLayout]]:
+    """A layout for each run of snapshots with the same views (view_groups), each as large as its views allow: the
+    picture shrinks, animated, when a view joins it. PictureError if any run can't be drawn."""
+    return [(g, plan([snaps[i] for i in g], width, height, top)) for g in view_groups(snaps)]
+
+
 def _plan(snaps: list[dict], width: float, height: float, top: float) -> PictureLayout:
     regions = plan_regions(snaps, width, height, top)
-    graph_pos, cell, scales, labels, fonts, maths = {}, {}, {}, {}, {}, {}
+    graph_pos, cell, scales, labels, fonts, maths, windows = {}, {}, {}, {}, {}, {}, {}
     for name, region in regions.items():
         views = [s["views"][name] for s in snaps if name in s["views"]]
         kind = views[0]["kind"]
         try:
-            if kind == "nodes" and views[0]["layout"] == "graph":
+            if kind == "nodes" and views[0]["layout"] in GRAPH_LAYOUTS:
                 g = graph_positions(views, region)
                 graph_pos[name], labels[name], fonts[name] = g.pos, g.labels, g.font
                 scales[name] = NodeScale(NODE_UNIT, g.r, 0.0, 0.0)
@@ -806,12 +936,12 @@ def _plan(snaps: list[dict], width: float, height: float, top: float) -> Picture
                     if tree_labels(v, region, scales[name]) is None:
                         raise PictureError(f"a link label can't be placed clear of the tree in snapshot {i + 1}; "
                                            "use shorter labels or fewer nodes")
-            elif kind in MATH_KINDS:
+            elif kind in MATH_KINDS or kind in TEXT_KINDS:
                 maths[name] = _view_layouts()[kind][1](views, region)
             elif kind == "cells":
                 cell[name] = cell_size(views, region)
-            elif kind == "code":
-                check_code(views, region)
+                if (k := cell_window(views, region.w)) is not None:
+                    windows[name] = (k, cell_starts(views, k))
         except PictureError as e:
             others = [f"{_WHAT[snaps_kind]} {regions[n].h:.1f}" for n in regions if n != name
                       for snaps_kind in [next(s["views"][n]["kind"] for s in snaps if n in s["views"])]]
@@ -824,4 +954,4 @@ def _plan(snaps: list[dict], width: float, height: float, top: float) -> Picture
                 raise PictureError(f"{e}; use fewer links or nodes, or give the picture the whole frame (it shares "
                                    "the frame whenever the video also shows a formula or note)") from e
             raise
-    return PictureLayout(regions, graph_pos, cell, scales, labels, fonts, math=maths)
+    return PictureLayout(regions, graph_pos, cell, scales, labels, fonts, math=maths, windows=windows)
