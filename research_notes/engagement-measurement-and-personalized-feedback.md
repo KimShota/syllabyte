@@ -212,6 +212,8 @@ A 2026 systematic review of 42 engagement-prediction studies identified heavy de
 
 StudentLife followed 48 college students over ten weeks and found associations between smartphone-derived behavior and educational or wellbeing outcomes. It supports the feasibility of broader sensing research, but it did not establish a moment-to-moment video-engagement detector. [Wang et al., 2014](https://users.ece.utexas.edu/~ethomaz/courses/asr/papers/health/student-life.pdf).
 
+A detailed, evidence-based design for camera sensing (what to measure, how to analyse it, what feedback to give and when, consent, and a staged evaluation) is in [Camera-based attention sensing](camera-based-attention-sensing.md).
+
 If camera sensing is added, compare a model using behavior and check-ins with the same model plus camera features. Measure incremental decision quality, false alerts, missingness, and burden. Treat failed tracking as missing data, not disengagement. Keep learning available without camera participation and specify what data is retained.
 
 ### Watching inside the app versus other apps

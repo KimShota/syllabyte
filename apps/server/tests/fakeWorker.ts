@@ -9,7 +9,7 @@ type Server = ReturnType<typeof makeServer>;
 
 export interface Job {
   id: string;
-  kind: "syllabus" | "deck_read" | "placement" | "deck" | "question" | "link_pass" | "video" | "question_bank";
+  kind: "syllabus" | "deck_read" | "placement" | "deck" | "question" | "link_pass" | "video" | "question_bank" | "misconception";
   payload: Record<string, any>;
   file_name: string | null;
 }
@@ -111,6 +111,18 @@ export function videoOf(p: Record<string, any>) {
   };
 }
 
+/** The misconception job: a video like videoOf's, with item ids of its own (its checkpoint question is the follow-up). */
+export function clipOf(p: Record<string, any>) {
+  const v = videoOf(p);
+  const tag = `mc-${String(p.clip_key).replace(/[^A-Za-z0-9]/g, "-")}`;
+  const items = v.items.map((i) => ({ ...i, id: `${tag}-${i.id}` }));
+  return {
+    ...v,
+    video: { ...v.video, checkpoint: { ...v.video.checkpoint, item_id: items[0].id }, next_session_item_id: items[1].id, prove_it_item_id: items[2].id },
+    items,
+  };
+}
+
 /** The fake worker: claims jobs and answers them the way ingestion_agent/worker.py would. */
 export async function work(
   s: Server,
@@ -137,11 +149,11 @@ export async function work(
       result = questionOf(job.payload);
     } else if (job.kind === "question_bank") {
       result = questionBankOf(job.payload);
-    } else if (job.kind === "video") {
+    } else if (job.kind === "video" || job.kind === "misconception") {
       for (const name of ["video.mp4", "poster.jpg", "captions.vtt"]) {
         expect((await s.worker.put(`/api/worker/jobs/${job.id}/files/${name}`, new TextEncoder().encode(`${job.id}:${name}`))).status).toBe(200);
       }
-      result = videoOf(job.payload);
+      result = job.kind === "video" ? videoOf(job.payload) : clipOf(job.payload);
     } else {
       result = { links: opts.links?.(job.payload) ?? [] };
     }

@@ -1,4 +1,5 @@
 import { learningApi, validateLearningContext } from "./learning";
+import { misconceptionApi, requestMisconceptionClip, wantsMisconceptionClip } from "./misconception";
 import { INSTRUMENTS_VERSION } from "../content/instruments";
 import { track } from "../events";
 import { fixtures, itemById, lectureByN, slideText, slideUrl, topicById, videoById } from "../fixtures";
@@ -346,6 +347,7 @@ function precheck(): PrecheckView | null {
 
 export const mockApi: Api = {
   ...learningApi((videoId) => mockApi.markWatched(videoId)),
+  ...misconceptionApi,
   async getMe() {
     levelNewKus();
     const s = S();
@@ -793,6 +795,10 @@ export const mockApi: Api = {
     const correct = a.choice === item.correct_index;
     const response = addResponse(item, a.choice, { confidence: a.confidence, hintUsed: a.hintUsed, latencyMs: a.latencyMs });
     mutate(() => { response.attempt_id = a.attemptId; response.learning_session_id = a.learning?.sessionId; response.video_id = video.id; });
+    // wrong while certain: a misconception, so a clip that addresses it is made (plan: "Misconception clips")
+    if (wantsMisconceptionClip({ correct, confidence: a.confidence, hintUsed: a.hintUsed })) {
+      requestMisconceptionClip({ videoId: video.id, itemId: item.id, choice: a.choice, sessionId: a.learning?.sessionId ?? null });
+    }
     const queued = correct && a.confidence === "guess";
     if (queued) mutate((s) => { s.flags[`guess:${a.videoId}`] = true; });
     track("checkpoint_answered", { type: "item", id: item.id }, { correct, confidence: a.confidence, hint_used: a.hintUsed, latency_ms: a.latencyMs });
@@ -960,7 +966,7 @@ export const mockApi: Api = {
     return {
       profile: { levels: s.levels, made: s.made, sittings: s.sittings, overall_level: overall(), consent: s.consent, condition: s.condition },
       responses: s.responses, events: s.events, notes: s.notes, self_explanations: s.self_explanations, settings: s.settings,
-      study: s.study, learning_sessions: s.learning_sessions,
+      study: s.study, learning_sessions: s.learning_sessions, misconception_requests: s.misconception_requests ?? [],
     };
   },
 

@@ -2,8 +2,9 @@ import { randomUUID } from "node:crypto";
 import type { CourseListItem } from "@syllabyte/core/api/types";
 import { assembleCourse, type DeckResult } from "@syllabyte/core/logic/assemble";
 import { videoRequests, type VideoRequest } from "@syllabyte/core/logic/videoRequests";
-import type { DemoState, Fixtures, Item, ItemTier, Level, QuestionNeed, Video } from "@syllabyte/core/types";
+import type { DemoState, Fixtures, Item, ItemTier, Level, MisconceptionClip, MisconceptionRequest, QuestionNeed, Video } from "@syllabyte/core/types";
 import type { Db } from "./db";
+import { CLIP_ITEM } from "./uploads";
 
 /**
  * Uploaded courses (plan/slide-uploads-plan.md): reading and writing the course tables, and the course each student's
@@ -259,6 +260,38 @@ export class Courses {
     this.requestVideos(courseId, userId, videoRequests(this.fixtures(courseId).course, state.sittings, state.levels, state.made));
   }
 
+  /** After each request that changed a student's state: the videos and the misconception clips it now needs. */
+  recordNeeds(userId: string, state: DemoState): void {
+    this.recordVideoNeeds(userId, state);
+    this.recordMisconceptionNeeds(userId, state);
+  }
+
+  /**
+   * After a student's request: the misconception clips their answers asked for (engagement plan, "Misconception
+   * clips"), recorded once per course, question and wrong option. The brief (question, options, right and chosen
+   * option, explanation) is taken from the question the student actually answered, which only the server can see.
+   */
+  recordMisconceptionNeeds(userId: string, state: DemoState): void {
+    const courseId = this.courseOf(userId);
+    const wanted = (state.misconception_requests ?? []).filter((r) => typeof r.key === "string");
+    if (!courseId || !wanted.length) return;
+    const known = this.db.prepare("SELECT 1 FROM misconception_requests WHERE course_id = ? AND clip_key = ?");
+    const fresh = wanted.filter((r) => !known.get(courseId, r.key));
+    if (!fresh.length) return;
+    const items = new Map((this.fixturesFor(userId) ?? this.fixtures(courseId)).items.map((i) => [i.id, i]));
+    const insert = this.db.prepare(
+      "INSERT OR IGNORE INTO misconception_requests (course_id, clip_key, ku_id, level, brief_json, first_user_id, requested_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    );
+    for (const r of fresh) {
+      const item = items.get(r.item_id);
+      // only a real wrong option of a question this course has, with an id safe to use as a folder name
+      if (!item || !CLIP_ITEM.test(r.item_id) || r.key !== `${r.item_id}|${r.choice}` || !Number.isInteger(r.choice)) continue;
+      if (r.choice < 0 || r.choice >= item.options.length || r.choice === item.correct_index || ![1, 2, 3].includes(r.level)) continue;
+      const brief = { stem: item.stem, options: item.options, correct_index: item.correct_index, chosen: r.choice, explanation: item.explanation };
+      insert.run(courseId, r.key, r.ku_id, r.level, JSON.stringify(brief), userId, this.now());
+    }
+  }
+
   videoRequests(courseId: string): { ku_id: string; level: number; lecture_n: number; prereq_ids: string[]; status: string }[] {
     const rows = this.db
       .prepare("SELECT ku_id, level, lecture_n, prereq_ids, status FROM video_requests WHERE course_id = ? ORDER BY lecture_n, requested_at, ku_id, level")
@@ -308,8 +341,9 @@ export class Courses {
       video_json: string;
       items_json: string;
     }[];
-    if (!rows.length) return fx;
-    const { levels, made } = this.studentLevels(userId);
+    const { levels, made, requests } = this.studentLevels(userId);
+    const clips = this.clipsFor(id, requests);
+    if (!rows.length) return clips.length ? { ...fx, misconception_clips: clips } : fx;
     const videos: Video[] = [];
     const items: Item[] = [];
     for (const r of rows) {
@@ -322,22 +356,45 @@ export class Courses {
       videos.push({ ...(JSON.parse(r.video_json) as Video), id: r.ku_id, video_url: at("video.mp4"), poster_url: at("poster.jpg"), vtt_url: at("captions.vtt") });
       items.push(...(JSON.parse(r.items_json) as Item[]));
     }
-    if (!videos.length) return fx;
+    if (!videos.length) return clips.length ? { ...fx, misconception_clips: clips } : fx;
     const have = new Set(videos.map((v) => v.ku_id));
     return {
       ...fx,
+      misconception_clips: clips,
       course: { ...fx.course, kus: fx.course.kus.map((k) => (have.has(k.id) ? { ...k, video_id: k.id } : k)) },
       items: [...fx.items, ...items],
       videos,
     };
   }
 
-  /** The levels a student's answers set and the levels their videos were made at, from their saved state. */
-  private studentLevels(userId: string): { levels: Record<string, { level: Level }>; made: Record<string, Level> } {
+  /** The levels a student's answers set, the levels their videos were made at, and their clip requests, from their saved state. */
+  private studentLevels(userId: string): { levels: Record<string, { level: Level }>; made: Record<string, Level>; requests: MisconceptionRequest[] } {
     const courseId = this.courseOf(userId);
     const row = courseId === null ? undefined : (this.db.prepare("SELECT json FROM course_state WHERE user_id = ? AND course_id = ?").get(userId, courseId) as { json: string } | undefined);
-    if (!row) return { levels: {}, made: {} };
+    if (!row) return { levels: {}, made: {}, requests: [] };
     const s = JSON.parse(row.json) as Partial<DemoState>;
-    return { levels: (s.levels ?? {}) as Record<string, { level: Level }>, made: s.made ?? {} };
+    return { levels: (s.levels ?? {}) as Record<string, { level: Level }>, made: s.made ?? {}, requests: s.misconception_requests ?? [] };
+  }
+
+  /** The made clips this student asked for, with links signed for them (only theirs: the course data stays small). */
+  private clipsFor(courseId: string, requests: MisconceptionRequest[]): MisconceptionClip[] {
+    if (!requests.length) return [];
+    const get = this.db.prepare("SELECT video_json, items_json FROM misconception_clips WHERE course_id = ? AND clip_key = ?");
+    return [...new Set(requests.map((r) => r.key))].flatMap((key) => {
+      const row = get.get(courseId, key) as { video_json: string; items_json: string } | undefined;
+      if (!row) return [];
+      const [itemId, choiceText] = key.split("|");
+      const choice = Number(choiceText);
+      const base = `/api/media/clips/${courseId}/${encodeURIComponent(itemId)}/${choice}`;
+      const sig = this.mediaSigner(`clip:${courseId}/${itemId}__${choice}`);
+      const at = (name: string) => `${base}/${name}${sig ? `?${sig}` : ""}`;
+      const video = JSON.parse(row.video_json) as Video;
+      const items = JSON.parse(row.items_json) as Item[];
+      return [{
+        key, item_id: itemId, choice,
+        video: { ...video, id: `${itemId}__${choice}`, video_url: at("video.mp4"), poster_url: at("poster.jpg"), vtt_url: at("captions.vtt") },
+        check_item: items.find((i) => i.id === video.checkpoint?.item_id) ?? null,
+      }];
+    });
   }
 }

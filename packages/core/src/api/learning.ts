@@ -163,6 +163,9 @@ export function learningApi(markWatched: (videoId: string) => Promise<void>): Pi
           const watched = [...visits].reverse().find((v) => v.completed || v.coverage >= DRIFT_POLICY.earlyCoverage);
           const target = watched ? videoById(watched.videoId) : null;
           prompt = newPrompt("drift_check", d.evidence, driftObservation(d.evidence), target ? recallUpTo(target, target.duration_s) : null, t);
+          // and the latest one they moved on from early, to check "I already know what those videos cover" against
+          const skipped = [...visits].reverse().find((v) => !v.completed && v.coverage < DRIFT_POLICY.earlyCoverage && v.videoId !== video.id);
+          prompt.skipped = skipped ? keyPoints(videoById(skipped.videoId)) : null;
         }
       }
       if (!prompt) return null;
@@ -174,13 +177,17 @@ export function learningApi(markWatched: (videoId: string) => Promise<void>): Pi
     async respondToLearningPrompt(context, promptId, response) {
       validateLearningContext(context);
       if (response.answer !== undefined && !["on_task", "drifted", "familiar", "searching"].includes(response.answer)) throw new Error("Invalid answer");
-      if (response.action !== undefined && !["continue", "rewatch", "replay", "pause"].includes(response.action)) throw new Error("Invalid action");
+      if (response.action !== undefined && !["continue", "rewatch", "replay", "pause", "watch", "jump"].includes(response.action)) throw new Error("Invalid action");
+      if (response.target !== undefined) videoById(response.target);
       const prompt = getState().learning_sessions[context.sessionId]?.prompts?.find((x) => x.id === promptId);
       if (!prompt) throw new Error("Prompt not found");
       // each part is recorded once: the first answer and the first action stand, including on retried requests
       mutateQuietly(() => {
         if (response.answer && !prompt.answer) prompt.answer = response.answer;
-        if (response.action && !prompt.action) prompt.action = response.action;
+        if (response.action && !prompt.action) {
+          prompt.action = response.action;
+          prompt.actionTarget = response.target ?? null;
+        }
         prompt.respondedAt ??= now();
       });
     },
@@ -327,6 +334,13 @@ function recallUpTo(video: Video, position: number): LearningPrompt["recall"] {
   if (!covered.length) return null;
   const shown = covered.slice(-2);
   return { videoId: video.id, title: video.short_title, points: shown.map((c) => c.text), replayFrom: start(shown[0]) };
+}
+
+/** A whole video's key points (at most three, in order): what it covers, to check a skipped video against. */
+function keyPoints(video: Video): LearningPrompt["skipped"] {
+  const start = (c: Video["claims"][number]) => video.segments[c.segment_idx]?.start ?? 0;
+  const points = [...video.claims].sort((a, b) => start(a) - start(b)).slice(0, 3).map((c) => c.text);
+  return points.length ? { videoId: video.id, title: video.short_title, points, replayFrom: 0 } : null;
 }
 
 const clock = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;

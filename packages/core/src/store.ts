@@ -32,6 +32,7 @@ export function freshState(now = Date.now()): DemoState {
     upcoming_lecture: null,
     responses: [],
     learning_sessions: {},
+    misconception_requests: [],
     playlist: { entries: [], manual_order: null, built_at_week: 1 },
     watched: {},
     next_session: [],

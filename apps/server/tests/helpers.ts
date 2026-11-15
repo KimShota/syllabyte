@@ -17,7 +17,7 @@ export function makeServer(opts: { db?: Db; clock?: () => number; semesterStart?
   const courses = new Courses(db);
   const uploads = new Uploads(db, courses, mkdtempSync(tmpdir() + "/syllabyte-files-"), { ...DEFAULT_CAPS, ...opts.caps }, opts.clock);
   const runner = new StateRunner(db, { semesterStart: opts.semesterStart, courseFor: (id) => courses.fixturesFor(id), courseIdOf: (id) => courses.courseOf(id),
-    after: (id, state) => courses.recordVideoNeeds(id, state),
+    after: (id, state) => courses.recordNeeds(id, state),
     needs: (id, needs, lectures) => uploads.requestQuestions(id, needs, lectures),
   });
   const app = createApp({ db, auth, runner, courses, uploads, workerToken: WORKER_TOKEN, emailLinks: opts.emailLinks });

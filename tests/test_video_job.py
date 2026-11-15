@@ -219,3 +219,33 @@ def test_a_pipeline_that_never_announces_its_script_still_gets_its_questions(job
     pipeline = fake_pipeline([])
     result, _, _ = job(make_video=lambda ku, corpus, ku_dir, **kw: pipeline(ku, corpus, ku_dir, **{k: v for k, v in kw.items() if k != "on_script"}))
     assert result["video"] and result["items"]
+
+
+BRIEF = {"stem": "Where does 4 go in the tree 5-3-8?", "options": ["left of 3", "right of 3", "right of 8"], "correct_index": 1, "chosen": 2,
+         "explanation": "4 < 5 goes left, then 4 > 3 goes right."}
+CLIP_PAYLOAD = {**PAYLOAD, "prereqs": [], "clip_key": "cp-ku-bst-insert|2", "misconception": BRIEF}
+
+
+def test_a_misconception_clip_is_the_kus_video_built_around_the_wrong_answer(monkeypatch, tmp_path):
+    monkeypatch.setattr(video_job, "generate_video_gen", fake_gen())
+    monkeypatch.setattr("animation_agent.ui_manifest.ffprobe_duration", lambda path: 60.0)
+    calls, sent = [], {}
+    result = video_job.run_misconception_job(CLIP_PAYLOAD, DECK, tmp_path / "work", lambda name, f: sent.update({name: f.read_bytes()}),
+                                             make_video=fake_pipeline(calls), log=lambda m: None)
+    (call,) = calls
+    assert call["level"] == 2 and call["style"] == "dialogue" and call["visuals"] == "templates"
+    focus = call["focus"]
+    assert "THIS VIDEO ADDRESSES ONE MISCONCEPTION" in focus and BRIEF["stem"] in focus
+    assert "They chose C (right of 8). The right answer is B (right of 3)." in focus
+    assert (tmp_path / "work" / "mc-cp-ku-bst-insert-2" / "final.mp4").exists()  # its own folder, never the KU video's
+    assert set(sent) == {"video.mp4", "poster.jpg", "captions.vtt"}
+    ids = {i["id"] for i in result["items"]}
+    assert ids == {"mc-cp-ku-bst-insert-2-cp-ku-bst-insert", "mc-cp-ku-bst-insert-2-ns-ku-bst-insert", "mc-cp-ku-bst-insert-2-pi-ku-bst-insert"}
+    v = result["video"]
+    assert v["checkpoint"]["item_id"] in ids and v["next_session_item_id"] in ids and v["prove_it_item_id"] in ids
+    assert all(f["id"] in ids for f in result["flags"])
+
+
+def test_the_usual_video_job_passes_no_focus(job):
+    _, _, calls = job()
+    assert "focus" not in calls[0]

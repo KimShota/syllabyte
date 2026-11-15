@@ -361,6 +361,15 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
     return serveFile(c, path, MEDIA_TYPES[extname(name).toLowerCase()] ?? "application/octet-stream");
   });
 
+  /** A made misconception clip's file, signed into the course like a video's (src/courses.ts clipsFor). */
+  app.get("/api/media/clips/:course/:item/:choice/:name", (c) => {
+    const { course, item, choice, name } = c.req.param();
+    if (!auth.checkLink(`clip:${course}/${item}__${choice}`, c.req.query("e"), c.req.query("s"))) return c.json({ error: "This link has expired. Open the clip again from the app." }, 403);
+    const path = uploads.clipFile(course, item, Number(choice), name);
+    if (!path) return c.json({ error: "No such file." }, 404);
+    return serveFile(c, path, MEDIA_TYPES[extname(name).toLowerCase()] ?? "application/octet-stream");
+  });
+
   /** The file behind a link from the route above: no sign-in, the signature is the permission. */
   app.get("/api/file-links/:fileId", (c) => {
     const fileId = c.req.param("fileId");

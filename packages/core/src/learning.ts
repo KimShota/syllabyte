@@ -49,7 +49,8 @@ export interface AwayRecord { at: number; seconds: number; videoId: string | nul
 export type PromptKind = "drift_check" | "welcome_back";
 /** The answer to "where was your attention?" in a drift check (Seli et al. 2016: deliberate vs unintended drift). */
 export type DriftAnswer = "on_task" | "drifted" | "familiar" | "searching";
-export type PromptAction = "continue" | "rewatch" | "replay" | "pause";
+/** continue; rewatch the recalled video; replay from a point; pause; watch a skipped video; jump to a chosen video */
+export type PromptAction = "continue" | "rewatch" | "replay" | "pause" | "watch" | "jump";
 export interface LearningPrompt {
   id: string;
   kind: PromptKind;
@@ -60,6 +61,11 @@ export interface LearningPrompt {
   observation: string;
   /** the video to recall: the last one really watched (drift) or the one on screen (welcome back) */
   recall: { videoId: string; title: string; points: string[]; replayFrom: number } | null;
+  /** drift check: the latest video the student moved on from early, with its key points, to test "I already know what
+   *  those videos cover" against one of them (missing on prompts saved before it existed) */
+  skipped?: { videoId: string; title: string; points: string[]; replayFrom: number } | null;
+  /** the video a "watch" or "jump" action went to */
+  actionTarget?: string | null;
   shownAt: number;
   answer: DriftAnswer | null;
   action: PromptAction | null;

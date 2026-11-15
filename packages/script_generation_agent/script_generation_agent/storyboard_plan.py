@@ -392,6 +392,7 @@ def write_storyboard_planned(
     writer_model: str,
     picture=None,
     example=None,
+    focus: str | None = None,
 ) -> TemplatedDialogueScript:
     """storyboard.write_storyboard in two calls: the picture planned, settled and described, then the lines
     written to it (module docstring). Same arguments; `example` is the traced worked example (or None)."""
@@ -438,7 +439,8 @@ def write_storyboard_planned(
 
         example = plan_traced(ku, picture, text_context, model=model, manifest=manifest, images=image_blocks)
     ku_prompt = build_script_prompt(ku, text_context)
-    head = ku_prompt.replace("Write the 5-segment CLT-bLM script for this Knowledge Unit now.", "")
+    # `focus` (a misconception clip, misconception.py) steers every call that sees the KU: the picture and the lines
+    head = ku_prompt.replace("Write the 5-segment CLT-bLM script for this Knowledge Unit now.", "") + (focus or "")
 
     # 1-2 (snapshot-led, plan/snapshot-led-beats-plan.md): the program alone, and the beats built from its
     # snapshots with every show call made by code; a program that can't be drawn falls back to the steps below.

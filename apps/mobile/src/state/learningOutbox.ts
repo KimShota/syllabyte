@@ -9,7 +9,8 @@ import { createOutbox } from "./outbox";
 const KEY = "syllabyte.learningOutbox.v1";
 
 /** Learning writes that may wait for the network (state/outbox.ts): each is idempotent on the server. */
-type Queued = "recordLearningPlayback" | "recordLearningAway" | "respondToLearningPrompt" | "finishLearningSession" | "dismissReflection";
+type Queued = "recordLearningPlayback" | "recordLearningAway" | "respondToLearningPrompt" | "finishLearningSession" | "dismissReflection"
+  | "respondToMisconceptionClip";
 
 let signedIn: () => boolean = () => true;
 

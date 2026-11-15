@@ -193,7 +193,7 @@ CREATE TABLE IF NOT EXISTS ku_links (
 -- 'question_bank' (three reviewed tiers for a KU). The worker claims them over HTTP (src/uploads.ts).
 CREATE TABLE IF NOT EXISTS jobs (
   id          TEXT PRIMARY KEY,
-  kind        TEXT NOT NULL CHECK (kind IN ('syllabus', 'deck_read', 'placement', 'deck', 'question', 'link_pass', 'video', 'preview', 'question_bank')),
+  kind        TEXT NOT NULL CHECK (kind IN ('syllabus', 'deck_read', 'placement', 'deck', 'question', 'link_pass', 'video', 'preview', 'question_bank', 'misconception')),
   -- the syllabus upload, deck upload or deck it works on; a placement's student; a question's "ku_id|tier"
   target_id   TEXT NOT NULL,
   course_id   TEXT,
@@ -231,6 +231,32 @@ CREATE TABLE IF NOT EXISTS video_requests (
   requested_at  INTEGER NOT NULL,
   status        TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting', 'making', 'ready', 'failed')),
   PRIMARY KEY (course_id, ku_id, level)
+);
+-- Misconception clips students need (plan/engagement-feedback-implementation-plan.md, "Misconception clips"): a
+-- checkpoint question answered wrong with "Certain". One per course, question and wrong option (clip_key "item_id|choice"),
+-- shared by every student who makes that mistake. brief_json: the question, its options, the right and the chosen
+-- option and the explanation, as the job needs them. Made by a 'misconception' job; the result lands in misconception_clips.
+CREATE TABLE IF NOT EXISTS misconception_requests (
+  course_id     TEXT NOT NULL REFERENCES courses (id) ON DELETE CASCADE,
+  clip_key      TEXT NOT NULL,
+  ku_id         TEXT NOT NULL,
+  level         INTEGER NOT NULL CHECK (level IN (1, 2, 3)),
+  brief_json    TEXT NOT NULL,
+  first_user_id TEXT NOT NULL REFERENCES users (id),
+  requested_at  INTEGER NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting', 'making', 'ready', 'failed')),
+  PRIMARY KEY (course_id, clip_key)
+);
+-- A made misconception clip: a core Video without its urls, and the Items it carries (its checkpoint question is the
+-- follow-up). Files under <files>/clips/<course>/<item>__<choice>/ (src/uploads.ts).
+CREATE TABLE IF NOT EXISTS misconception_clips (
+  course_id  TEXT NOT NULL REFERENCES courses (id) ON DELETE CASCADE,
+  clip_key   TEXT NOT NULL,
+  video_json TEXT NOT NULL,
+  items_json TEXT NOT NULL,
+  flags_json TEXT NOT NULL DEFAULT '[]',
+  made_at    INTEGER NOT NULL,
+  PRIMARY KEY (course_id, clip_key)
 );
 -- A made video, one per course, KU and level. video_json: a core Video without its urls (the server adds them when it
 -- hands the course to a student); items_json: the Items it asks (checkpoint, next-session, prove-it). The files
@@ -272,7 +298,7 @@ function migrate(db: Db): void {
   if (tables.has("courses") && !columns(db, "courses").includes("topics_json")) db.exec("ALTER TABLE courses ADD COLUMN topics_json TEXT NOT NULL DEFAULT '[]'");
   if (tables.has("decks") && !columns(db, "decks").includes("suggestion_json")) db.exec("ALTER TABLE decks ADD COLUMN suggestion_json TEXT");
   const jobs = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'jobs'").get() as { sql: string } | undefined;
-  if (jobs && (!jobs.sql.includes("'preview'") || !jobs.sql.includes("'question_bank'"))) {
+  if (jobs && (!jobs.sql.includes("'preview'") || !jobs.sql.includes("'question_bank'") || !jobs.sql.includes("'misconception'"))) {
     // a CHECK constraint can't be altered: rebuild the table with the new kinds
     db.exec("SAVEPOINT preview_jobs");
     try {
