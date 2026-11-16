@@ -565,7 +565,8 @@ def _picture_number_problems(b: int, line: str, live: dict[str, _Live], before: 
     line = re.sub(r"\b[A-Za-z]+\d+\w*", " ", line)
     line = re.sub(r"\b(zero|one|two|three|four|five|six|seven|eight|nine) point "
                   r"(zero|one|two|three|four|five|six|seven|eight|nine)\b",
-                  lambda m: f"{_UNITS.index(m.group(1))}.{_UNITS.index(m.group(2))}", line, flags=re.I)
+                  lambda m: f"{_UNITS.index(m.group(1).lower())}.{_UNITS.index(m.group(2).lower())}", line,
+                  flags=re.I)
     tokens = _number_tokens(line)
     if _ARITHMETIC & {t for t in tokens if isinstance(t, str)}:
         return []

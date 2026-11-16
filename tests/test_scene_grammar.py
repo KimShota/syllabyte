@@ -679,6 +679,8 @@ def test_names_counts_questions_and_spoken_decimals_are_not_out_of_step():
     draws = [[[picture_call(RR)], ["p.show(snap='s6')"]]]
     assert _pic(draws, [["Four processes share the CPU; P3 runs until 117.", "Does P4 end at 121? It does: 121."]]) == []
     assert _pic(draws, [["P3 is in q4 after 117 and gets zero point seven of it... 117.", "P4 ends at 121."]]) == []
+    # runs/slang2: a line opening "Zero point five ..." crashed the lookup (the match ignores case, the list didn't)
+    assert _pic(draws, [["Zero point seven of it goes to P3 after 117.", "P4 ends at 121."]]) == []
 
 
 def test_a_snapshot_shown_before_an_earlier_one_the_video_shows_later_is_held_back():
