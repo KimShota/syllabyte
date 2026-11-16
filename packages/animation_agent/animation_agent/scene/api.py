@@ -30,7 +30,8 @@ MAX_NODES = 20  # the layout refuses what doesn't fit
 MAX_CELLS = 32  # past what fits across, a window follows the marked cells (scene/layout.py)
 MAX_CODE_LINES = 30  # a longer program scrolls with its current line (scene/text_layout.py)
 MAX_LABEL = 2  # characters in a cell: "10" is 0.35 units wide at the minimum font
-MAX_NODE_LABEL = 4  # a node grows to hold it (f(3), 'cat'), so fewer fit across
+MAX_NODE_LABEL = 4  # a graph node grows to hold it (f(3), 'cat'), so fewer fit across
+MAX_TREE_LABEL = 6  # a tree node's label is a pill sized to it, and the tree layout gives each node its own room
 MAX_TITLE = 18
 STYLES = ("current", "visited", "found", "compare", "red", "grey", "new", "blue")
 LAYOUTS = ("tree", "binary", "graph", "circle", "bipartite", "layered", "fixed")
@@ -57,17 +58,34 @@ def _label(v) -> str:
     return s
 
 
-def _node_label(v) -> str:
+def _node_label(v, limit: int = MAX_NODE_LABEL) -> str:
     s = INFINITY if (isinstance(v, float) and v == float("inf")) or v in ("INF", "inf", "Infinity") else str(v)
-    if len(s) > MAX_NODE_LABEL:
-        raise PictureError(f"node label {s!r} is longer than {MAX_NODE_LABEL} characters")
+    if len(s) > limit:
+        raise PictureError(f"node label {s!r} is longer than {limit} characters")
     return s
 
 
+# Colour words a planner reaches for, mapped to the style drawn in that colour (draw.STYLE_COLOUR). In runs/bench1
+# two of the ten pictures lost (merge sort 'teal', an ER diagram 'green') were refused on their last try for a colour
+# name alone; the colour is a detail, the picture is not.
+STYLE_ALIASES = {
+    "yellow": "current", "gold": "current", "highlight": "current", "active": "current",
+    "teal": "visited", "cyan": "visited", "done": "visited",
+    "green": "found", "ok": "found", "good": "found", "success": "found", "correct": "found",
+    "orange": "compare", "amber": "compare", "warn": "compare", "warning": "compare",
+    "pink": "red", "magenta": "red", "error": "red", "wrong": "red", "bad": "red",
+    "gray": "grey", "dim": "grey", "muted": "grey", "white": "grey", "black": "grey",
+    "purple": "blue", "violet": "blue", "navy": "blue", "indigo": "blue",
+}
+
+
 def _style(style):
-    if style is not None and style not in STYLES:
-        raise PictureError(f"unknown style {style!r}; use one of {', '.join(STYLES)}")
-    return style
+    if style is None or style in STYLES:
+        return style
+    alias = STYLE_ALIASES.get(str(style).strip().lower())
+    if alias is not None:
+        return alias
+    raise PictureError(f"unknown style {style!r}; use one of {', '.join(STYLES)}")
 
 
 class _View:
@@ -187,7 +205,8 @@ class Nodes(_View):
                 raise PictureError(f"{self.name}: a node holds 1-{MAX_KEYS} keys")
             node["keys"], node["label"] = ks, " ".join(ks)
         else:
-            node["label"] = _node_label(key if label is None else label)
+            node["label"] = _node_label(key if label is None else label,
+                                        MAX_NODE_LABEL if self.layout in GRAPH_LAYOUTS else MAX_TREE_LABEL)
         if self.layout == "fixed":
             old = self._nodes.get(key, {}).get("at")
             if at is None and old is None:
@@ -307,11 +326,11 @@ class Code(_View):
     def watch(self, name, value):
         """Shows a variable's value under the code (name and value at most 6 characters each)."""
         name = str(name)
-        if len(name) > MAX_WORD:
-            raise PictureError(f"{self.name}: a watched name is at most {MAX_WORD} characters ({name!r})")
+        if len(name) > MAX_WATCH_WORD:
+            raise PictureError(f"{self.name}: a watched name is at most {MAX_WATCH_WORD} characters ({name!r})")
         if name not in self._watch and len(self._watch) >= MAX_WATCHES:
             raise PictureError(f"{self.name}: at most {MAX_WATCHES} watched variables")
-        self._watch[name] = _word(value, what="a watched value")
+        self._watch[name] = _word(value, MAX_WATCH_WORD, what="a watched value")
 
     def unwatch(self, name=None):
         if name is None:
@@ -1414,7 +1433,10 @@ def space(name, x=(-2, 2), y=(-2, 2), z=(-2, 2), title=None, view=(-55, 24)):
 
 MAX_GRID_ROWS = 12  # the layout refuses (or turns) what doesn't fit
 MAX_GRID_COLS = 10
-MAX_WORD = 6  # characters in a table entry, a header, a timeline block or a memory value
+# characters in a table entry, a header or a memory value: the layouts measure them and refuse a table or a memory
+# diagram that doesn't fit, so this only stops sentences (6 refused 'saved FP' and '[1, 2, 3]' in runs/bench1)
+MAX_WORD = 10
+MAX_WATCH_WORD = 6  # a watched variable's name or value: the chips under a code panel are narrow
 
 
 def _word(v, limit: int = MAX_WORD, what: str = "an entry") -> str:
@@ -1459,8 +1481,9 @@ class Grid(_View):
 
     kind = "grid"
 
-    def __init__(self, name, rows, row_names=None, col_names=None, title=None, matrix=False):
+    def __init__(self, name, rows, row_names=None, col_names=None, title=None, matrix=False, turn=True):
         super().__init__(name, title)
+        self.turn = bool(turn)  # False: a picture of space (a plate, pixels, a board) is never drawn on its side
         rows = [list(r) for r in rows]
         if not 1 <= len(rows) <= MAX_GRID_ROWS:
             raise PictureError(f"{name}: 1-{MAX_GRID_ROWS} rows")
@@ -1541,19 +1564,19 @@ class Grid(_View):
                         for c, v in enumerate(row) if isinstance(v, (int, float)) and not isinstance(v, bool)
                         and math.isfinite(float(v))}
         return {"kind": self.kind, "title": self.title, "values": [[_word(v) for v in r] for r in self._raw],
-                "row_names": self.row_names, "col_names": self.col_names, "matrix": self.matrix,
+                "row_names": self.row_names, "col_names": self.col_names, "matrix": self.matrix, "turn": self.turn,
                 "marks": {f"{r},{c}": s for (r, c), s in self._marks.items()}, "heat": heat}
 
 
-def grid(name, rows, row_names=None, col_names=None, title=None, matrix=False):
-    return Grid(name, rows, row_names, col_names, title, matrix)
+def grid(name, rows, row_names=None, col_names=None, title=None, matrix=False, turn=True):
+    return Grid(name, rows, row_names, col_names, title, matrix, turn)
 
 
 SHAPES = ("box", "round", "diamond", "circle", "double", "cylinder", "document", "cloud", "person", "chip",
           "monitor", "lock", "server", "record")
 ARROW_KINDS = ("arrow", "line", "dashed", "inherit")  # an arrow, a plain line (an ER link), a dependency, UML's
-MAX_RECORD_FIELDS = 5  # hollow-headed "is a"
-MAX_FIELD_TEXT = 16
+MAX_RECORD_FIELDS = 6  # hollow-headed "is a"; a record's size is measured and the layout refuses one too big
+MAX_FIELD_TEXT = 20
 MAX_BOXES = 16  # the layout refuses what doesn't fit
 MAX_ARROW_LABEL = 14  # longer arrow labels are left out; one too long to fit beside its arrow is too
 MAX_BOX_TEXT = 14  # characters in a line of a box's text (two lines at most)
@@ -2001,6 +2024,7 @@ class Ref:
 
 
 MAX_FRAMES = 6  # the layout refuses what doesn't fit
+MAX_BOX_TITLE = 14  # 'make_counter()' (runs/bench1); the box is measured, and the layout refuses it if too wide
 MAX_OBJECTS = 6
 MAX_FIELDS = 5
 
@@ -2024,8 +2048,9 @@ class Memory(_View):
         if n >= (MAX_FRAMES if area == "stack" else MAX_OBJECTS):
             raise PictureError(f"{self.name}: at most {MAX_FRAMES} stack frames and {MAX_OBJECTS} heap objects")
         title = key if title is None else str(title)
-        if len(title) > 10:
-            raise PictureError(f"{self.name}: a frame's or object's title is at most 10 characters ({title!r})")
+        if len(title) > MAX_BOX_TITLE:
+            raise PictureError(f"{self.name}: a frame's or object's title is at most {MAX_BOX_TITLE} characters "
+                               f"({title!r})")
         self._boxes[key] = {"title": title, "area": area, "fields": {}, "style": None}
 
     def frame(self, key, title=None):

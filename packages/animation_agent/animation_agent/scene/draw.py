@@ -885,11 +885,12 @@ class PictureRunner:
         gaps = D.sequence_gaps(view, lay, snap)
         for i, actor in enumerate(view["actors"]):
             x = lay.x[i]
-            box = Rectangle(width=lay.box_w, height=D.ACTOR_H, stroke_color=WHITE, stroke_width=3, fill_color=BLACK,
-                            fill_opacity=1).move_to([x, lay.top - D.ACTOR_H / 2, 0])
+            box_w = lay.box_ws[i] if lay.box_ws else lay.box_w
+            box = Rectangle(width=box_w, height=D.ACTOR_H, stroke_color=WHITE, stroke_width=3, fill_color=BLACK,
+                            fill_opacity=1).move_to([x, lay.box_top(i) - D.ACTOR_H / 2, 0])
             out[f"{name}:actor:{i}"] = VGroup(box, Text(actor, font_size=FONT, color=WHITE).move_to(box))
             # broken round any label it would cross (a long label spans the lifelines between its ends)
-            y, pieces = lay.top - D.ACTOR_H, []
+            y, pieces = lay.box_top(i) - D.ACTOR_H, []
             for g0, g1 in sorted(gaps.get(i, []), key=lambda g: -g[1]):
                 if g1 < y - 0.05:
                     pieces.append(DashedLine([x, y, 0], [x, g1, 0], stroke_width=2, color=GREY_B, dash_length=0.1))
@@ -899,7 +900,8 @@ class PictureRunner:
             out[f"{name}:life:{i}"] = VGroup(*pieces)
         if lay.start[snap] > 0:  # older messages scrolled up out of view
             tri = Triangle(color=GREY_B, fill_color=GREY_B, fill_opacity=1).scale(0.07)
-            out[f"{name}:more"] = tri.move_to([lay.x[0] - lay.box_w / 2 + 0.08, lay.first_row - 0.06, 0])
+            first_w = lay.box_ws[0] if lay.box_ws else lay.box_w
+            out[f"{name}:more"] = tri.move_to([lay.x[0] - first_w / 2 + 0.08, lay.first_row - 0.06, 0])
         for key, m in view["messages"].items():
             if not lay.shown(m["row"], snap):
                 continue

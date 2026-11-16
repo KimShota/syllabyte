@@ -262,3 +262,53 @@ hide() to switch views; two program attempts (first refused an empty formula lin
 and no layout findings or remaining render issues. Critic visual alignment rose from 5 to 6 and accuracy from
 7 to 8, but the overall critique still failed. The graph also clips the negative part of S(x) because its
 vertical range starts at zero. This single run supports the layout improvement, not overall teaching quality.
+
+## The benchmark, run (2026-11-16, runs/bench1)
+
+80 hand-written topics, 2 for each of the 40 visual areas (benchmarks/visual-coverage/topics.json), through
+the real picture planner only (scripts/visual_benchmark.py: plan, render, judge, report; it resumes). $4.84 in all
+($4.14 planning, $0.70 for the critic judging contact sheets of the stills).
+
+- Picture drawn for **70/80 (88%)**, on the first program only 16/80. Critic: good 17, partial 53, none 10; mean 5.6.
+- 8 of the 10 lost were too wide for the 3.7-3.8-unit band (trees, a UML diagram, a form, actor names, a memory
+  diagram, a table beside code); 2 were a colour name ('teal', 'green') on the last try.
+- Partial pictures: the topic's standard picture not drawn though a view has it (a box plot without a box, Euler
+  without a slope field); numbers only in the captions; a picture that contradicts its caption; cramped axes.
+- The desk audit (section 2) was too kind: statistics, algorithms, data structures and AI scored 2.0-3.5 of 10.
+
+## Fixes (2026-11-16, no API spend)
+
+The width is the phone's: the 9:16 frame is 4.5 units across whatever the characters do (they sit in the band
+below), so the fixes use height and stop wasting width.
+- Colour words map to styles (teal -> visited, green -> found, purple -> blue...), not a refusal.
+- Trees: each node takes its own width (a wide parent widens only its own subtree), with a tighter pad only when the
+  usual one doesn't fit; B-tree key nodes no longer size the circles. Merge sort, a B-tree, a DOM tree and a game
+  tree now fit.
+- Sequence: each actor box as wide as its name; when they still don't fit, every other box drops half a row.
+- Flow: boxes never on screen together in one layer share a place (a removed box and its replacement); a layer too
+  wide splits onto rows, the arrows passing through slots. Record widths 6% wider (a field ran past its box).
+- Memory: too wide side by side -> stack frames above heap objects, each pointer in its own lane at the right.
+- Tables may use the band's spare edge (0.04, not 0.1) when only the spare is in the way.
+- Caps the layouts already measure were relaxed: table entries and memory values 10 characters (was 6), tree node
+  labels 6 (graph nodes stay 4), memory titles 14, records 6 fields of 20.
+- Brief: the topic's standard picture by topic (box plot, slope field, hash chains as a fixed layout, a ring, z and
+  w planes, address fields on a tape...), every number the caption relies on drawn, each snapshot showing its
+  change, at most 6-8 ticks.
+Offline on bench1's 30 refused programs: 18 now draw (was 0); 9 of the 10 lost topics have a program that draws
+(the closure's memory diagram stacked needs 5.6 units of height, 4.2 fit). 872 tests pass (13 new in
+tests/test_benchmark_fixes.py); all 49 worked examples render with no layout findings. Not yet measured live.
+
+## Targeted rerun (2026-11-16, runs/bench2, $1.49)
+
+The 10 lost topics and the 10 lowest scorers (all five 3s; of the ten 4s, the five the new brief names: hash
+chains, z^2, D4, IEEE, the heat map, so the choice favours the fixes).
+- Lost 10: drawn 0 -> 9, good 0 -> 2 (alpha-beta 7, B-tree 8), mean of drawn 5.8. Still lost: the closure (stacked
+  memory needs 5.1 of 4.2 units).
+- Low 10: all drawn both times, mean 3.5 -> 4.6, still no good. Hash chaining first fell back (the new advice drew
+  all 10 buckets down the frame; advice now says the buckets used, at most 6) and redrawn: partial 6.
+- Found and fixed after: (1) an empty tree snapshot crashed the render (old bug, the DOM topic); (2) a wide grid was
+  turned on its side even when it is a picture of space (the plate's hot top edge became the left column, bench1's
+  pixel grid too): square grids, heat maps and grid(..., turn=False) are never turned; (3) labels the layout leaves
+  out were silent: 36 of bench1's 118 drawable programs lost labels the captions rely on (Euler's 1.5 and 3.375, the
+  LP's constraint names, t=.05); they now go back to the planner as a problem (one redraw), except bare axis names.
+These three are not yet measured live. 876 tests pass.

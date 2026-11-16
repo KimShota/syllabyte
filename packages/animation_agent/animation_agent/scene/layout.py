@@ -95,7 +95,7 @@ def _heights(kind: str, views: list[dict], width: float) -> tuple[float, float]:
         return _view_layouts()[kind][0](views, width, title)
     if views[0]["layout"] in GRAPH_LAYOUTS:
         return title + LEVEL_H, title + width  # about square at most: taller only stretches the links
-    _unit, _gap, levels = _tree_shape(views, width)
+    _unit, _gap, levels, _pad = _tree_shape(views, width)
     level_h = LABELLED_LEVEL_H if _labelled(views) else MAX_LEVEL_H
     return title + LEVEL_H, title + (levels - 1) * level_h + 2 * MAX_R + 0.1
 
@@ -232,13 +232,26 @@ def _children(view: dict) -> tuple[dict[str, list], list[str]]:
     return kids, roots
 
 
-def _tree_units(view: dict) -> list[tuple[str, dict[str, tuple[float, int]], float, int]]:
-    """Each tree of the forest: (root, {node: (x in units from the tree's left, depth)}, width, depth)."""
+def _tree_units(view: dict, unit: float | None = None,
+                pad: float = None) -> list[tuple[str, dict[str, tuple[float, int]], float, int]]:
+    """Each tree of the forest: (root, {node: (x in units from the tree's left, depth)}, width, depth).
+
+    With `unit` (the leaf spacing in frame units), each node takes its own room: a circle one unit, a pill or a row
+    of B-tree keys its drawn width plus NODE_PAD, and a parent wider than its children's span widens its subtree.
+    In runs/bench1 every leaf was given the widest node's room, so merge sort's split tree (one 4-key node above
+    seven 1-key leaves), a B-tree and a DOM tree ('body' over 'h1') were refused as too wide."""
     kids, roots = _children(view)
     binary = view["layout"] == "binary"
+
+    def room(k: str) -> float:
+        if unit is None:
+            return 1.0
+        return max(1.0, (node_w(view["nodes"][k]) + (NODE_PAD if pad is None else pad)) / unit)
+
     trees = []
     for root in roots:
         pos: dict[str, tuple[float, int]] = {}
+        order: list[str] = []
         cursor = [0.0]
         seen: set[str] = set()
 
@@ -246,6 +259,8 @@ def _tree_units(view: dict) -> list[tuple[str, dict[str, tuple[float, int]], flo
             if k in seen:
                 raise PictureError(f"node {k} is its own ancestor: a tree can't have a cycle")
             seen.add(k)
+            start, first = cursor[0], len(order)
+            own = room(k)
             ordered = [c for _s, _o, c in sorted(kids[k])]
             slots = {(s if binary else None): c for s, _o, c in sorted(kids[k])}
             if binary:
@@ -257,20 +272,32 @@ def _tree_units(view: dict) -> list[tuple[str, dict[str, tuple[float, int]], flo
                         xs.append(cursor[0] + 0.25)
                         cursor[0] += 0.5
                 if not ordered:
-                    xs = [cursor[0] + 0.5]
-                    cursor[0] += 1
+                    xs = [cursor[0] + own / 2]
+                    cursor[0] += own
             else:
                 xs = [place(c, depth + 1) for c in ordered]
                 if not xs:
-                    xs = [cursor[0] + 0.5]
-                    cursor[0] += 1
+                    xs = [cursor[0] + own / 2]
+                    cursor[0] += own
             x = (min(xs) + max(xs)) / 2
+            if ordered and cursor[0] - start < own:  # the parent is wider than its children: centre them under it
+                extra = own - (cursor[0] - start)
+                for d in order[first:]:
+                    px, pd = pos[d]
+                    pos[d] = (px + extra / 2, pd)
+                x += extra / 2
+                cursor[0] = start + own
             pos[k] = (x, depth)
+            order.append(k)
             return x
 
         place(root, 0)
         trees.append((root, pos, cursor[0], max(d for _x, d in pos.values()) + 1))
     return trees
+
+
+NODE_PAD = 0.12  # free space beside a pill or a row of keys, so neighbours never touch
+TIGHT_PAD = 0.06  # the same when nothing else fits: merge sort's 7 one-key leaves need it in a 3.8-wide band
 
 
 @dataclass
@@ -283,6 +310,7 @@ class NodeScale:
     level_h: float
     top: float
     gap: float = TREE_GAP  # leaf units between trees: less when a forest would otherwise wrap
+    pad: float = NODE_PAD  # free space beside a pill or a row of keys (_tree_units)
 
 
 def _rows(trees: list, per_row: float, gap: float = TREE_GAP) -> list[list]:
@@ -294,7 +322,9 @@ def _rows(trees: list, per_row: float, gap: float = TREE_GAP) -> list[list]:
             rows.append([])
             used, extra = 0.0, 0.0
         if t[2] > per_row + 1e-9:
-            raise PictureError(f"a tree is {t[2]:.0f} nodes wide; at most {int(per_row)} fit across the frame")
+            raise PictureError(f"a tree is {t[2]:.0f} leaf widths across and {per_row:.0f} fit across the frame: "
+                               "use fewer leaves or shorter labels; numbers held as keys=[...] (a row of "
+                               "boxes) take less room than a circle each")
         rows[-1].append(t)
         used += extra + t[2]
     return rows
@@ -309,7 +339,7 @@ def node_r(views: list[dict]) -> float:
     tree, a label longer than 2 characters is drawn in a pill instead (pill_w), so only the short ones count."""
     tree = views[0]["layout"] not in GRAPH_LAYOUTS
     longest = max((len(n["label"]) for v in views for n in v["nodes"].values()
-                   if not (tree and len(n["label"]) > 2)), default=1)
+                   if not (tree and (len(n["label"]) > 2 or n.get("keys")))), default=1)  # keys: a box (node_w)
     return max(NODE_R, float(np.hypot(NODE_CHAR_W * longest / 2, NODE_TEXT_H / 2)) + 0.03)
 
 
@@ -348,25 +378,40 @@ def _labelled(views: list[dict]) -> bool:
     return any(label for v in views for _a, _b, _s, label, _slot in v["links"])
 
 
-def _tree_shape(views: list[dict], width: float) -> tuple[float, float, int]:
-    """A forest view's leaf unit, gap between trees and levels in all (rows of trees stack) at this width."""
-    forests = [_tree_units(v) for v in views]
-    least = max(NODE_UNIT, node_r(views) / 0.42, widest_pill(views) + 0.06)  # a leaf's room holds its node
+def _tree_shape(views: list[dict], width: float) -> tuple[float, float, int, float]:
+    """A forest view's leaf unit, gap between trees, levels in all (rows of trees stack) and the space beside a
+    wide node, at this width. The unit is the largest (up to MAX_UNIT) at which the widest snapshot fits; each node
+    takes its own room (_tree_units), with the tighter pad only when the usual one doesn't fit."""
+    least = max(NODE_UNIT, node_r(views) / 0.42)  # a leaf's room holds a circle
+    top = max(least, LABELLED_UNIT if _labelled(views) else MAX_UNIT)
+    most = max((len(_tree_units(v)) for v in views), default=1)
+
+    def widest(u: float, gap: float, pad: float) -> float:
+        return max((sum(t[2] for t in ts) + gap * (len(ts) - 1)
+                    for ts in (_tree_units(v, u, pad) for v in views) if ts), default=1.0)
+
+    pad = NODE_PAD if least * widest(least, 0.0, NODE_PAD) <= width else TIGHT_PAD
     # the gap between trees shrinks (to none) before a forest wraps onto a second row, which reads as children
-    leaves = max((sum(t[2] for t in ts) for ts in forests if ts), default=1.0)
-    most = max((len(ts) for ts in forests), default=1)
-    slack = width / least - leaves
-    gap = TREE_GAP if most <= 1 else max(0.0, min(TREE_GAP, slack / (most - 1)))
-    widest = max((sum(t[2] for t in ts) + gap * (len(ts) - 1) for ts in forests if ts), default=1.0)
-    unit = max(least, min(LABELLED_UNIT if _labelled(views) else MAX_UNIT, width / widest))
+    gap = TREE_GAP if most <= 1 else max(0.0, min(TREE_GAP, (width / least - widest(least, 0.0, pad)) / (most - 1)))
+    if top * widest(top, gap, pad) <= width:
+        unit = top
+    elif least * widest(least, gap, pad) > width:
+        unit = least
+    else:  # the room a node takes in units shrinks as the unit grows, so search the frame width it needs
+        lo, hi = least, top
+        for _ in range(24):
+            mid = (lo + hi) / 2
+            lo, hi = (mid, hi) if mid * widest(mid, gap, pad) <= width else (lo, mid)
+        unit = lo
     per_row = width / unit
-    levels = max((sum(max(t[3] for t in row) for row in _rows(ts, per_row, gap)) for ts in forests if ts), default=1)
-    return unit, gap, levels
+    levels = max((sum(max(t[3] for t in row) for row in _rows(ts, per_row, gap))
+                  for ts in (_tree_units(v, unit, pad) for v in views) if ts), default=1)
+    return unit, gap, levels, pad
 
 
 def node_scale(views: list[dict], region: Region) -> NodeScale:
     title = _title(views)
-    unit, gap, levels = _tree_shape(views, region.w)
+    unit, gap, levels, pad = _tree_shape(views, region.w)
     r = max(node_r(views), min(MAX_R, unit * 0.42))
     room = region.h - title - 2 * r - 0.08
     most_h = LABELLED_LEVEL_H if _labelled(views) else MAX_LEVEL_H
@@ -376,7 +421,7 @@ def node_scale(views: list[dict], region: Region) -> NodeScale:
                            f"{int(room / MIN_LEVEL_H) + 1} fit; use a smaller example")
     used = (levels - 1) * level_h + 2 * r
     top = region.top - title - (region.h - title - used) / 2 - r
-    return NodeScale(unit, r, level_h, top, gap)
+    return NodeScale(unit, r, level_h, top, gap, pad)
 
 
 def layout_nodes(view: dict, region: Region, graph_pos: dict[str, np.ndarray] | None,
@@ -385,7 +430,9 @@ def layout_nodes(view: dict, region: Region, graph_pos: dict[str, np.ndarray] | 
         return {k: graph_pos[k] for k in view["nodes"]}
     out: dict[str, np.ndarray] = {}
     depth0 = 0
-    for row in _rows(_tree_units(view), region.w / scale.unit, scale.gap):
+    for row in _rows(_tree_units(view, scale.unit, scale.pad), region.w / scale.unit, scale.gap):
+        if not row:  # a snapshot before the tree's first node (runs/bench2: a DOM tree's render crashed on it)
+            continue
         width = (sum(t[2] for t in row) + scale.gap * (len(row) - 1)) * scale.unit
         left = region.cx - width / 2
         for _root, pos, w, _d in row:
