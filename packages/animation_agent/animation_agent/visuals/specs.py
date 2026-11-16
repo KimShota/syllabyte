@@ -14,6 +14,7 @@ from __future__ import annotations
 import copy
 import functools
 import re
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
@@ -2959,6 +2960,12 @@ def _picture_problem(source: str, area: str) -> str | None:
         plan_groups(result.snapshots, *_dialogue_area(area))
     except PictureError as e:
         return f"the picture doesn't fit the frame: {e}"
+    except Exception as e:  # a layout bug must cost one redraw, never the video (runs/bench3: an empty flow
+        # diagram raised ValueError out of the checker and ended a whole run)
+        print(f"[picture] the layout failed on a program that runs: {type(e).__name__}: {e}", file=sys.stderr,
+              flush=True)
+        return (f"the picture can't be laid out ({type(e).__name__}): draw every view's first content before its "
+                "first snap(), and keep to the calls the brief shows")
     return None
 
 

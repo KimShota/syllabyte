@@ -192,3 +192,23 @@ def test_labels_left_out_are_sent_back_to_the_planner():
     problems = dropped_labels(snaps)
     assert problems and "'store 6'" in problems[0]
     assert dropped_labels(run("c = cells('c', [1, 2]); snap()")) == []
+
+
+def test_a_snapshot_before_a_flow_diagrams_first_box_lays_out():
+    # runs/bench3: a flow view snapped empty raised ValueError out of the checker and ended the whole run
+    snaps = run("f = flow('f')\nsnap()\nf.box('a', 'start')\nsnap()")
+    groups = L.plan_groups(snaps, *DIALOGUE)
+    assert len(groups) >= 1
+
+
+def test_a_layout_bug_is_a_refusal_not_a_crash(monkeypatch):
+    from animation_agent.visuals import specs
+
+    def boom(*_a, **_k):
+        raise ValueError("max() iterable argument is empty")
+
+    monkeypatch.setattr("animation_agent.scene.layout.plan_groups", boom)
+    specs._picture_problem.cache_clear()
+    problem = specs._picture_problem("c = cells('c', [1, 2])\nsnap()", "full")
+    specs._picture_problem.cache_clear()
+    assert problem is not None and "can't be laid out" in problem

@@ -436,6 +436,8 @@ def border_point(c: np.ndarray, w: float, h: float, toward: np.ndarray, shape: s
 def flow_heights(views: list[dict], width: float, title: float) -> tuple[float, float]:
     views = _merged(views, _shared_slots(views))
     boxes, arrows = _union(views)
+    if not boxes:  # snapshots before the diagram's first box (runs/bench3: this raised ValueError and ended the run)
+        return title + 0.3, title + 0.3
     fixed = {k: b["layer"] for k, b in boxes.items() if b.get("layer") is not None}
     across = views[0]["direction"] == "right"
     rank = _fit_ranks(boxes, arrows, fixed, width - 0.1, across)
@@ -474,8 +476,8 @@ def flow_layout(views: list[dict], region) -> FlowLayout:
 def _flow_layout(views: list[dict], region) -> FlowLayout:
     title = _title(views)
     boxes, arrows = _union(views)
-    if not boxes:
-        raise PictureError("the flow diagram has no boxes")
+    if not boxes:  # nothing to place yet: the boxes come in a later snapshot, laid out with its own group
+        return FlowLayout(1.0, {}, {}, {})
     keys = list(boxes)
     fixed = {k: b["layer"] for k, b in boxes.items() if b.get("layer") is not None}
     across = views[0]["direction"] == "right"
