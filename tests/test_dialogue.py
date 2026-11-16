@@ -154,7 +154,8 @@ def test_turns_and_ending():
 
 def test_find_slang_whole_words_and_apostrophes():
     assert find_slang("Is it between the two?") == []
-    assert find_slang("Bet. It’s giving recursion, and it's giving loops.") == ["it's giving", "it's giving", "bet"]
+    assert find_slang("Bet. That’s fair, and that's fair again.") == ["bet", "that's fair", "that's fair"]
+    assert find_slang("I’m calling it: four.") == ["I'm calling it"]
     assert find_slang("NO CAP") == ["no cap"]
     assert max_slang(10) == 4 and max_slang(2) == 2
 

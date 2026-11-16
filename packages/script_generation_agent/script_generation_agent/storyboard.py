@@ -21,7 +21,7 @@ from __future__ import annotations
 import re
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from pydantic import BaseModel, Field, create_model
 
@@ -32,7 +32,9 @@ from script_generation_agent.prompts import (
     storyboard_system_prompt,
 )
 from script_generation_agent.picture_plan import PicturePlan, plan_example, plan_picture
-from script_generation_agent.slang import MIN_SLANG, find_slang, lexicon_for_prompt, max_slang
+from script_generation_agent.slang import (
+    CORRECTION, MIN_SLANG, affirming, find_slang, for_move, lexicon_for_prompt, max_slang, pick_phrases,
+)
 from syllabyte_common.llm import DEFAULT_MODEL, structured, text_block
 from syllabyte_common.models import (
     CourseCorpus,
@@ -66,6 +68,8 @@ class BeatPlan:
     misconception: bool = False
     slang: bool = False
     words: tuple[int, int] = (0, 0)
+    move: str = ""  # the learning moment its casual phrase marks (slang.MOVES), on a slang line
+    phrase: str = ""  # the casual phrase code picked for it (with_phrases)
 
     def key(self, k: int) -> str:
         return f"b{k}_{self.speaker}_{self.step}" + ("_wrong_idea" if self.misconception else "")
@@ -79,6 +83,8 @@ class SegmentPlan:
 
 
 def _b(speaker: str, step: str, does: str, **kw) -> BeatPlan:
+    if kw.get("move"):
+        kw["slang"] = True
     return BeatPlan(speaker, step, does, **kw)
 
 
@@ -88,7 +94,8 @@ def skeleton(level: int, has_prereqs: bool = False) -> list[SegmentPlan]:
               else "hints at the surprising answer without giving it away")
     plan = [
         SegmentPlan("prepare", "prepare", [
-            _b("peer", "question", "The hook: a puzzled, deep question about the idea (why, how, what if).", slang=True),
+            _b("peer", "question", "The hook: a puzzled, deep question about the idea (why, how, what if).",
+               move="hook"),
             _b("explainer", "build", f"Answers the hook briefly: {teaser}."),
         ]),
         SegmentPlan("initiate", "initiate", [
@@ -98,7 +105,7 @@ def skeleton(level: int, has_prereqs: bool = False) -> list[SegmentPlan]:
         SegmentPlan("deliver", "deliver_1", [
             _b("explainer", "question", "Asks a question that invites the common wrong idea."),
             _b("peer", "answer", "Gives that wrong idea, confidently: a misconception a student of this course "
-                                 "really has.", misconception=True, slang=True),
+                                 "really has.", misconception=True, move="commit"),
             _b("explainer", "feedback", "Says why it is wrong (the reason) and what holds instead."),
             _b("peer", "build", "Takes the next step toward the right idea."),
             _b("explainer", "build", "Completes the idea: states the key fact."),
@@ -107,27 +114,27 @@ def skeleton(level: int, has_prereqs: bool = False) -> list[SegmentPlan]:
     second = {
         1: [
             _b("explainer", "build", "Sets up the full worked example from the slides, naming its numbers."),
-            _b("peer", "question", "Asks how to do the first step.", slang=True),
+            _b("peer", "question", "Asks how to do the first step.", move="followup"),
             _b("explainer", "build", "Does the first step, naming each quantity as it is used."),
             _b("peer", "question", "Asks why a later step works."),
             _b("explainer", "feedback", "Gives the reason that step works."),
             _b("explainer", "predict", "To the viewer: pause and guess the result of the last step."),
-            _b("peer", "build", "Gives the result: the answer to the predict line."),
+            _b("peer", "build", "Gives the result: the answer to the predict line.", move="result"),
         ],
         2: [
             _b("explainer", "build", "Sets up one worked example from the slides, naming its numbers."),
-            _b("peer", "question", "Asks why a key step works.", slang=True),
+            _b("peer", "question", "Asks why a key step works.", move="followup"),
             _b("explainer", "feedback", "Gives the reason that step works."),
             _b("explainer", "predict", "To the viewer: pause and guess the result of the next step."),
-            _b("peer", "build", "Gives the result: the answer to the predict line."),
+            _b("peer", "build", "Gives the result: the answer to the predict line.", move="result"),
             _b("explainer", "build", "Confirms it and ties it back to the idea."),
         ],
         3: [
-            _b("peer", "question", "Asks ONE 'what if': changes a condition from the slides.", slang=True),
+            _b("peer", "question", "Asks ONE 'what if': changes a condition from the slides.", move="followup"),
             _b("peer", "answer", "A first guess at what happens, and it is wrong.", misconception=True),
             _b("explainer", "predict", "To the viewer: pause and guess what really happens."),
             _b("explainer", "feedback", "Says what really happens and why, refining the guess."),
-            _b("peer", "build", "Reasons it through one step further."),
+            _b("peer", "build", "Reasons it through one step further.", move="surprise"),
             _b("explainer", "build", "States the conclusion: how the idea changes under that condition."),
         ],
     }[level]
@@ -148,7 +155,8 @@ def _budget(plan: list[SegmentPlan]) -> list[SegmentPlan]:
     lines below natural speech (tests check the worked examples keep to these ranges)."""
     def base(b: BeatPlan) -> tuple[int, int]:
         lo, hi = STEP_WORDS[b.step]
-        return (lo, hi + SLANG_WORDS) if b.slang else (lo, hi)
+        # a result or surprise line is a build, long enough for a closer ("..., that tracks.") as it is
+        return (lo, hi + SLANG_WORDS) if b.slang and b.move not in ("result", "surprise") else (lo, hi)
 
     beats = [b for seg in plan for b in seg.beats]
     lo_total = sum(base(b)[0] for b in beats)
@@ -156,10 +164,19 @@ def _budget(plan: list[SegmentPlan]) -> list[SegmentPlan]:
     lo_f = max(1.0, (DIALOGUE_MIN_WORDS + 5) / lo_total)
     hi_f = min(1.0, (DIALOGUE_MAX_WORDS - 25) / hi_total)
     for seg in plan:
-        seg.beats = [BeatPlan(b.speaker, b.step, b.does, b.misconception, b.slang,
-                              (round(base(b)[0] * lo_f), max(round(base(b)[0] * lo_f) + 2, int(base(b)[1] * hi_f))))
+        seg.beats = [replace(b, words=(round(base(b)[0] * lo_f),
+                                       max(round(base(b)[0] * lo_f) + 2, int(base(b)[1] * hi_f))))
                      for b in seg.beats]
     return plan
+
+
+def with_phrases(plan: list[SegmentPlan], key: str) -> list[SegmentPlan]:
+    """The plan with each slang line's phrase picked by code (slang.pick_phrases): one that fits the line's move,
+    none twice in the video, spread over a course by `key` (the KU id, plus a misconception clip's focus)."""
+    slots = [b for seg in plan for b in seg.beats if b.slang]
+    picked = iter(pick_phrases([b.move or "hook" for b in slots], key))
+    return [SegmentPlan(seg.phase, seg.key, [replace(b, phrase=next(picked)) if b.slang else b for b in seg.beats])
+            for seg in plan]
 
 
 # --------------------------------------------------------------------------
@@ -177,7 +194,9 @@ def _describe(beat: BeatPlan) -> str:
     out = f"{who}, step {beat.step}: {beat.does} {beat.words[0]}-{beat.words[1]} words."
     if beat.misconception:
         out += " The wrong idea: draw it as a ghost or a wrong step."
-    if beat.slang:
+    if beat.slang and beat.phrase:
+        out += f' Casual phrase here: "{beat.phrase}", where it sounds natural in the line.'
+    elif beat.slang:
         out += " Casual phrase here."
     elif beat.step in NO_SLANG_STEPS:
         out += " No casual phrase."
@@ -241,29 +260,24 @@ def _colour_key(terms: list[TermColour]) -> list[TermColour]:
     return out[:4]
 
 
-OPENERS = ["Lowkey", "Not gonna lie", "For real", "No cap"]
-
-
 def fix_slang(script: TemplatedDialogueScript, plan: list[SegmentPlan], names: tuple[str, ...] = ()) -> list[str]:
-    """Puts the casual phrases where the plan says, in code: a slot without one gets an opener, a line that may
-    not have one loses it, and none goes past the cap. `names` (the cast's) keep their capital after an opener.
-    Returns what changed."""
+    """Puts the casual phrases where the plan says, in code: a slot without one gets its planned phrase (as an
+    opener, or a closer on a result or surprise line), a line that may not have one loses it, and none goes past
+    the cap. `names` (the cast's) keep their capital after an opener. Returns what changed."""
     from script_generation_agent.slang import _pattern
 
     log = []
     beats = [(b, p) for seg, sp in zip(script.segments, plan) for b, p in zip(seg.beats, sp.beats)]
-    openers = iter(OPENERS * 3)
     used = sum(len(find_slang(b.narration)) for b, p in beats if p.slang)
     for beat, p in beats:
         found = find_slang(beat.narration)
         if p.slang and not found and used < MIN_SLANG:  # only up to the minimum: every phrase adds words
             used += 1
-            line = beat.narration
-            first = line.split(" ", 1)[0].strip(",.!?;:")
-            keep = first in ("I", "I'm", "I'd", "I’m", "I’d") or first in names or first.startswith(("I'", "I’"))
-            rest = line if keep else line[:1].lower() + line[1:]
-            beat.narration = f"{next(openers)}, {rest}"
+            beat.narration = _add_phrase(beat.narration, p.phrase or for_move(p.move or "hook")[0],
+                                         closer=p.move in ("result", "surprise"), names=names)
             log.append(f"added a casual phrase: {beat.narration!r}")
+        elif p.slang and p.phrase and found and p.phrase not in found:  # kept: swapping one can break the line
+            log.append(f"slot planned {p.phrase!r} but uses {found[0]!r}")
         elif found and p.step in NO_SLANG_STEPS:
             # Elsewhere a phrase off its slot is allowed (validate_dialogue only bans these steps); removing it
             # can break the sentence, so this is the only place code takes one out.
@@ -271,6 +285,12 @@ def fix_slang(script: TemplatedDialogueScript, plan: list[SegmentPlan], names: t
                 if (stripped := _strip(beat.narration, _pattern(phrase))) is not None:
                     beat.narration = stripped
                     log.append(f"removed {phrase!r} from a {p.step} line")
+    for k, (beat, p) in enumerate(beats):
+        if corrected(p, beats[k + 1] if k + 1 < len(beats) else None):
+            for phrase in affirming(beat.narration):
+                if (stripped := _strip(beat.narration, _pattern(phrase))) is not None:
+                    beat.narration = stripped
+                    log.append(f"removed {phrase!r}: it cheered a wrong answer")
     cap = max_slang(len(beats))
     used = sum(len(find_slang(b.narration)) for b, _ in beats)
     for beat, p in reversed(beats):
@@ -282,6 +302,89 @@ def fix_slang(script: TemplatedDialogueScript, plan: list[SegmentPlan], names: t
                 used -= 1
                 log.append(f"removed {found[0]!r}: over the cap")
     return log
+
+
+def corrected(plan_beat, following) -> bool:
+    """Whether a line is wrong by the plan: a wrong idea, or a peer line the explainer corrects next (its
+    feedback, or a line opening "Not quite"). `following` is the next (beat, plan beat), or None."""
+    if plan_beat.misconception:
+        return True
+    if plan_beat.speaker != "peer" or following is None:
+        return False
+    nxt, nxt_plan = following
+    return nxt_plan.speaker == "explainer" and (nxt_plan.step == "feedback" or bool(CORRECTION.match(nxt.narration)))
+
+
+_VERDICTS = [("accept", "reject"), ("true", "false"), ("valid", "invalid"), ("converge", "diverge"),
+             ("stable", "unstable"), ("balanced", "unbalanced"), ("possible", "impossible")]
+_NAME = re.compile(r"\b[A-Za-z]+_?\d+\b")  # q2, P4, x1: a state, a process, a variable
+
+
+def _verdicts(text: str) -> set[str]:
+    words = set(re.findall(r"[a-z]+", text.lower()))
+    out = set()
+    for a, b in _VERDICTS:
+        if any(w.startswith(b) for w in words):  # "unstable" before "stable", "rejected" as "reject"
+            out.add(b)
+        elif any(w.startswith(a) for w in words):
+            out.add(a)
+    return out
+
+
+def disagrees(line: str, picture: str) -> str | None:
+    """Why the answer a line gives isn't the one its picture shows, or None: the opposite verdict (accept /
+    reject, true / false ...), or a last value or name the picture doesn't hold while it holds others. Only
+    for deciding whether a line may cheer its answer, so when in doubt it says they disagree."""
+    from animation_agent.visuals.calls import _number_tokens
+
+    said, shown = _verdicts(line), _verdicts(picture)
+    for pair in map(set, _VERDICTS):
+        if (ours := said & pair) and (theirs := shown & pair) and ours != theirs:
+            return f"says {min(ours)}, the picture shows {min(theirs)}"
+    names_line = [m.lower() for m in _NAME.findall(line)]
+    names_pic = {m.lower() for m in _NAME.findall(picture)}
+    if names_line and names_pic and names_line[-1] not in names_pic:
+        return f"ends on {names_line[-1]}, the picture shows {', '.join(sorted(names_pic))}"
+    strip = lambda t: _NAME.sub(" ", t)  # noqa: E731  (q2's 2 is a name, not a value)
+    nums_line = [t for t in _number_tokens(strip(line)) if isinstance(t, float)]
+    nums_pic = [t for t in _number_tokens(strip(picture)) if isinstance(t, float)]
+    if nums_line and nums_pic and not any(abs(nums_line[-1] - v) <= 0.005 * max(1.0, abs(v)) for v in nums_pic):
+        return f"ends on {nums_line[-1]:g}, which the picture doesn't show"
+    return None
+
+
+def drop_false_cheers(script: TemplatedDialogueScript, said: list[list[str]]) -> list[str]:
+    """Takes "that tracks" (any phrase that affirms) out of a line whose answer isn't the one its picture shows
+    (`said`: per segment, what each beat's picture shows), so slang never cheers a wrong answer. Returns what
+    changed; a line left broken without its phrase keeps it, and is logged."""
+    from script_generation_agent.slang import _pattern
+
+    log = []
+    for s, seg in enumerate(script.segments):
+        for b, beat in enumerate(seg.beats):
+            picture = said[s][b] if s < len(said) and b < len(said[s]) else beat.visual
+            if not (found := affirming(beat.narration)) or not picture or not (why := disagrees(beat.narration,
+                                                                                               picture)):
+                continue
+            for phrase in found:
+                if (stripped := _strip(beat.narration, _pattern(phrase))) is not None:
+                    beat.narration = stripped
+                    log.append(f"segment {s} beat {b + 1}: removed {phrase!r}, the line {why}")
+                else:
+                    log.append(f"segment {s} beat {b + 1}: {phrase!r} kept (the line needs it), though it {why}")
+    return log
+
+
+def _add_phrase(line: str, phrase: str, *, closer: bool, names: tuple[str, ...] = ()) -> str:
+    """The line with `phrase` put in: after it ("Eight, that tracks.") when `closer` and the line ends a
+    statement, else before it ("Real question, how does ...")."""
+    line = line.strip()
+    if closer and line.endswith("."):
+        return f"{line[:-1]}, {phrase}."
+    first = line.split(" ", 1)[0].strip(",.!?;:")
+    keep = first in ("I", "I'm", "I'd", "I’m", "I’d") or first in names or first.startswith(("I'", "I’"))
+    rest = line if keep else line[:1].lower() + line[1:]
+    return f"{phrase[:1].upper()}{phrase[1:]}, {rest}"
 
 
 def _strip(line: str, pattern) -> str | None:
@@ -300,6 +403,7 @@ def _strip(line: str, pattern) -> str | None:
     out = re.sub(r"^[,;:—\-\s]+", "", out)  # it was an opener
     out = re.sub(r",\s*([.!?])", r"\1", out)  # it was a closer
     out = re.sub(r"\s+([,.!?;:])", r"\1", out)
+    out = re.sub(r"([.!?])[.]+", r"\1", out)  # it was a sentence of its own ("... seven. That tracks.")
     if len(out.split()) < 4 or re.search(r"[,;:]\s*[,.!?;:]|[,;:]$", out) or not out[:1].isalnum():
         return None
     return out[:1].upper() + out[1:]
@@ -845,7 +949,7 @@ def write_storyboard(
         raise ScriptValidationError(f"KU {ku.id} cites slides that don't resolve in the corpus: {ku.source_refs}")
     cast = load_cast()
     picture = picture or plan_picture(ku, model=model, manifest=manifest)
-    plan = skeleton(level, bool(prereq_titles))
+    plan = with_phrases(skeleton(level, bool(prereq_titles)), ku.id + (focus or ""))
     system = storyboard_system_prompt(level, prereq_titles, explainer=cast.explainer.name, peer=cast.peer.name,
                                       lexicon=lexicon_for_prompt(), example=_example(cast.explainer.name,
                                                                                      cast.peer.name, level,
@@ -904,11 +1008,14 @@ def write_storyboard(
     segments, notes = align_lines(script, segments, trace, ku.id)
     script = match_lines(script, ku_id=ku.id, model=model, manifest=manifest, allowed=allowed, segments=segments,
                          accept=lambda s: not [p for p in validate_dialogue(s) if not _over_limit(p, s)], notes=notes)
+    from animation_agent.visuals.calls import describe_script
+
+    _log(ku.id, drop_false_cheers(script, describe_script(segments)))
     if on_lines_ready is not None:
         on_lines_ready(script)
     return with_pictures(script, segments, ku_id=ku.id, allowed=allowed)
 
 
-__all__ = ["BeatPlan", "SegmentPlan", "assemble", "finish", "fix_slang", "match_lines", "mismatches",
+__all__ = ["BeatPlan", "SegmentPlan", "assemble", "finish", "fix_slang", "drop_false_cheers", "with_phrases", "match_lines", "mismatches",
            "settle_picture", "skeleton", "with_pictures",
            "storyboard_model", "write_storyboard", "DIALOGUE_MAX_WORDS", "DIALOGUE_MIN_WORDS"]

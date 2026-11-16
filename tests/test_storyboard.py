@@ -260,6 +260,7 @@ def test_over_the_word_limit_is_kept_but_too_short_is_not():
     ("Linear search checks each cell once, no cap.", "no cap", "Linear search checks each cell once."),
     ("Wait, for real? But v stayed on its own line.", "for real", None),  # a clause of its own
     ("Okay, the math is mathing.", "the math is mathing", None),  # nothing left
+    ("Eight checks in all. That tracks.", "that tracks", "Eight checks in all."),  # a sentence of its own
 ])
 def test_taking_a_phrase_out_never_breaks_the_line(line, phrase, expected):
     from script_generation_agent.slang import _pattern

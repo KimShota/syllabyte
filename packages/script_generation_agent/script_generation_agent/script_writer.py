@@ -24,7 +24,7 @@ from script_generation_agent.prompts import (
     dialogue_system_prompt,
     level_system_prompt,
 )
-from script_generation_agent.slang import MIN_SLANG, find_slang, lexicon_for_prompt, max_slang
+from script_generation_agent.slang import MIN_SLANG, affirming, find_slang, lexicon_for_prompt, max_slang
 from syllabyte_common.llm import DEFAULT_MODEL, image_block, structured, text_block
 
 from syllabyte_common.models import (
@@ -213,6 +213,9 @@ def validate_dialogue(script: DialogueScript) -> list[str]:
     for name, j, b, found in slang:
         if found and b.step in NO_SLANG_STEPS:
             problems.append(f"{name} beat {j} is a \"{b.step}\" line, which takes no slang (found {found})")
+        if b.misconception and (cheers := affirming(b.narration)):
+            problems.append(f"{name} beat {j} is the wrong idea and says {cheers[0]!r}, which cheers it: use no "
+                            "phrase that says it adds up on a wrong answer")
     return problems
 
 

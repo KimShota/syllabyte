@@ -62,7 +62,7 @@ class Slot:
     does: str
     takes: str = "snap"
     misconception: bool = False
-    slang: bool = False
+    move: str = ""  # the learning moment its casual phrase marks (slang.MOVES); "" for no casual phrase
 
 
 BUILD = "Takes the next step: says what the picture now shows, with its values."
@@ -76,16 +76,16 @@ def roles(level: int, has_prereqs: bool = False) -> dict[str, tuple[list[Slot], 
               else "hints at the surprising answer without giving it away")
     second = {
         1: ([Slot("explainer", "build", "Sets up the full worked example from the slides, naming its numbers."),
-             Slot("peer", "question", "Asks how to do the first step.", "hold", slang=True),
+             Slot("peer", "question", "Asks how to do the first step.", "hold", move="followup"),
              Slot("explainer", "build", "Does the first step, naming each quantity as it is used.")],
             [Slot("explainer", "predict", "To the viewer: pause and guess the result of the last step.", "hold"),
-             Slot("peer", "build", "Gives the result: the answer to the predict line.")]),
+             Slot("peer", "build", "Gives the result: the answer to the predict line.", move="result")]),
         2: ([Slot("explainer", "build", "Sets up one worked example from the slides, naming its numbers."),
-             Slot("peer", "question", "Asks why a key step works.", "hold", slang=True),
+             Slot("peer", "question", "Asks why a key step works.", "hold", move="followup"),
              Slot("explainer", "feedback", "Gives the reason that step works.")],
             [Slot("explainer", "predict", "To the viewer: pause and guess the result of the next step.", "hold"),
-             Slot("peer", "build", "Gives the result: the answer to the predict line.")]),
-        3: ([Slot("peer", "question", "Asks ONE 'what if': changes a condition from the slides.", slang=True),
+             Slot("peer", "build", "Gives the result: the answer to the predict line.", move="result")]),
+        3: ([Slot("peer", "question", "Asks ONE 'what if': changes a condition from the slides.", move="followup"),
              Slot("peer", "answer", "A first guess at what happens, and it is wrong.", "wrong", misconception=True),
              Slot("explainer", "predict", "To the viewer: pause and guess what really happens.", "hold"),
              Slot("explainer", "feedback", "Says what really happens and why, refining the guess.")],
@@ -93,14 +93,14 @@ def roles(level: int, has_prereqs: bool = False) -> dict[str, tuple[list[Slot], 
     }[level]
     return {
         "prepare": ([Slot("peer", "question", "The hook: a puzzled, deep question about the idea (why, how, what "
-                                              "if).", slang=True),
+                                              "if).", move="hook"),
                      Slot("explainer", "build", f"Answers the hook briefly: {teaser}.", "may")], []),
         "initiate": ([Slot("peer", "question", "Asks what this is for, or why it matters.", "may"),
                       Slot("explainer", "objective", "States what the viewer will be able to do after the video.")],
                      []),
         "deliver_1": ([Slot("explainer", "question", "Asks a question that invites the common wrong idea."),
                        Slot("peer", "answer", "Gives that wrong idea, confidently: a misconception a student of this "
-                                              "course really has.", "wrong", misconception=True, slang=True),
+                                              "course really has.", "wrong", misconception=True, move="commit"),
                        Slot("explainer", "feedback", "Says why it is wrong (the reason) and what holds instead.")],
                       []),
         "deliver_2": second,
@@ -221,7 +221,7 @@ def build_beats(snaps: list[dict], level: int, has_prereqs: bool = False,
     for p, (lead, tail) in roles(level, has_prereqs).items():
         beats = _part_beats(parts[p], lead, tail, LAST_BUILD)
         plan.append(SegmentPlan(PHASES[p], p, [BeatPlan(s.speaker, s.step, s.does, misconception=s.misconception,
-                                                        slang=s.slang) for s, _ in beats]))
+                                                        slang=bool(s.move), move=s.move) for s, _ in beats]))
         shown.append([name for _, name in beats])
     return _budget(plan), shown, log
 
