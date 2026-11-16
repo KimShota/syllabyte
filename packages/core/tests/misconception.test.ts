@@ -99,4 +99,34 @@ describe.skipIf(!haveFixtures)("misconception clips", () => {
     const data = await api.exportMyData();
     expect(data.misconception_requests).toHaveLength(1);
   });
+
+  it("keeps watched and deferred videos in the lecture library while removing watched offers from the feed", async () => {
+    await answer(wrong(), "certain", "saved-1");
+    withClip(wrong());
+    const n = fx.FIX.videos[1].lecture_n;
+    const [saved] = await api.getLectureMisconceptionVideos(n);
+    expect(saved.question).toBe(item().stem);
+    await api.respondToMisconceptionClip(ctx, saved.request.id, { action: "later" });
+    expect((await api.getLectureMisconceptionVideos(n))[0].request.action).toBe("later");
+    await api.answerMisconceptionCheck(ctx, saved.request.id, saved.clip.check_item!.correct_index);
+    await api.respondToMisconceptionClip(ctx, saved.request.id, { action: "watched" });
+    expect(await api.getMisconceptionClips(ctx)).toEqual([]);
+    const [again] = await api.getLectureMisconceptionVideos(n);
+    expect(again.request.action).toBe("watched");
+    expect(again.request.follow_up?.correct).toBe(true);
+    expect(await api.getLectureMisconceptionVideos(n + 100)).toEqual([]);
+    await expect(api.getLectureMisconceptionVideos(0)).rejects.toThrow("Invalid lecture");
+  });
+
+  it("lists only the student's requested videos, and keeps the original question if the source lesson changes", async () => {
+    withClip(wrong());
+    expect(await api.getLectureMisconceptionVideos(fx.FIX.videos[1].lecture_n)).toEqual([]);
+    await answer(wrong(), "certain", "saved-2");
+    const current = fx.fixtures();
+    const clip = current.misconception_clips![0];
+    fx.setFixtures({ ...current, videos: [], items: [], misconception_clips: [{ ...clip, source_question: "The question originally answered" }] });
+    const [saved] = await api.getLectureMisconceptionVideos(clip.video.lecture_n);
+    expect(saved.question).toBe("The question originally answered");
+    expect(saved.item_title).toBe(clip.video.short_title);
+  });
 });

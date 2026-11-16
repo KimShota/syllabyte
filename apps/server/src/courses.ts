@@ -379,9 +379,9 @@ export class Courses {
   /** The made clips this student asked for, with links signed for them (only theirs: the course data stays small). */
   private clipsFor(courseId: string, requests: MisconceptionRequest[]): MisconceptionClip[] {
     if (!requests.length) return [];
-    const get = this.db.prepare("SELECT video_json, items_json FROM misconception_clips WHERE course_id = ? AND clip_key = ?");
+    const get = this.db.prepare("SELECT c.video_json, c.items_json, r.brief_json FROM misconception_clips c LEFT JOIN misconception_requests r ON r.course_id = c.course_id AND r.clip_key = c.clip_key WHERE c.course_id = ? AND c.clip_key = ?");
     return [...new Set(requests.map((r) => r.key))].flatMap((key) => {
-      const row = get.get(courseId, key) as { video_json: string; items_json: string } | undefined;
+      const row = get.get(courseId, key) as { video_json: string; items_json: string; brief_json: string | null } | undefined;
       if (!row) return [];
       const [itemId, choiceText] = key.split("|");
       const choice = Number(choiceText);
@@ -392,6 +392,7 @@ export class Courses {
       const items = JSON.parse(row.items_json) as Item[];
       return [{
         key, item_id: itemId, choice,
+        source_question: row.brief_json ? (JSON.parse(row.brief_json) as { stem: string }).stem : undefined,
         video: { ...video, id: `${itemId}__${choice}`, video_url: at("video.mp4"), poster_url: at("poster.jpg"), vtt_url: at("captions.vtt") },
         check_item: items.find((i) => i.id === video.checkpoint?.item_id) ?? null,
       }];

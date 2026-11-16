@@ -9,6 +9,8 @@ import { Glow } from "../Glow";
 import { Icon, type IconName } from "../Icon";
 import { T } from "../T";
 import { QuickCheck } from "./QuickCheck";
+import { MisconceptionCheck } from "./MisconceptionCheck";
+import type { ReadyClip } from "./misconceptionFeed";
 import { SceneView } from "./SceneView";
 import { useAutoHide } from "./useAutoHide";
 import { usePlayback } from "./usePlayback";
@@ -36,9 +38,11 @@ export function PlayerPage({
   onBlockSwipe,
   command,
   onBusy,
+  misconception,
 }: {
   ku: Ku;
   learning: LearningContext;
+  misconception?: { ready: ReadyClip; completed: boolean; onComplete: () => void };
   /** for the page on screen only */
   command?: PlayerCommand | null;
   /** for the page on screen only: whether its video is in progress (playing, or its quick check open), so the feed
@@ -55,7 +59,7 @@ export function PlayerPage({
   const insets = useSafeAreaInsets();
   const [speedOpen, setSpeedOpen] = useState(false);
   const videoId = ku.videoId;
-  const variant = useQuery(async () => (videoId ? api.getVariant(videoId) : null), [videoId]);
+  const variant = useQuery(async () => (videoId && !misconception ? api.getVariant(videoId) : null), [videoId, !!misconception]);
   // the quick check interrupts the video the first time it reaches the checkpoint, and never again once answered
   const [check, setCheck] = useState<"waiting" | "open" | "closed">("waiting");
   const [answered, setAnswered] = useState(false);
@@ -64,8 +68,12 @@ export function PlayerPage({
   const cp = variant?.video.checkpoint;
   const checkDue = !!variant && !variant.checkpoint_answered && !!cp;
   if (active && check === "waiting" && checkDue && pb.time >= cp!.t) setCheck("open");
+  // A misconception clip uses this same player, with its own follow-up only after the video ends.
+  if (active && misconception && !misconception.completed && check === "waiting" && pb.ended) {
+    setCheck(misconception.ready.clip.check_item ? "open" : "closed");
+  }
   const markAnswered = useCallback(() => setAnswered(true), []);
-  const blocked = active && checkOpen && !answered;
+  const blocked = active && checkOpen && (!!misconception || !answered);
   useEffect(() => {
     if (active) onBlockSwipe(blocked);
   }, [active, blocked, onBlockSwipe]);
@@ -75,7 +83,14 @@ export function PlayerPage({
     if (shownItem) track("checkpoint_shown", { type: "item", id: shownItem });
   }, [shownItem]);
 
-  const playbackSave = useLearningPlayback(learning, videoId, pb.measurement, pb.restartMeasurement, active && !checkOpen);
+  const playbackSave = useLearningPlayback(learning, videoId, pb.measurement, pb.restartMeasurement, active && !checkOpen && !misconception);
+  const clipFinished = useRef(false);
+  useEffect(() => {
+    if (!active || !misconception || misconception.completed || clipFinished.current || !pb.ended) return;
+    if (misconception.ready.clip.check_item && check !== "closed") return;
+    clipFinished.current = true;
+    misconception.onComplete();
+  }, [active, misconception, pb.ended, check]);
 
   const busy = (pb.playing && !pb.ended) || checkOpen;
   useEffect(() => {
@@ -188,6 +203,20 @@ export function PlayerPage({
             pb.seek(variant.video.checkpoint.rewatch_from);
             setCheck("closed");
           }}
+        />
+      ) : null}
+
+      {checkOpen && misconception?.ready.clip.check_item ? (
+        <MisconceptionCheck
+          learning={learning}
+          requestId={misconception.ready.request.id}
+          stem={misconception.ready.clip.check_item.stem}
+          options={misconception.ready.clip.check_item.options}
+          savedAnswer={misconception.ready.request.follow_up}
+          correctIndex={misconception.ready.clip.check_item.correct_index}
+          explanation={misconception.ready.clip.check_item.explanation}
+          topInset={insets.top + 72}
+          onDone={() => setCheck("closed")}
         />
       ) : null}
 

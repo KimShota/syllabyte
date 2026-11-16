@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { setStatusBarHidden, setStatusBarStyle } from "expo-status-bar";
 import { AppState, FlatList, View } from "react-native";
 import { useFocusEffect } from "expo-router";
@@ -13,11 +13,10 @@ import { usePrefs, type Speed } from "@/state/app";
 import { sendLearning } from "@/state/learningOutbox";
 import { EngagementPrompt } from "./EngagementPrompt";
 import { clipDecision } from "./clipTiming";
-import { MisconceptionClipCard, type ReadyClip } from "./MisconceptionClipCard";
+import { MisconceptionClipCard } from "./MisconceptionClipCard";
+import { buildFeedItems, feedKey, type ClipInsertion, type FeedItem, type ReadyClip } from "./misconceptionFeed";
 import { whenSaved } from "./learningSync";
 import { PlayerPage, type PlayerCommand } from "./PlayerPage";
-
-type FeedItem = { kind: "video"; ku: Ku } | { kind: "end" };
 
 /** Light status bar only while a dark feed is the focused screen. */
 export function useDarkStatusBar() {
@@ -54,7 +53,7 @@ const CLIP_REOFFERS = 1;
  *    (components/ReflectionSheet.tsx).
  * A page counts as playing only while it is on screen, the route is focused, the app is in front and no prompt is open.
  */
-export function VideoFeed({ kus, startIndex, end }: { kus: readonly Ku[]; startIndex: number; end?: ReactNode }) {
+export function VideoFeed({ kus, startIndex, end, savedClips }: { kus: readonly Ku[]; startIndex: number; end?: ReactNode; savedClips?: readonly ReadyClip[] }) {
   const prefs = usePrefs();
   const [learning, setLearning] = useState(newSession);
   const current = useRef(learning);
@@ -74,14 +73,19 @@ export function VideoFeed({ kus, startIndex, end }: { kus: readonly Ku[]; startI
   // misconception clips (plan: "Misconception clips"): made on demand, offered as soon as they are ready, never mid-video
   const [clips, setClips] = useState<ReadyClip[]>([]);
   const [clip, setClip] = useState<ReadyClip | null>(null);
+  const [insertions, setInsertions] = useState<ClipInsertion[]>([]);
+  const [scrollToClip, setScrollToClip] = useState<string | null>(null);
+  const pendingClip = useRef<string | null>(null);
+  const [completedClips, setCompletedClips] = useState<Set<string>>(() => new Set(savedClips?.filter(item => item.request.action === "watched").map(item => item.request.id)));
   const [laterCount, setLaterCount] = useState<Record<string, number>>({});
   const [deferred, setDeferred] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [command, setCommand] = useState<PlayerCommand | null>(null);
   const list = useRef<FlatList<FeedItem>>(null);
 
-  const items: FeedItem[] = [...kus.map((ku) => ({ kind: "video" as const, ku })), ...(end ? [{ kind: "end" as const }] : [])];
-  const onEnd = items[activeIndex]?.kind !== "video";
+  const hasEnd = !!end;
+  const items = useMemo(() => buildFeedItems(kus, hasEnd, savedClips ? savedClips.map(ready => ({ after: "end", ready })) : insertions), [kus, hasEnd, insertions, savedClips]);
+  const onEnd = items[activeIndex]?.kind === "end";
   const activeItem = items[activeIndex];
   const activeVideoId = activeItem?.kind === "video" ? activeItem.ku.videoId : null;
   const activeVideo = useRef(activeVideoId);
@@ -137,7 +141,7 @@ export function VideoFeed({ kus, startIndex, end }: { kus: readonly Ku[]; startI
 
   // Misconception clips: ask every few seconds while the feed is open and in front
   useEffect(() => {
-    if (!(focused && foreground)) return;
+    if (!(focused && foreground) || savedClips) return;
     let alive = true;
     const poll = () => {
       api.getMisconceptionClips(current.current).then((list) => { if (alive) setClips(list); }, () => {});
@@ -148,13 +152,13 @@ export function VideoFeed({ kus, startIndex, end }: { kus: readonly Ku[]; startI
       alive = false;
       clearInterval(timer);
     };
-  }, [focused, foreground]);
+  }, [focused, foreground, savedClips]);
 
   // When to show a ready clip (clipTiming.ts), decided while rendering: state that follows other state.
   const [clipIndex, setClipIndex] = useState(activeIndex);
   const moved = clipIndex !== activeIndex;
   if (moved) setClipIndex(activeIndex);
-  const decision = clipDecision({ clips, deferred, laterCount, moved, canShow: !clip && !prompt && focused && foreground, busy, reoffers: CLIP_REOFFERS });
+  const decision = clipDecision({ clips, deferred, laterCount, moved, canShow: !clip && !prompt && !scrollToClip && activeItem?.kind !== "misconception" && focused && foreground, busy, reoffers: CLIP_REOFFERS });
   if (decision.deferred !== deferred) setDeferred(decision.deferred as Set<string>);
   if (decision.show) setClip(decision.show);
   // the first time each clip is offered is recorded
@@ -163,14 +167,43 @@ export function VideoFeed({ kus, startIndex, end }: { kus: readonly Ku[]; startI
     if (offeredId) void sendLearning("respondToMisconceptionClip", current.current, offeredId, { offered: true });
   }, [offeredId]);
 
-  function closeClip(action: "watched" | "later") {
+  function deferClip() {
     const c = clip;
     setClip(null);
     if (!c) return;
-    void sendLearning("respondToMisconceptionClip", learning, c.request.id, { action });
-    // a watched clip is never offered again in this visit, even if a check lands before the server has recorded it
-    setLaterCount((n) => ({ ...n, [c.request.id]: action === "watched" ? Infinity : (n[c.request.id] ?? 0) + 1 }));
+    void sendLearning("respondToMisconceptionClip", learning, c.request.id, { action: "later" });
+    setLaterCount((n) => ({ ...n, [c.request.id]: (n[c.request.id] ?? 0) + 1 }));
     setDeferred((d) => new Set(d).add(c.request.id));
+  }
+
+  function watchClip() {
+    if (!clip || !activeItem) return;
+    const id = clip.request.id;
+    setInsertions(previous => previous.some(item => item.ready.request.id === id) ? previous : [...previous, { after: feedKey(activeItem), ready: clip }]);
+    // Accepting the offer reserves its feed page; completion is recorded only after playback and the follow-up.
+    setDeferred(previous => new Set(previous).add(id));
+    setLaterCount(previous => ({ ...previous, [id]: Infinity }));
+    pendingClip.current = id;
+    setScrollToClip(id);
+    setBlocked(false);
+    setClip(null);
+  }
+
+  // Wait until FlatList receives the inserted page before scrolling to its index.
+  useEffect(() => {
+    if (!scrollToClip || !height) return;
+    const index = items.findIndex(item => item.kind === "misconception" && item.ready.request.id === scrollToClip);
+    if (index < 0) return;
+    list.current?.scrollToIndex({ index, animated: true });
+  }, [scrollToClip, height, items]);
+
+  function completeClip(ready: ReadyClip) {
+    const id = ready.request.id;
+    if (completedClips.has(id)) return;
+    setCompletedClips(previous => new Set(previous).add(id));
+    void sendLearning("respondToMisconceptionClip", learning, id, { action: "watched" });
+    setBlocked(false);
+    if (activeIndex + 1 < items.length) list.current?.scrollToIndex({ index: activeIndex + 1, animated: true });
   }
 
   // Decision point: leaving the feed ends the session; its reflection, if any, appears by itself (ReflectionSheet).
@@ -225,8 +258,13 @@ export function VideoFeed({ kus, startIndex, end }: { kus: readonly Ku[]; startI
   }
 
   // FlatList needs the same function for its whole life
-  const [onViewable] = useState(() => ({ viewableItems }: { viewableItems: { index?: number | null; isViewable: boolean }[] }) => {
-    const first = viewableItems.find((v) => v.isViewable);
+  const [onViewable] = useState(() => ({ viewableItems }: { viewableItems: { index?: number | null; isViewable: boolean; item: FeedItem }[] }) => {
+    const target = pendingClip.current;
+    const first = viewableItems.find(v => v.isViewable && (!target || (v.item.kind === "misconception" && v.item.ready.request.id === target)));
+    if (target && first) {
+      pendingClip.current = null;
+      setScrollToClip(null);
+    }
     if (first?.index != null) setActiveIndex(first.index);
   });
 
@@ -236,7 +274,7 @@ export function VideoFeed({ kus, startIndex, end }: { kus: readonly Ku[]; startI
         <FlatList
           ref={list}
           data={items}
-          keyExtractor={(item) => (item.kind === "video" ? `${item.ku.id}:${item.ku.videoUri ?? "demo"}` : "end")}
+          keyExtractor={feedKey}
           pagingEnabled
           scrollEnabled={!blocked && !prompt && !clip}
           snapToInterval={height}
@@ -252,18 +290,19 @@ export function VideoFeed({ kus, startIndex, end }: { kus: readonly Ku[]; startI
           initialNumToRender={1}
           maxToRenderPerBatch={2}
           renderItem={({ item, index }) =>
-            item.kind === "video" ? (
+            item.kind !== "end" ? (
               <PlayerPage
                 ku={item.ku}
                 learning={learning}
-                eyebrow={kuEyebrow(item.ku)}
+                eyebrow={item.kind === "misconception" ? "Video for your mistake" : kuEyebrow(item.ku)}
                 height={height}
-                active={index === activeIndex && focused && foreground && windowFocused && !prompt && !clip}
+                active={index === activeIndex && focused && foreground && windowFocused && !prompt && !clip && !scrollToClip}
                 speed={speed}
                 onSpeed={setSpeed}
                 onBlockSwipe={setBlocked}
                 command={index === activeIndex ? command : null}
                 onBusy={index === activeIndex ? setBusy : undefined}
+                misconception={item.kind === "misconception" ? { ready: item.ready, completed: completedClips.has(item.ready.request.id), onComplete: () => completeClip(item.ready) } : undefined}
               />
             ) : (
               <View style={{ height }}>{end}</View>
@@ -271,7 +310,7 @@ export function VideoFeed({ kus, startIndex, end }: { kus: readonly Ku[]; startI
           }
         />
       ) : null}
-      {clip ? <MisconceptionClipCard key={clip.request.id} ready={clip} learning={learning} onDone={closeClip} /> : null}
+      {clip ? <MisconceptionClipCard key={clip.request.id} ready={clip} onWatch={watchClip} onLater={deferClip} /> : null}
       {prompt && !clip ? (
         <EngagementPrompt
           key={prompt.id}

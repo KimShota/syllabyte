@@ -251,6 +251,15 @@ export interface MisconceptionClip {
   video: Video;
   /** a follow-up question on the same idea (the clip's own checkpoint question), or null */
   check_item: Item | null;
+  /** Original question, kept from the request even if the lesson's questions later change. */
+  source_question?: string;
+}
+
+export interface MisconceptionVideoView {
+  request: MisconceptionRequest;
+  clip: MisconceptionClip;
+  item_title: string;
+  question: string;
 }
 
 /** A student's request for a misconception clip, and what they did with it. */
