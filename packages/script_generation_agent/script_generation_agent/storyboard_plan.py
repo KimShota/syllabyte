@@ -259,6 +259,8 @@ def beats_listing(script: TemplatedDialogueScript, plan, said: list[list[str]]) 
         for k, (beat, bp) in enumerate(zip(seg.beats, sp.beats), 1):
             picture = seg_said[k - 1] if seg.drawn_by == "templates" and k - 1 < len(seg_said) else beat.visual
             out.append(f"  {bp.key(k)}:\n    picture: {picture}\n    point: {beat.narration}")
+            if bp.slang and bp.phrase:  # code picked it (slang.pick_phrases); the schema's description says it too
+                out.append(f'    casual phrase: "{bp.phrase}"')
     return "\n".join(out)
 
 
@@ -305,6 +307,7 @@ def planner_example(level: int, family: str | None, *, explainer: str, peer: str
 def write_example(level: int, family: str | None, *, explainer: str, peer: str) -> str:
     from animation_agent.visuals.calls import describe_script
 
+    from script_generation_agent.slang import find_slang
     from script_generation_agent.storyboard_example import SEGMENT_KEYS
 
     ku, ex = _example_data(level, family)
@@ -313,8 +316,10 @@ def write_example(level: int, family: str | None, *, explainer: str, peer: str) 
     for key, seg_said in zip(SEGMENT_KEYS, said):
         lines.append(f"{key}:")
         for (field, _, narration), picture in zip(ex[key], seg_said):
-            lines += [f"  {field}:", f"    picture: {picture}",
-                      f"    line: {narration.format(explainer=explainer, peer=peer)}"]
+            lines += [f"  {field}:", f"    picture: {picture}"]
+            # shown as the writer's beats show it, so the example teaches using the named phrase, not its own
+            lines += [f'    casual phrase: "{phrase}"' for phrase in find_slang(narration)[:1]]
+            lines.append(f"    line: {narration.format(explainer=explainer, peer=peer)}")
     return "\n".join(lines) + "\n"
 
 
@@ -413,10 +418,12 @@ def write_storyboard_planned(
         _traced,
         align_lines,
         drop_echoes,
+        drop_false_cheers,
         fix_slang,
         match_lines,
         settle_picture,
         skeleton,
+        with_phrases,
         with_pictures,
     )
     from syllabyte_common.cast import load_cast
@@ -432,7 +439,8 @@ def write_storyboard_planned(
 
         picture, example = GRAMMAR_PLAN, None
     picture = picture or plan_picture(ku, model=model, manifest=manifest)
-    plan = skeleton(level, bool(prereq_titles))
+    phrase_key = ku.id + (focus or "")  # which casual phrase each slang line gets (slang.pick_phrases)
+    plan = with_phrases(skeleton(level, bool(prereq_titles)), phrase_key)
     allowed = set(picture.templates)
     if example is _PLAN:  # the traced worked example, planned as in one call
         from script_generation_agent.picture_plan import plan_example as plan_traced
@@ -458,6 +466,7 @@ def write_storyboard_planned(
         from script_generation_agent.storyboard import _drop_broken
 
         script, segments, plan = built
+        plan = with_phrases(plan, phrase_key)
         # code made every call, so nothing should be refused; whatever is still goes, as settle_picture would
         if broken := [p for p in check_script(segments, None, allowed) if p.call is not None]:
             _log(ku.id, [f"refused: {p.message[:160]}" for p in broken])
@@ -547,6 +556,10 @@ def write_storyboard_planned(
         notes = {**unsaid, **(notes or {})}
     script = match_lines(best, ku_id=ku.id, model=model, manifest=manifest, allowed=allowed, segments=segments,
                          accept=lambda s: not [p for p in validate_dialogue(s) if not _over_limit(p, s)], notes=notes)
+    # a line that cheers its answer ("that tracks") keeps the cheer only if its picture shows that answer; on a
+    # copy, since match_lines may hand back `best` itself and a changed line must be spoken again below
+    script = script.model_copy(deep=True)
+    _log(ku.id, drop_false_cheers(script, describe_script(segments)))
     _log(ku.id, [f"final: {_picture_calls(segments)}"])
     spoken = lambda sc: [[b.narration for b in seg.beats] for seg in sc.segments]  # noqa: E731
     if on_lines_ready is not None and spoken(script) != spoken(best):  # the line check rewrote some: speak those

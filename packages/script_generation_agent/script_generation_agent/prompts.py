@@ -495,10 +495,16 @@ calls, and no others but the fixed ones under Drawing.
 _STORYBOARD_SLANG = """\
 Casual phrases
 Both characters talk like Gen-Z students: casual, "you" and "I", contractions, short lines. A beat whose \
-description says "casual phrase here" uses exactly one phrase from this list, exactly as written; no other beat \
-uses one:
+description says "casual phrase here" (or that has a `casual phrase:` under it) uses exactly one phrase, exactly as \
+written: the one it names, even if another would come to mind first (code spreads them so a course doesn't hear \
+the same few; each marks that line's moment: the puzzled hook, a confident guess, the next question, the result \
+clicking), else one from this list. No other beat uses one. What they mean:
 {lexicon}
-Never in place of a course term, and never mocking a wrong answer.
+Work the phrase into the line the way a student would say it, as part of the reaction, not stuck on the front: at \
+the start, in the middle or at the end ("Eight comparisons. That tracks."; "I'm lowkey confused: why ..."). \
+Never in place of a course term, never mocking a wrong answer, and never cheering one: a phrase that says it \
+adds up ("the math is mathing", "that tracks", "it clicked", "hits different") goes only on an answer that is \
+right and matches its picture, never on a wrong idea or a guess the next line corrects.
 
 """
 
