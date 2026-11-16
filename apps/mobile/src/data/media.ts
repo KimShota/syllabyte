@@ -17,6 +17,7 @@ export function mediaBase(override: string | undefined, hostUri: string | undefi
 
 /** A path the server hands out for a made video (`/api/media/...`, signed): on the server, not the media script's host. */
 export function backendMediaUrl(path: string, base: string | null = BACKEND_BASE): string | undefined {
+  if (/^https?:\/\//.test(path)) return path;
   return base ? `${base}${path.startsWith("/") ? "" : "/"}${path}` : undefined;
 }
 

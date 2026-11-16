@@ -77,6 +77,23 @@ describe("a misconception clip", () => {
     expect(await claim(s, ["misconception"])).toBeNull();
   });
 
+  it("keeps the saved explanation and original question available after watching, across sessions, for its student only", async () => {
+    const { s, ann, item, courseId } = await annMistaken();
+    await work(s, { kinds: ["misconception"] });
+    const [saved] = await ann.rpc<any[]>("getLectureMisconceptionVideos", 1);
+    expect(saved.question).toBe(item.stem);
+    const learning = { sessionId: "saved-clip", courseId };
+    await ann.rpc("respondToMisconceptionClip", learning, saved.request.id, { action: "watched" });
+    const reopened = await s.signIn("ann@nyu.edu");
+    const [again] = await reopened.rpc<any[]>("getLectureMisconceptionVideos", 1);
+    expect(again.request.action).toBe("watched");
+    expect(again.question).toBe(item.stem);
+    expect((await s.app.request(again.clip.video.video_url)).status).toBe(200);
+    expect(await reopened.rpc("getLectureMisconceptionVideos", 3)).toEqual([]);
+    const other = await s.signIn("saved-other@nyu.edu");
+    expect(await other.rpc("getLectureMisconceptionVideos", 1)).toEqual([]);
+  });
+
   it("is not requested for a forged answer: the right option, or a question the course doesn't have", async () => {
     const { s, annId, courseId, item } = await annMistaken();
     const state = { misconception_requests: [

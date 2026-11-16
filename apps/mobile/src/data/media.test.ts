@@ -23,6 +23,10 @@ describe("mediaUrl", () => {
 });
 
 describe("backendMediaUrl", () => {
+  it("preserves an absolute clip URL without adding the backend twice", () => {
+    const url = "https://api.example.com/api/media/clips/c1/item/0/video.mp4?e=9&s=ab";
+    expect(backendMediaUrl(url, "http://10.0.0.5:8788")).toBe(url);
+  });
   it("puts a path the server signed on the server, query and all", () => {
     expect(backendMediaUrl("/api/media/c1/ku-a/2/video.mp4?e=9&s=ab", "http://10.0.0.5:8788")).toBe("http://10.0.0.5:8788/api/media/c1/ku-a/2/video.mp4?e=9&s=ab");
   });

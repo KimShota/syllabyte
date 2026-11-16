@@ -47,7 +47,21 @@ function requestOf(requestId: string): MisconceptionRequest {
   return r;
 }
 
-export const misconceptionApi: Pick<Api, "getMisconceptionClips" | "respondToMisconceptionClip" | "answerMisconceptionCheck"> = {
+export const misconceptionApi: Pick<Api, "getMisconceptionClips" | "getLectureMisconceptionVideos" | "respondToMisconceptionClip" | "answerMisconceptionCheck"> = {
+  async getLectureMisconceptionVideos(lectureN) {
+    if (!Number.isInteger(lectureN) || lectureN < 1) throw new Error("Invalid lecture");
+    return (getState().misconception_requests ?? []).flatMap(request => {
+      const clip = readyClip(request.key);
+      if (!clip || clip.video.lecture_n !== lectureN) return [];
+      const original = fixtures().items.find(item => item.id === request.item_id);
+      const lesson = fixtures().videos.find(video => video.id === request.video_id);
+      return [{ request: structuredClone(request), clip: structuredClone(clip),
+        item_title: lesson?.short_title ?? clip.video.short_title,
+        question: clip.source_question ?? original?.stem ?? "",
+      }];
+    }).sort((a, b) => b.request.requested_at - a.request.requested_at);
+  },
+
   async getMisconceptionClips(context: LearningContext) {
     validateLearningContext(context);
     // not yet watched, and made: oldest first (the app offers one at a time)

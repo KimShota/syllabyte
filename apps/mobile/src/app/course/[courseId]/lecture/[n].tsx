@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
-import { useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BackButton, Header, ProfileButton } from "@/components/Header";
 import { Icon } from "@/components/Icon";
 import { Bob, PulseAura } from "@/components/Motion";
-import { ProgressBar, SegmentBar } from "@/components/ProgressBar";
+import { ProgressBar } from "@/components/ProgressBar";
 import { Serpentine, type SerpentineRow, type SpineSegment } from "@/components/Serpentine";
 import { T } from "@/components/T";
 import { NodePreviewSheet } from "@/components/NodePreviewSheet";
@@ -13,10 +13,11 @@ import { PrecheckCard } from "@/components/TaskCards";
 import { useScrollToFocus } from "@/components/useScrollToFocus";
 import { api } from "@syllabyte/core/api/client";
 import { COURSE, KUS, useCourseVersion } from "@/data/course";
-import { findLecture, kuMinutes, kuStatuses, lectureProgress, sectionSegments } from "@/data/selectors";
+import { findLecture, kuMinutes, kuStatuses, lectureProgress } from "@/data/selectors";
 import type { Ku, KuStatus } from "@/data/types";
 import { useQuery } from "@/state/app";
 import { useProgress } from "@/state/progress";
+import { useLectureMisconceptionVideos } from "@/state/misconceptions";
 import { colors, fonts, radius, shadow, space } from "@/theme/tokens";
 
 const NODE = 56;
@@ -32,6 +33,7 @@ export default function LectureRoadmap() {
   const check = useQuery(() => api.getPlaylist())?.precheck ?? null;
   const insets = useSafeAreaInsets();
   const [preview, setPreview] = useState<Ku | null>(null);
+  const saved = useLectureMisconceptionVideos(COURSE.id, Number(n));
 
   const lecture = findLecture(Number(n));
   const statuses = lecture ? kuStatuses(lecture, p) : {};
@@ -77,9 +79,6 @@ export default function LectureRoadmap() {
           ) : null}
 
           {[...lecture.sections].reverse().map((section) => {
-            const segs = sectionSegments(section.kuIds, statuses);
-            const complete = segs.every((s) => s === "done");
-            const started = section.kuIds.some((id) => statuses[id] === "watched" || statuses[id] === "next");
             const rows = buildRows(section.kuIds, statuses, setPreview, progress.done > 0);
             const segments: SpineSegment[] = rows.slice(0, -1).map((_, i) => {
               const upper = statuses[rows[i].key];
@@ -89,13 +88,6 @@ export default function LectureRoadmap() {
             });
             return (
               <View key={section.id} style={styles.section}>
-                <View style={styles.sectionHead}>
-                  <View style={styles.sectionTitle}>
-                    <View style={[styles.sectionDot, { backgroundColor: complete ? colors.secondary : started ? colors.primary : colors.outline }]} />
-                    <T variant="bodySemibold" style={styles.sectionTitleText}>{section.title}</T>
-                  </View>
-                  <SegmentBar segments={segs} tone={complete ? "secondary" : "primary"} />
-                </View>
                 <View style={{ paddingVertical: 16 }}>
                   <Serpentine rows={rows} segments={segments} focusKey={focusKey} focusRef={focusRef} onFocusLayout={onFocusLayout} />
                 </View>
@@ -104,6 +96,17 @@ export default function LectureRoadmap() {
           })}
         </View>
       </ScrollView>
+
+      <Pressable accessibilityRole="button" accessibilityLabel={`Videos for your mistakes${saved.videos ? `, ${saved.videos.length} videos` : ""}`}
+        onPress={() => router.push({ pathname: "/course/[courseId]/lecture/[n]/mistakes", params: { courseId: COURSE.id, n } })}
+        style={({ pressed }) => [styles.savedVideos, { marginBottom: insets.bottom + 12 }, pressed && { opacity: 0.75 }]}>
+        <Icon name="video-library" size={24} color={colors.primary} />
+        <View style={{ flex: 1, gap: 4 }}>
+          <T variant="bodySemibold">Videos for your mistakes{saved.videos ? ` · ${saved.videos.length}` : ""}</T>
+          <T variant="caption" color={colors.onSurfaceVariant}>Explanations made for answers you missed.</T>
+        </View>
+        <Icon name="chevron-right" size={24} color={colors.primary} />
+      </Pressable>
 
       <NodePreviewSheet ku={preview} status={preview ? statuses[preview.id] : null} check={check} onClose={() => setPreview(null)} />
     </View>
@@ -200,15 +203,12 @@ function KuNode({ ku, status, started, centerX, onPress }: { ku: Ku; status: KuS
 }
 
 const styles = StyleSheet.create({
+  savedVideos: { flexDirection: "row", alignItems: "center", gap: 12, padding: 16, marginTop: 12, marginHorizontal: space.gutter, borderRadius: radius.lg, backgroundColor: colors.surfaceContainerLowest, borderWidth: 1, borderColor: colors.outlineVariant },
   screen: { flex: 1, backgroundColor: colors.surface },
   content: { paddingHorizontal: space.gutter, paddingTop: 8 },
   overview: { backgroundColor: colors.surfaceContainerLowest, borderRadius: radius.lg, padding: 16, marginBottom: 16, ...shadow.card },
   pace: { marginTop: 16, flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: colors.surfaceContainerLow, borderRadius: radius.md, padding: 10 },
   section: { marginBottom: 24 },
-  sectionHead: { backgroundColor: colors.surfaceContainerLowest, borderRadius: radius.lg, padding: 16, ...shadow.card, zIndex: 2 },
-  sectionTitle: { flexDirection: "row", alignItems: "center", gap: 8 },
-  sectionTitleText: { flex: 1, minWidth: 0 },
-  sectionDot: { width: 10, height: 10, borderRadius: 5, flexShrink: 0 },
   kuCol: { position: "absolute", width: LABEL_W, alignItems: "center" },
   node: { alignItems: "center", justifyContent: "center" },
   nodeWatched: { backgroundColor: colors.secondary, ...shadow.card },

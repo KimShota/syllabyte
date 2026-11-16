@@ -125,6 +125,21 @@ async function ensureConsent(studyParticipant = true): Promise<void> {
 export async function loadSession(): Promise<void> {
   if (!backend) return;
   token = await tokenStore.get().catch(() => null);
+  // Opt-in local phone test only. Its separate backend issues a normal, single-use sign-in ticket for the demo
+  // account; release builds and ordinary development sessions always use the regular sign-in flow.
+  if (!token && __DEV__ && process.env.EXPO_PUBLIC_PHONE_DEMO === "1") {
+    try {
+      const response = await fetch(`${BACKEND_BASE}/api/phone-demo/start?json=1`);
+      if (!response.ok) throw new Error(`Phone demo setup failed (${response.status})`);
+      const { appUrl } = await response.json() as { appUrl: string };
+      const ticket = new URL(appUrl).searchParams.get("ticket");
+      if (!ticket) throw new Error("Phone demo sign-in ticket is missing");
+      await verifySignInLink(ticket);
+      return;
+    } catch (error) {
+      console.warn("Could not start the local phone demo", error);
+    }
+  }
   if (!token) {
     setSession({ status: "signedOut", email: null });
     return;
