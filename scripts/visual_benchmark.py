@@ -48,6 +48,12 @@ SECONDS_PER_SNAP = 1.6
 MAX_STILLS = 12
 
 
+def held_out_ids() -> set[str]:
+    """The held-out half: the second topic of each area. A change tuned on what the first topic of an area showed
+    is judged on the second, so the report gives the two halves apart."""
+    return {t["id"] for i, t in enumerate(json.loads(TOPICS.read_text())) if i % 2 == 1}
+
+
 def load_topics(only: list[str] | None = None) -> list[dict]:
     topics = json.loads(TOPICS.read_text())
     return [t for t in topics if not only or t["id"] in only]
@@ -125,7 +131,11 @@ def plan_one(t: dict, out: Path, spend: Spend) -> dict:
         traceback.print_exc()
     programs = sorted((out / "plans").glob(f"{t['id']}-program*.json"))
     last = json.loads(programs[-1].read_text()) if programs else None
-    snaps, problems = program_problems(last["program"], 2) if last else ([], [])
+    try:
+        snaps, problems = program_problems(last["program"], 2) if last else ([], [])
+    except Exception as e:  # one topic's failure is its own result, never the run's (runs/bench3 lost 12 topics)
+        snaps, problems = [], [f"{type(e).__name__}: {e}"]
+        error = error or problems[0]
     row = {
         "id": t["id"], "area": t["area"], "title": t["title"],
         "brief_area": picture_area(ku) or "every area",
@@ -138,6 +148,10 @@ def plan_one(t: dict, out: Path, spend: Spend) -> dict:
         "seconds": round(time.monotonic() - start, 1),
         "cost_usd": round(spend.cost(t["id"]), 4),
     }
+    calls = [c for c in list(spend.manifest.llm_calls) if c.ku_id == t["id"]]
+    row["calls"] = {stage: sum(1 for c in calls if c.stage == stage) for stage in dict.fromkeys(c.stage for c in calls)}
+    row["output_tokens"] = sum(c.output_tokens for c in calls)
+    row["modes"] = {k: os.environ.get(k, "") for k in ("SYLLABYTE_BRIEF", "SYLLABYTE_PICTURES", "SYLLABYTE_BEATS")}
     return row
 
 
@@ -154,7 +168,12 @@ def cmd_plan(args):
             print(f"SKIP {t['id']}: budget", flush=True)
             return
         print(f"START {t['id']}", flush=True)
-        row = plan_one(t, out, spend)
+        try:
+            row = plan_one(t, out, spend)
+        except Exception as e:
+            traceback.print_exc()
+            print(f"FAILED {t['id']}: {type(e).__name__}: {e}", flush=True)
+            return
         if row["error"] and "budget stop" in row["error"]:
             print(f"STOP {t['id']}: {row['error']}", flush=True)
             return
@@ -352,6 +371,17 @@ def cmd_report(args):
     for r in rows:
         by_area[r["area"]].append(r)
     views = Counter(k for r in rows if r["drawn"] for k in r["views"])
+    held = held_out_ids()
+
+    def half(name: str, keep) -> str:
+        rs = [r for r in rows if keep(r["id"])]
+        if not rs:
+            return f"| {name} | 0 | | | | | |"
+        sc = [r["judge"]["score"] if "judge" in r else 0 for r in rs]
+        return (f"| {name} | {len(rs)} | {sum(r['drawn'] for r in rs)} | "
+                f"{sum(r['drawn'] and r['attempts'] == 1 for r in rs)} | "
+                f"{sum(verdict(r) == 'good' for r in rs)} | {sum(sc) / len(rs):.2f} | "
+                f"${sum(r['cost_usd'] for r in rs) / len(rs):.4f} |")
     lines = [
         "# Visual coverage benchmark", "",
         f"{n} topics, {len(by_area)} areas (benchmarks/visual-coverage/topics.json). Planner only: up to 3 "
@@ -364,6 +394,13 @@ def cmd_report(args):
         f"- Layout findings in renders: {sum(len(r.get('layout_findings', [])) for r in rows)}",
         f"- Cost: planning ${plan_cost:.2f}, judging ${judge_cost:.2f}; planning time "
         f"{sum(r['seconds'] for r in rows) / n:.0f} s a topic",
+        "", "## Tuning and held-out halves", "",
+        "The first topic of each area is the tuning half (examples may be written from what it shows); the second is "
+        "held out (no example is written from it). The held-out half is the result. Mean score counts a topic with "
+        "no picture as 0.", "",
+        "| Half | Topics | Drawn | First program | Good | Mean score | Planning $/topic |",
+        "|---|---|---|---|---|---|---|",
+        half("tuning", lambda i: i not in held), half("held-out", lambda i: i in held), half("all", lambda i: True),
         "", "## By area", "", "| Area | Topic | Drawn | Tries | Views | Verdict | Score | Missing or wrong |",
         "|---|---|---|---|---|---|---|---|",
     ]
