@@ -109,8 +109,9 @@ add; the carries), label at most 3 characters, at most 3 rows, t.mark_row(key, j
 j, t.unrow(key=None). A tape with rows under it stays on one line (about 15 columns).""",
     "nodes": """\
   - nodes(name, nodes=(), layout='tree', directed=False, title=None): up to 20 nodes, each keyed by a short name \
-with a label of at most 4 characters (a label of 3-4 characters, f(3) or 'cat', is drawn in a pill, so fewer fit \
-across). n.add(key, label=None, style=None), n.remove(key), n.link(a, b, style=None, label=None, slot=None), \
+with a label of at most 4 characters in a graph layout and 6 in a tree (a label of 3 or more characters, f(3), \
+'cat', 'body', is drawn in a pill as wide as its text; each tree node takes only its own width, so short leaves \
+pack close under a wide parent). n.add(key, label=None, style=None), n.remove(key), n.link(a, b, style=None, label=None, slot=None), \
 n.unlink(a, b), n.restyle_link(a, b, style), n.parent(key), n.mark(key, style), n.unmark(key=None). \
 layout 'tree': a link goes parent -> child, and linking a node under a new parent moves it; 'binary': the same \
 with slot=0 for a left child and slot=1 for a right one; a tree node may hold keys instead of a label, \
@@ -194,10 +195,12 @@ seen in 3D from one fixed angle. s.plot(key, f, n=12) the surface; s.columns(key
 (a double integral's sum), returning their total volume; s.point(key, x, y, z, label=None); s.mark(key, style), \
 s.remove(key). (For vectors, planes, curves in space or a turning camera, use space.)""",
     "grid": """\
-  - grid(name, rows, row_names=None, col_names=None, title=None, matrix=False): a table of up to 12 rows and 10 \
+  - grid(name, rows, row_names=None, col_names=None, title=None, matrix=False, turn=True): a table of up to 12 rows and 10 \
 columns (a DP table, a truth table, a database table, an adjacency matrix), or with matrix=True a matrix in \
-brackets; rows is a list of lists, each entry at most 6 characters (None: blank). About 3.7 units across in all, \
-so short entries and names when there are many columns (a table too wide across is drawn on its side). g[r][c] \
+brackets; rows is a list of lists, each entry at most 10 characters (None: blank). About 3.7 units across in all, \
+so short entries and names when there are many columns (a table too wide across is drawn on its side, except a \
+square one, a heat map, or one made with turn=False: pass turn=False for a picture of space, a plate, pixels, a \
+board, an image, whose rows must stay rows). g[r][c] \
 reads and writes an entry; g.row(r), g.col(c), g.rows, g.cols; g.mark(r, c, style), g.mark_row(r, style), \
 g.mark_col(c, style), g.unmark(r=None, c=None); g.heat(lo=None, hi=None) colours each number by its value, dark \
 low and bright high (an attention or confusion matrix, an image's pixels, costs), g.heat(on=False) stops.""",
@@ -208,7 +211,7 @@ parse tree with words, a class or ER diagram. f.box(key, text=None, shape='box',
 fields=None) (up to 2 lines of 14 characters: a longer line wraps at its spaces; shapes: box, round, diamond for a \
 decision, circle, double for an accepting state, cylinder for a database, document, cloud, and with a pictogram \
 beside the text: person, chip for a CPU, monitor for a computer, lock, server; fields=[...] makes a record: its \
-name over up to 5 fields of 16 characters, for a class 'id: int', 'deposit()', an entity, a struct, and \
+name over up to 6 fields of 20 characters, for a class 'id: int', 'deposit()', an entity, a struct, and \
 f.fields(key, fields) changes them); f.text(key, text); f.arrow(a, b, label=None, style=None, kind='arrow') \
 (kind 'line' for no head (an ER relationship), 'dashed' (a dependency), 'inherit' a hollow head (UML's "is a"); \
 a label of a word or two; a == b draws a loop); f.unarrow(a, b), f.restyle(a, b, style) colours an arrow, \
@@ -223,7 +226,8 @@ t0=0, step=1, style=None) a digital signal, values of 0 and 1 each `step` long, 
 flip-flop's D and Q: a timing diagram), tl.mark(key, style), tl.remove(key). For CPU schedules, Gantt charts, \
 pipelines, timing diagrams, anything over time.""",
     "sequence": """\
-  - sequence(name, actors, title=None): 2-4 actors side by side (names at most 8 characters), each with a \
+  - sequence(name, actors, title=None): 2-4 actors side by side (names at most 8 characters; when they don't fit \
+across, every other name drops half a row), each with a \
 lifeline; s.message(key, a, b, label=None, style=None, dashed=False) an arrow from a to b below the messages \
 before it (a == b: to itself; dashed for a reply; a short label, longer than 22 characters is left out), \
 s.mark(key, style), s.remove(key). Up to 16 messages: about 7 fit the whole frame (5 above a formula), and past \
@@ -243,11 +247,11 @@ circuit of 3 levels (a full adder) takes the whole frame: draw it as the only vi
 truth table (or use one FA block).""",
     "memory": """\
   - memory(name, title=None): stack frames down the left, heap objects down the right, each a list of fields. \
-m.frame(key, title=None) (a call: 'main()', 'f(3)'), m.obj(key, title=None) (titles at most 10 characters), \
-m.set(box, name, value) (a value of at most 6 characters, None for blank, or m.ref(key) for an arrow to that heap \
+m.frame(key, title=None) (a call: 'main()', 'f(3)'), m.obj(key, title=None) (titles at most 14 characters), \
+m.set(box, name, value) (a name or value of at most 10 characters, None for blank, or m.ref(key) for an arrow to that heap \
 object), m.get(box, name), m.unset(box, name), m.remove(key) pops a frame or frees an object, m.mark(box, \
 name=None, style). At most 6 frames and 6 objects of 5 fields, as height allows; about 3 objects of 2 fields fit \
-beside a frame.""",
+beside a frame. Too wide side by side, the frames are drawn above the objects in one column.""",
     "formula": """\
   - formula(name, lines=(), title=None): up to 4 lines of TeX, worked one step at a time, each at most about 22 \
 symbols. f.add(tex) writes the next line (returns its index); f.set(i, tex) rewrites line i (a step of the \
@@ -290,6 +294,26 @@ timeline; messages between parties -> sequence; logic, blocks and flip-flops -> 
 the call stack -> memory; code being traced -> code; functions, data, 2D vectors, linear and nonlinear maps, heat \
 maps -> axes; vectors, planes, curves and surfaces in 3D -> space; sets -> venn; shapes and angles -> geometry; \
 integers and intervals -> numberline.
+  - Draw the topic's standard picture, the one its textbook draws, with the view that has it (runs/bench1: pictures \
+that drew something else were judged half right): a box plot -> a.boxplot(...) (the box, median and whiskers), not \
+dots; Euler's method or an ODE -> a.field(...) under the steps; a hash table with chaining -> \
+nodes(layout='fixed'): only the buckets the example uses (at most 6; never all 10: they don't fit down the frame), \
+in a column at the left (at=(0, -i)), each chain running right from its bucket by links (at=(1, -i), (2, -i)...), \
+directed=True, the hash function in the title; consistent hashing, residues mod n, a clock, a ring of \
+servers -> nodes(layout='circle') with every position written; a complex map z -> w -> two axes (the z-plane, then \
+the w-plane) with the grid sent through it; symmetries of a polygon -> geometry polygon whose corner labels move; \
+an address split into fields (paging, caches, subnets, IEEE floats) -> one tape with field() brackets, the table \
+it indexes beside it, and the number it builds; a game tree, a recursion or a DOM -> nodes tree; threads \
+interleaving -> timeline blocks labelled with their step ('load', 'add', 'store'); a cobweb, Newton or gradient \
+descent -> the curve, the steps drawn on it, and each x_k labelled; a heat map -> the hot side where the slide puts it.
+  - Put every number and word the caption relies on into the picture: a label beside the point, an entry in the \
+table, a field, a watch() chip, a formula line (the row operation 'R2 - 4R1', a degree beside each vertex, 'hit' or \
+'miss', 't = 0.1' beside its curve, a term number on a node). A caption that names a value the picture doesn't show \
+was judged a miss. Each snapshot draws the change its caption says (a snapshot that looks the same as the one \
+before shows nothing new), and the picture never disagrees with its caption or the slide.
+  - Keep axes readable: at most 6-8 tick labels on an axis, a range that shows the whole example (the full period, \
+every x_k) but no more, and things big enough to see (a band or bar under 0.2 units is a sliver: widen the range or \
+change the scale).
   - Math you can call: sin cos tan asin acos atan atan2 exp log log2 log10 sqrt floor ceil hypot radians degrees \
 pi e factorial comb perm gcd; derivative(f, x), integral(f, a, b), root(f, a, b) (f(a), f(b) of opposite signs); \
 Fraction(p, q) for exact probabilities (str(Fraction(3, 10)) is '3/10'); complex(x, y) and 1j for complex numbers; \

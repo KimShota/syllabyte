@@ -103,13 +103,19 @@ def transpose(view: dict) -> dict:
 
 def _turned(views: list[dict], width: float) -> list[dict]:
     """The table as drawn: on its side when it is too wide for the frame across but not on its side (the frame is
-    tall: runs/p5's 7-column DP table was 4.6 units wide and 3.8 fit)."""
-    if _grid_width(views) <= width - 0.1 or views[0]["matrix"]:
+    tall: runs/p5's 7-column DP table was 4.6 units wide and 3.8 fit). Never a picture of space: a square grid, a heat
+    map, or one made with turn=False (runs/bench1-2: a plate's hot top edge and a pixel grid's rows were drawn as
+    columns, against the slide)."""
+    v = views[0]
+    square = len(v["values"]) == len(v["values"][0])
+    if (_grid_width(views) <= width - 0.1 or v["matrix"] or square or not v.get("turn", True)
+            or any(w.get("heat") for w in views)):
         return views
     turned = [transpose(v) for v in views]
     return turned if _grid_width(turned) < _grid_width(views) else views
 
 
+TABLE_EDGE = 0.04  # the least room a table leaves across its band (its outer lines are 0.02 thick)
 GRID_WINDOW = 4  # rows a tall table shows at least, scrolling to its marked rows
 GRID_MORE = 0.24  # above and below a scrolled table: room for the arrows that say more is there
 
@@ -148,12 +154,15 @@ def grid_layout(views: list[dict], region) -> GridLayout:
     widths, names, head, body = _grid_size(views)
     total = _grid_width(views)
     room_h = region.h - title - 0.08
-    k = min(MAX_GROW, (region.w - 0.1) / total, room_h / (head + body))
+    # 0.1 to spare across, down to TABLE_EDGE when only the spare is in the way (runs/bench1: a 3-column stack
+    # table was 3.71 units wide against 3.70 and was refused)
+    room_w = region.w - 0.1 if total <= region.w - 0.1 else region.w - TABLE_EDGE
+    k = min(MAX_GROW, room_w / total, room_h / (head + body))
     window = 0
     if k < 1 - 1e-9:
-        if (region.w - 0.1) / total < 1:
-            raise PictureError(f"the table is {total:.1f} units wide and {region.w:.1f} fit: use shorter entries "
-                               "or fewer columns")
+        if room_w / total < 1:
+            raise PictureError(f"the table is {total:.2f} units wide and {region.w - TABLE_EDGE:.2f} fit: use "
+                               "shorter entries or fewer columns")
         # too tall: a window of rows that follows the marked ones, so the picture beside it keeps its room
         window = int((room_h - head - 2 * GRID_MORE) / ROW_H + 1e-9)
         if views[0]["matrix"] or window < GRID_WINDOW - 1:
@@ -200,7 +209,8 @@ def box_size(text: str, shape: str, k: float = 1.0, fields=None) -> tuple[float,
     lines = text.split("\n") if text else [""]
     if shape == "record":  # its name over a rule, then its fields one a line, at the audit's minimum font (28)
         lines = lines + list(fields or [])
-        w = max(text_w(line, k * RECORD_FONT / 30) for line in lines) + 2 * RECORD_PAD * k
+        # 6% more than the measured widths: "speak(): Woof" (punctuation counted narrow) ran past its box in bench1
+        w = max(text_w(line, k * RECORD_FONT / 30) for line in lines) * 1.06 + 2 * RECORD_PAD * k
         h = LINE_H * k * len(lines) + 2 * BOX_PAD_Y * k + (RECORD_RULE * k if fields else 0.0)
         return max(w, 0.5 * k), max(h, 0.46 * k)
     w = max(text_w(line, k) for line in lines) + 2 * BOX_PAD_X * k
@@ -312,6 +322,70 @@ def flow_order(keys: list[str], arrows, rank: dict[str, int]) -> list[list[str]]
 DUMMY = 0.26  # the room an arrow takes through a layer it passes
 
 
+def _shared_slots(views: list[dict]) -> dict[str, str]:
+    """Boxes that are never on screen together and sit in the same layer share one slot: each key -> the key whose
+    place it takes (itself when it shares with none). A box removed in one step and its replacement added in the next
+    ('Date: free text' -> 'Date picker') were laid out side by side, so in runs/bench1 a sign-up form of four rows
+    needed twice the width and was refused."""
+    boxes, arrows = _union(views)
+    keys = list(boxes)
+    fixed = {k: b["layer"] for k, b in boxes.items() if b.get("layer") is not None}
+    rank = _ranks(keys, arrows, fixed)
+    present = [set(v["boxes"]) for v in views]
+    linked = {k for a, b in arrows for k in (a, b)}
+    groups: list[list[str]] = []
+    for k in keys:
+        for g in groups:
+            same_layer = (fixed.get(k) is not None and fixed.get(k) == fixed.get(g[0])) or (
+                fixed.get(k) is None and fixed.get(g[0]) is None and rank[k] == rank[g[0]]
+                and k not in linked and g[0] not in linked)
+            if same_layer and not any(k in p and m in p for p in present for m in g):
+                g.append(k)
+                break
+        else:
+            groups.append([k])
+    return {m: g[0] for g in groups for m in g}
+
+
+def _merged(views: list[dict], rep: dict[str, str]) -> list[dict]:
+    """The views with each box renamed to the slot it shares (_shared_slots)."""
+    if all(k == r for k, r in rep.items()):
+        return views
+    out = []
+    for v in views:
+        w = dict(v)
+        w["boxes"] = {rep[k]: b for k, b in v["boxes"].items()}
+        w["arrows"] = [(rep[a], rep[b], *rest) for a, b, *rest in v["arrows"]]
+        out.append(w)
+    return out
+
+
+def _fit_ranks(boxes: dict, arrows, fixed: dict[str, int], width: float, across: bool) -> dict[str, int]:
+    """_ranks, with a layer too wide for the frame split onto rows of its own (the layers after it move down), so
+    the arrows that pass a row go through a slot beside its boxes. In runs/bench1 a class diagram (Animal above Dog
+    and Cat, each a record of fields) needed 5.1 units across and 3.7 fit."""
+    rank = _ranks(list(boxes), arrows, fixed)
+    if across:
+        return rank
+    sizes = {k: bsize(b) for k, b in boxes.items()}
+    out, shift = {}, 0
+    for r in sorted(set(rank.values())):
+        layer = [k for k in boxes if rank[k] == r]
+        rows, used = [[]], 0.0
+        for k in layer:
+            w = sizes[k][0]
+            if rows[-1] and used + SLOT_GAP + DUMMY + w > width:  # room for an arrow passing beside it
+                rows.append([])
+                used = 0.0
+            used += w + (SLOT_GAP if rows[-1] else 0.0)
+            rows[-1].append(k)
+        for i, row in enumerate(rows):
+            for k in row:
+                out[k] = r + shift + i
+        shift += len(rows) - 1
+    return out
+
+
 def _chains(keys, arrows, rank):
     """An arrow that skips layers passes each one between at a slot of its own (a dummy box, as layered drawings
     route long edges), so it runs between the boxes, not through them. The ranks with the dummies, the arrows to
@@ -360,10 +434,13 @@ def border_point(c: np.ndarray, w: float, h: float, toward: np.ndarray, shape: s
 
 
 def flow_heights(views: list[dict], width: float, title: float) -> tuple[float, float]:
+    views = _merged(views, _shared_slots(views))
     boxes, arrows = _union(views)
+    if not boxes:  # snapshots before the diagram's first box (runs/bench3: this raised ValueError and ended the run)
+        return title + 0.3, title + 0.3
     fixed = {k: b["layer"] for k, b in boxes.items() if b.get("layer") is not None}
-    rank = _ranks(list(boxes), arrows, fixed)
     across = views[0]["direction"] == "right"
+    rank = _fit_ranks(boxes, arrows, fixed, width - 0.1, across)
     ranked, order, chains = _chains(list(boxes), arrows, rank)
     layers = flow_order(list(ranked), order, ranked)
     sizes = {k: bsize(b) for k, b in boxes.items()}
@@ -377,16 +454,36 @@ def flow_heights(views: list[dict], width: float, title: float) -> tuple[float, 
 
 
 def flow_layout(views: list[dict], region) -> FlowLayout:
+    rep = _shared_slots(views)
+    lay = _flow_layout(_merged(views, rep), region)
+    if all(k == r for k, r in rep.items()):
+        return lay
+    # every box takes its slot's place; an arrow or label of a renamed box is its slot's
+    lay.boxes = {k: lay.boxes[r] for k, r in rep.items()}
+    for v in views:
+        for a, b, *_ in v["arrows"]:
+            ra, rb = rep[a], rep[b]
+            if a == b:
+                if f"{ra}>{ra}" in lay.loops:
+                    lay.loops[f"{a}>{a}"] = lay.loops[f"{ra}>{ra}"]
+            elif f"{ra}>{rb}" in lay.arrows:
+                lay.arrows[f"{a}>{b}"] = lay.arrows[f"{ra}>{rb}"]
+            if (ra, rb) in lay.labels:
+                lay.labels[(a, b)] = lay.labels[(ra, rb)]
+    return lay
+
+
+def _flow_layout(views: list[dict], region) -> FlowLayout:
     title = _title(views)
     boxes, arrows = _union(views)
-    if not boxes:
-        raise PictureError("the flow diagram has no boxes")
+    if not boxes:  # nothing to place yet: the boxes come in a later snapshot, laid out with its own group
+        return FlowLayout(1.0, {}, {}, {})
     keys = list(boxes)
     fixed = {k: b["layer"] for k, b in boxes.items() if b.get("layer") is not None}
-    rank = _ranks(keys, arrows, fixed)
+    across = views[0]["direction"] == "right"
+    rank = _fit_ranks(boxes, arrows, fixed, region.w - 0.1, across)
     ranked, order, chains = _chains(keys, arrows, rank)
     layers = flow_order(list(ranked), order, ranked)
-    across = views[0]["direction"] == "right"
     dummies = [d for ds in chains.values() for d in ds]
     room_w, room_h = region.w - 0.1, region.h - title - 0.1
     labelled = {}
@@ -762,6 +859,11 @@ class SequenceLayout:
     labels: dict[str, np.ndarray]  # a message's label centre, by key, as (x, height above its arrow)
     self_w: float = 0.36  # how far a message to itself loops out
     dropped: list = field(default_factory=list)
+    box_ws: list = field(default_factory=list)  # each actor's box width (its own name)
+    drop: list = field(default_factory=list)  # how far each actor's box sits below `top` (staggered names)
+
+    def box_top(self, i: int) -> float:
+        return self.top - (self.drop[i] if self.drop else 0.0)
 
     def row_y(self, row: int, snap: int) -> float:
         """The arrow's height of message row `row` in snapshot `snap`."""
@@ -780,25 +882,55 @@ def _rows(views) -> list[int]:
     return sorted({m["row"] for v in views for m in v["messages"].values()})
 
 
+ACTOR_GAP = 0.16  # between two actor boxes side by side
+STAGGER = ACTOR_H + 0.08  # how far every other actor's box drops when the names don't fit side by side
+LIFE_ROOM = 0.08  # between a lifeline and the edge of another actor's box
+
+
+def actor_boxes(actors: list[str], width: float) -> tuple[list[float], list[float], list[float]]:
+    """Each actor's lifeline x (from the band's left), box width and drop. Boxes are as wide as their own names,
+    the outer two at the edges. When the names don't fit side by side, every other box drops a row (runs/bench1:
+    'Browser', 'DNS', 'Server' needed 5.3 units with every box as wide as the longest name, and 3.7 fit), so a
+    box only has to clear its neighbours' lifelines, not their boxes."""
+    n = len(actors)
+    ws = [text_w(a) + 0.24 for a in actors]
+    if n == 1:
+        return [width / 2], ws, [0.0]
+    x0, x1 = ws[0] / 2, width - ws[-1] / 2
+    xs = [x0 + (x1 - x0) * i / (n - 1) for i in range(n)]
+    if all(xs[i + 1] - xs[i] >= (ws[i] + ws[i + 1]) / 2 + ACTOR_GAP - 1e-9 for i in range(n - 1)):
+        return xs, ws, [0.0] * n
+    if n >= 3:
+        side = all(xs[i + 2] - xs[i] >= (ws[i] + ws[i + 2]) / 2 + ACTOR_GAP - 1e-9 for i in range(n - 2))
+        clear = all(abs(xs[j] - xs[i]) >= ws[j] / 2 + LIFE_ROOM - 1e-9
+                    for i in range(n) for j in range(n) if i != j and (i - j) % 2)
+        if side and clear:
+            return xs, ws, [STAGGER * (i % 2) for i in range(n)]
+    need = sum(ws) + (n - 1) * ACTOR_GAP
+    raise PictureError(f"{n} actors' names need {need:.1f} units across and {width:.1f} fit: use shorter names "
+                       "or fewer actors")
+
+
 def sequence_heights(views: list[dict], width: float, title: float) -> tuple[float, float]:
     rows = max(1, len(_rows(views)))
     least = min(rows, MIN_MSG_WINDOW)
-    return title + ACTOR_H + 0.15 + least * MSG_ROW + 0.1, title + ACTOR_H + 0.15 + rows * MAX_MSG_ROW + 0.1
+    try:
+        drop = max(actor_boxes(views[0]["actors"], width - 0.1)[2])
+    except PictureError:
+        drop = 0.0  # sequence_layout says why
+    head = title + ACTOR_H + drop + 0.15
+    return head + least * MSG_ROW + 0.1, head + rows * MAX_MSG_ROW + 0.1
 
 
 def sequence_layout(views: list[dict], region) -> SequenceLayout:
     title = _title(views)
     actors = views[0]["actors"]
-    n = len(actors)
-    # boxes as wide as the longest name, the outer two at the edges, so the messages between have the most room
-    box_w = max(text_w(a) for a in actors) + 0.24
-    span = region.w - 0.1 - box_w
-    if n * box_w + (n - 1) * 0.16 > region.w - 0.1:
-        raise PictureError(f"{n} actors' names need {n * box_w + (n - 1) * 0.16:.1f} units across and "
-                           f"{region.w - 0.1:.1f} fit: use shorter names or fewer actors")
-    xs = [region.cx - span / 2 + span * i / (n - 1) for i in range(n)]
+    # each box as wide as its own name, the outer two at the edges, so the messages between have the most room
+    xs, ws, drop = actor_boxes(actors, region.w - 0.1)
+    xs = [region.cx - (region.w - 0.1) / 2 + x for x in xs]
+    box_w = max(ws)
     rows = _rows(views)
-    room = region.h - title - ACTOR_H - 0.15 - 0.1
+    room = region.h - title - ACTOR_H - max(drop) - 0.15 - 0.1
     if room / max(1, len(rows)) >= MSG_ROW - 1e-9:
         window, row_h = len(rows), min(MAX_MSG_ROW, room / max(1, len(rows)))
     else:  # more messages than fit: the newest stay in view and the oldest scroll up out of it
@@ -807,12 +939,13 @@ def sequence_layout(views: list[dict], region) -> SequenceLayout:
             raise PictureError(f"the message diagram gets {room:.1f} units of height, room for {window} messages; "
                                f"it needs room for {MIN_MSG_WINDOW} (drop a view)")
     top = region.top - title - (room - row_h * window) / 2
-    first_row = top - ACTOR_H - 0.15
+    first_row = top - ACTOR_H - max(drop) - 0.15
     start = []
     for v in views:
         last = max((rows.index(m["row"]) for m in v["messages"].values()), default=0)
         start.append(max(0, last - window + 1))
-    lay = SequenceLayout(xs, box_w, top, first_row, row_h, window, start, rows, first_row - row_h * window, {})
+    lay = SequenceLayout(xs, box_w, top, first_row, row_h, window, start, rows, first_row - row_h * window, {},
+                         box_ws=ws, drop=drop)
     x_lo, x_hi = region.cx - region.w / 2, region.cx + region.w / 2
     for v in views:
         for key, m in v["messages"].items():
@@ -1165,6 +1298,7 @@ class MemoryLayout:
     heap_right: float
     right_edge: float
     rows: dict[str, list[str]] = field(default_factory=dict)  # each box's fields, in the order first set
+    stacked: bool = False  # the stack above the heap (too wide side by side); every pointer runs down the right
 
 
 def _memory_union(views):
@@ -1203,11 +1337,26 @@ def _box_dims(widths) -> tuple[float, float]:
     return max(name_w + value_w, title + 0.2), name_w
 
 
+def _memory_widths(views) -> tuple[float, float, float, float]:
+    """(side by side, stacked): the width each arrangement needs, and the stack's and heap's column widths."""
+    order, boxes, _fields, widths = _memory_union(views)
+    to_heap, in_heap = _arrows_most(views)
+    dims = {k: _box_dims(widths[k]) for k in order}
+    stack_w = max([dims[k][0] for k in order if boxes[k]["area"] == "stack"], default=0.0)
+    heap_w = max([dims[k][0] for k in order if boxes[k]["area"] == "heap"], default=0.0)
+    middle = 0.3 + CHANNEL * max(0, to_heap - 1) if stack_w and heap_w else 0.0
+    outer = 0.24 + CHANNEL * max(0, in_heap - 1) if in_heap else 0.0
+    lanes = to_heap + in_heap
+    stacked = max(stack_w, heap_w) + (0.24 + CHANNEL * (lanes - 1) if lanes else 0.0)
+    return stack_w + middle + heap_w + outer, stacked, stack_w, heap_w
+
+
 def memory_heights(views: list[dict], width: float, title: float) -> tuple[float, float]:
     order, boxes, fields, _w = _memory_union(views)
     tall = {area: sum(BOX_TITLE_H + FIELD_H * max(1, len(fields[k])) + BOX_GAP for k in order
                       if boxes[k]["area"] == area) for area in ("stack", "heap")}
-    h = max(tall.values()) + 0.1
+    side, _stacked, _s, _h = _memory_widths(views)
+    h = (max(tall.values()) if side <= width - 0.05 else sum(tall.values()) + 0.16) + 0.1
     return title + h, title + h + 0.4
 
 
@@ -1221,9 +1370,8 @@ def memory_layout(views: list[dict], region) -> MemoryLayout:
     middle = 0.3 + CHANNEL * max(0, to_heap - 1) if stack_w and heap_w else 0.0
     outer = 0.24 + CHANNEL * max(0, in_heap - 1) if in_heap else 0.0
     need = stack_w + middle + heap_w + outer
-    if need > region.w - 0.05:
-        raise PictureError(f"the memory diagram is {need:.1f} units wide and {region.w:.1f} fit: use shorter names "
-                           "and values, or fewer pointers")
+    if need > region.w - 0.05:  # too wide side by side (runs/bench1: a closure's frames and function object)
+        return _memory_stacked(views, region, title, order, boxes, fields, dims, stack_w, heap_w)
     left = region.cx - need / 2
     stack_right = left + stack_w
     heap_left = stack_right + middle
@@ -1245,6 +1393,34 @@ def memory_layout(views: list[dict], region) -> MemoryLayout:
             y -= h + BOX_GAP
     return MemoryLayout(out, {k: dims[k][1] for k in order}, stack_right, heap_left, heap_right, heap_right + outer,
                         fields)
+
+
+def _memory_stacked(views, region, title, order, boxes, fields, dims, stack_w, heap_w) -> MemoryLayout:
+    """The stack's frames above the heap's objects, one column, every pointer in a lane of its own at the right."""
+    _side, need, _s, _h = _memory_widths(views)
+    if need > region.w - 0.05:
+        raise PictureError(f"the memory diagram is {need:.1f} units wide even with the stack above the heap, and "
+                           f"{region.w:.1f} fit: use shorter names and values, or fewer pointers")
+    col = max(stack_w, heap_w)
+    heights = {k: BOX_TITLE_H + FIELD_H * max(1, len(fields[k])) for k in order}
+    keys = [k for k in order if boxes[k]["area"] == "stack"] + [k for k in order if boxes[k]["area"] == "heap"]
+    split = 0.16 if any(boxes[k]["area"] == "stack" for k in keys) and any(boxes[k]["area"] == "heap" for k in keys) \
+        else 0.0
+    tall = sum(heights.values()) + BOX_GAP * (len(keys) - 1) + split
+    room = region.h - title - 0.1
+    if tall > room + 1e-9:
+        raise PictureError(f"the memory diagram is too wide side by side, and stacked it needs {tall:.1f} units of "
+                           f"height and gets {room:.1f}: use fewer frames, objects or fields")
+    left = region.cx - need / 2
+    y = region.top - title - 0.05 - (room - tall) / 2
+    out = {}
+    for i, k in enumerate(keys):
+        if i and boxes[k]["area"] == "heap" and boxes[keys[i - 1]]["area"] == "stack":
+            y -= split
+        out[k] = (left, y, col, heights[k])
+        y -= heights[k] + BOX_GAP
+    right = left + col
+    return MemoryLayout(out, {k: dims[k][1] for k in order}, right, left, right, left + need, fields, stacked=True)
 
 
 def memory_rows(view: dict, lay: MemoryLayout, key: str) -> list[tuple[str, float]]:
@@ -1270,7 +1446,11 @@ def memory_arrows(view: dict, lay: MemoryLayout) -> dict[str, list[tuple[float, 
             vx = left + lay.name_w[k] + (w - lay.name_w[k]) / 2
             tl, ttop, tw, _th = lay.boxes[f[2]]
             ty = ttop - BOX_TITLE_H / 2
-            if b["area"] == "stack":
+            if lay.stacked:  # one column: every pointer out to its own lane at the right, into the object's side
+                ch = lay.heap_right + 0.15 + CHANNEL * out_n
+                out_n += 1
+                out[f"{k}.{name}"] = [(vx, y), (ch, y), (ch, ty), (tl + tw, ty)]
+            elif b["area"] == "stack":
                 ch = lay.stack_right + 0.15 + CHANNEL * mid_n
                 mid_n += 1
                 out[f"{k}.{name}"] = [(vx, y), (ch, y), (ch, ty), (tl, ty)]

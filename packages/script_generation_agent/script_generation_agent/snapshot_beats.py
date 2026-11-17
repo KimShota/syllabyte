@@ -359,7 +359,36 @@ def program_problems(program: list[str], level: int) -> tuple[list[dict], list[s
     if (problem := _picture_problem(picture_source(program), "full")) is not None:
         return [], [problem]
     snaps = picture_snapshots(program)
-    return snaps, band_problems(snaps, level)
+    return snaps, band_problems(snaps, level) + dropped_labels(snaps)
+
+
+def dropped_labels(snaps: list[dict]) -> list[str]:
+    """The labels the layout had to leave out, as a problem the planner can fix with shorter text. They used to be
+    left out silently: in runs/bench1-2 a race condition's timeline blocks ('load 5', 'store 6', each block 0.55
+    units wide) lost every label, and the critic could not read the interleaving."""
+    from animation_agent.scene.api import PictureError
+    from animation_agent.scene.layout import plan_groups
+    from animation_agent.visuals.specs import _dialogue_area
+
+    try:
+        groups = plan_groups(snaps, *_dialogue_area("full"))
+    except PictureError:
+        return []
+    out: list[str] = []
+    for _ids, lay in groups:
+        for view in lay.math.values():
+            for text in getattr(view, "dropped", None) or []:
+                if str(text) not in out and str(text) not in AXIS_NAMES:
+                    out.append(str(text))
+    if not out:
+        return []
+    shown = ", ".join(repr(t) for t in out[:6])
+    return [f"these labels don't fit where they go and are left out of the picture: {shown}. Keep the numbers "
+            "the captions rely on: shorten them (a symbol or an abbreviation), label fewer things on that view, or "
+            "give it more room (hide a view it shares the frame with)"]
+
+
+AXIS_NAMES = {"x", "y", "z"}  # a crowded 3D axis drops its own name; nothing the planner can change
 
 
 def _feedback(program: list[str], problems: list[str], drawn: bool) -> str:

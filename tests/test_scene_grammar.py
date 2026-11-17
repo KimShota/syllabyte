@@ -28,7 +28,7 @@ def run(source: str) -> list[dict]:
     ("x = 1", "never called snap"),
     ("cells('a', [1, 2]); cells('a', [3])", "already a view"),
     ("cells('a', [123]); snap()", "longer than 2 characters"),
-    ("n = nodes('t'); n.add(1); n.mark(1, 'purple')", "unknown style"),
+    ("n = nodes('t'); n.add(1); n.mark(1, 'sparkly')", "unknown style"),
 ])
 def test_the_sandbox_refuses(source, why):
     result = run_program(source)
@@ -119,7 +119,8 @@ def test_a_node_label_of_four_characters_gets_a_node_big_enough():
                 "t.link('f4', 'f3'); t.link('f4', 'f2')\nsnap()")
     lay = L.plan(snaps, *DIALOGUE)
     assert lay.nodes["t"].r >= L.node_r([snaps[0]["views"]["t"]]) > L.NODE_R
-    assert "longer than 4" in run_program("t = nodes('t'); t.add('a', 'fib(3)'); snap()").error
+    assert "longer than 4" in run_program("t = nodes('t', layout='graph'); t.add('a', 'fib(3)'); snap()").error
+    assert "longer than 6" in run_program("t = nodes('t'); t.add('a', 'fibo(3)'); snap()").error
 
 
 def test_a_forest_shrinks_its_gaps_before_it_wraps():
@@ -499,7 +500,7 @@ def test_a_dp_table_and_a_matrix_product_are_computed():
 
 
 @pytest.mark.parametrize("source, why", [
-    ("g = grid('g', [[1234567]]); snap()", "longer than 6"),
+    ("g = grid('g', [[12345678901]]); snap()", "longer than 10"),
     ("g = grid('g', [[1, 2], [3]]); snap()", "same number"),
     ("g = grid('g', [[1]]); g[2][0] = 1", "no entry"),
     ("f = flow('f'); f.box('a', shape='star')", "unknown shape"),
