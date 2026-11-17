@@ -10,6 +10,9 @@ import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } fro
 import { extname } from "node:path";
 import type { Courses } from "./courses";
 import type { Db } from "./db";
+import { FIX } from "@syllabyte/core/fixtures";
+import { allReports, reportsCsv } from "./reports";
+import { NO_COURSE } from "./state";
 import { RPC_METHODS, StateRunner, callMethod, trackClientEvents, type ClientEvent } from "./runner";
 import { UploadError, type Uploads } from "./uploads";
 
@@ -236,6 +239,23 @@ export function createApp({ db, auth, runner, courses, uploads, workerToken, cor
       .filter((s) => s.consent === "research")
       .map((s) => ({ participant_code: s.participant_code, condition: s.condition, study: s.study }));
     return c.body(studyCsv(participants), 200, { "Content-Type": "text/csv; charset=utf-8" });
+  });
+
+  /**
+   * Students' error reports (src/reports.ts), researchers only: JSON, or ?format=csv for a spreadsheet. By study code,
+   * never by email, so the list can be shared with an instructor as it is.
+   */
+  app.get("/api/research/reports", (c) => {
+    if (c.get("user").role !== "researcher") return c.json({ error: "researchers only" }, 403);
+    const rows = allReports(db, (id) => {
+      if (id === NO_COURSE) return `${FIX.course.code} ${FIX.course.name} (demo)`;
+      const row = courses.get(id);
+      return row ? [row.code, row.name].filter(Boolean).join(" ") : id;
+    });
+    if (c.req.query("format") === "csv") {
+      return c.body(reportsCsv(rows), 200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": 'attachment; filename="syllabyte-reports.csv"' });
+    }
+    return c.json({ reports: rows });
   });
 
   /**

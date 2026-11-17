@@ -117,6 +117,8 @@ export default function Profile() {
                 </View>
               </Row>
             ) : null}
+            <Group label="Help" />
+            <Row icon="flag" label="Report a problem" chevron onPress={() => router.push("/report")} />
             <Pressable
               accessibilityRole="button"
               onPress={() => {

@@ -2,9 +2,23 @@ import type { DriftAnswer, LearningContext, LearningPlaybackInput, LearningCheck
 import type { Instrument } from "../content/instruments";
 import type {
   AppSettings, BatteryRecord, MisconceptionClip, MisconceptionRequest, MisconceptionVideoView, CalibrationView, Choice, Condition, Confidence, Course, CourseMapView, DemoState, Difficulty, Item,
-  Jol, KuLevel, Level, LevelsView, LevelUpdateCard, NextSessionCardView, PlaylistView, ReportCategory, SittingView,
-  StartResultView, VariantView,
+  AppReportCategory, Jol, KuLevel, Level, LevelsView, LevelUpdateCard, NextSessionCardView, PlaylistView, QuestionReportCategory, ReportCategory,
+  SittingView, StartResultView, VariantView,
 } from "../types";
+
+/** One report, as the student sends it (content/reports.ts has the words for each category). */
+export type ProblemReportInput =
+  | { target: "video"; video_id: string; category: ReportCategory; video_t: number | null; note: string }
+  | { target: "question"; item_id: string; category: QuestionReportCategory; note: string }
+  | { target: "app"; category: AppReportCategory; note: string; screen?: string };
+
+/** What the report form offers to pick from: the course's videos and the questions the student has answered. */
+export interface ReportTargetsView {
+  /** the videos they have opened, most recent first, then the rest of the course's in lecture order */
+  videos: { video_id: string; title: string; lecture_n: number; duration_s: number; last_seen_at: number | null }[];
+  /** the questions they have answered, most recent first */
+  questions: { item_id: string; stem: string; answered_at: number }[];
+}
 
 /**
  * The API contract (plan §6.1). Phase 0 implements it in the browser (mock.ts);
@@ -140,6 +154,9 @@ export interface Api {
   deleteNote(noteId: string): Promise<void>;
   postClaimVerdict(videoId: string, claimIdx: number, verdict: "matches" | "mismatch", note: string): Promise<void>;
   postReport(videoId: string, category: ReportCategory, videoT: number, note: string): Promise<void>;
+  /** A report about a video, a question or the app; throws on an unknown video or question or a bad category. */
+  reportProblem(report: ProblemReportInput): Promise<{ id: string }>;
+  getReportTargets(): Promise<ReportTargetsView>;
 
   // study questionnaires (plan/study-instruments-plan.md): research participants only
   /** batteries due and not yet submitted, minus any put off with "Not now" this visit */

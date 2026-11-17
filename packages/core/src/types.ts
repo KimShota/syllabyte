@@ -376,14 +376,35 @@ export interface ClaimVerdictRecord {
   at: number;
 }
 
+/** What's wrong with a video (the player's report sheet, and the report form in settings). */
 export type ReportCategory = "fact" | "picture" | "captions" | "layout" | "other";
+/** What's wrong with a quiz question. */
+export type QuestionReportCategory = "answer_wrong" | "unclear" | "not_in_slides" | "display" | "other";
+/** A problem with the app itself. */
+export type AppReportCategory = "bug" | "upload" | "other";
+export type ProblemCategory = ReportCategory | QuestionReportCategory | AppReportCategory;
+/** What a report is about. */
+export type ReportTarget = "video" | "question" | "app";
 
+/** A student's error report (consent text: "you can report the error in the app"). */
 export interface ReportRecord {
   id: string;
+  /** missing on reports from before questions and the app could be reported: those are about a video */
+  target?: ReportTarget;
+  /** the video reported; "" when the report is about a question or the app */
   video_id: string;
-  category: ReportCategory;
-  video_t: number;
+  /** the question reported (target "question") */
+  item_id?: string;
+  category: ProblemCategory;
+  /** where in the video, in seconds; null when the student didn't say */
+  video_t: number | null;
   note: string;
+  /** the screen the student came from (target "app"), when the app knows it */
+  screen?: string;
+  /** what was reported, as the student saw it then (a video's title, a question's stem), so the report still reads
+   *  after a bank or video is remade; missing on older reports */
+  about?: string;
+  lecture_n?: number | null;
   status: "open" | "resolved";
   at: number;
 }
