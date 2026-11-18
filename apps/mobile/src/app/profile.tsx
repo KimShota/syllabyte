@@ -8,7 +8,8 @@ import { Icon, type IconName } from "@/components/Icon";
 import { T } from "@/components/T";
 import { api } from "@syllabyte/core/api/client";
 import { endFirstModule, simulateNextDay, simulateNextWeek } from "@syllabyte/core/api/demo";
-import { REMOTE } from "@/data/backend";
+import Constants from "expo-constants";
+import { BACKEND_LABEL, REMOTE } from "@/data/backend";
 import { COURSE, useCourseVersion } from "@/data/course";
 import { SPEEDS, setPrefs, signOut, speedLabel, usePrefs, useQuery } from "@/state/app";
 import { useSession } from "@/state/session";
@@ -136,6 +137,10 @@ export default function Profile() {
             </Pressable>
           </View>
         </View>
+        {/* which setup this copy of the app is in (deploy/README.md): the laptop, or the study's servers */}
+        <T variant="caption" color={colors.onSurfaceVariant} style={styles.version}>
+          SyllaByte {Constants.expoConfig?.version ?? ""} · {BACKEND_LABEL}
+        </T>
       </ScrollView>
     </View>
   );
@@ -228,6 +233,7 @@ const styles = StyleSheet.create({
   rowIcon: { width: 32, height: 32, borderRadius: radius.md, backgroundColor: colors.surfaceContainer, alignItems: "center", justifyContent: "center" },
   statusChip: { height: 28, paddingHorizontal: 10, marginRight: 4, borderRadius: radius.full, backgroundColor: colors.primaryTint, alignItems: "center", justifyContent: "center" },
   speedChip: { minWidth: 48, height: 32, paddingHorizontal: 12, borderRadius: radius.full, backgroundColor: colors.surfaceContainer, alignItems: "center", justifyContent: "center" },
+  version: { textAlign: "center", marginTop: 16, paddingHorizontal: 8 },
   signOut: {
     marginTop: 12,
     minHeight: 48,

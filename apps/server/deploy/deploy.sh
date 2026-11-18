@@ -18,6 +18,7 @@ cd /opt/syllabyte/apps/server
 npm ci --no-audit --no-fund
 chown -R root:root /opt/syllabyte
 chmod -R a+rX /opt/syllabyte
+bash deploy/prepare-env.sh
 install -m 644 deploy/syllabyte.service /etc/systemd/system/syllabyte.service
 install -m 644 deploy/Caddyfile /etc/caddy/Caddyfile
 systemctl daemon-reload

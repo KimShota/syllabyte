@@ -1,0 +1,26 @@
+[Unit]
+Description=SyllaByte worker (questions and videos for api.syllabyte.app)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=syllabyte-worker
+Group=syllabyte-worker
+WorkingDirectory=/opt/syllabyte-worker
+EnvironmentFile=/etc/syllabyte-worker/env
+# model caches (Kokoro's voices from Hugging Face) live in the worker's home
+Environment=HOME=/var/lib/syllabyte-worker PYTHONUNBUFFERED=1
+ExecStart=/bin/sh -c 'exec /opt/syllabyte-worker/.venv/bin/python -m ingestion_agent.worker --work-dir /var/lib/syllabyte-worker/work $WORKER_ARGS'
+Restart=always
+RestartSec=10
+# A job it was working on when stopped goes back to the queue after 30 minutes (STALE_CLAIM_MS in apps/server).
+TimeoutStopSec=20
+ProtectSystem=strict
+# the virtualenv is writable because the voice engine installs its English language model there on first use
+ReadWritePaths=/var/lib/syllabyte-worker /opt/syllabyte-worker
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

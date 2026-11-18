@@ -12,6 +12,8 @@ dependencies = [
     "pydantic>=2.8",
     "python-dotenv>=1.0",
     "kokoro>=0.9.4",
+    # Kokoro's model runs on torch. Listed here only so Linux (the worker server) can take the CPU-only build below.
+    "torch>=2.14,<2.15",
     "soundfile>=0.12",
     # Infra deps kept from the September scaffold (Docker/Mongo/Celery path,
     # not required for the file-based Week-1 pipeline).
@@ -56,6 +58,16 @@ packages = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+# On Linux (the worker server, which has no GPU) torch comes from PyTorch's CPU-only index: PyPI's Linux build pulls
+# several GB of NVIDIA libraries a CPU server never uses. macOS keeps PyPI's build.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [dependency-groups]
 dev = [
