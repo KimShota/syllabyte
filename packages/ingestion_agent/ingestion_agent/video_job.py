@@ -27,7 +27,7 @@ from assessment_agent.video_app_data import (
     video_record,
 )
 from curriculum_alignment_agent.deck_kus import UploadKU
-from syllabyte_common.llm import DEFAULT_MODEL, PRICE_PER_MTOK
+from syllabyte_common.llm import CACHE_READ_SHARE, DEFAULT_MODEL, PRICE_PER_MTOK
 from syllabyte_common.models import CourseCorpus, RunManifest, SlideDeck, SlideRef
 
 Log = Callable[[str], None]
@@ -118,7 +118,7 @@ def run_video_job(
         "video": record,
         "items": [i.model_dump(mode="json") for i in items],
         "flags": flags,
-        "cost_usd": round(manifest.total_cost_usd(PRICE_PER_MTOK), 4),
+        "cost_usd": round(manifest.total_cost_usd(PRICE_PER_MTOK, CACHE_READ_SHARE), 4),
     }
 
 

@@ -62,9 +62,23 @@ PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
     "claude-sonnet-5": (2.00, 10.00),
     "claude-sonnet-5-5": (2.00, 10.00),
     "claude-haiku-4-5": (1.00, 5.00),
+    "claude-haiku-5-5": (0.10, 0.50),  # prompts up to 100k tokens
     # OpenAI prices are not filled in: cost for gpt-* calls reports as $0.
     # Add (input, output) $/Mtok here to include them in the report.
 }
+
+# Cache reads as a share of the model's input price (pricing page, read 2026-11-19): a twentieth on Opus 5.5 and Sonnet
+# 5.5, a tenth on the others. A 5-minute cache write is 1.25x input on every model.
+CACHE_READ_SHARE: dict[str, float] = {"claude-opus-5-5": 0.05, "claude-sonnet-5-5": 0.05}
+
+
+def call_cost_usd(call) -> float:
+    """One recorded call's cost (an LLMCallRecord): input, output, cache reads and cache writes, each at its price."""
+    in_price, out_price = PRICE_PER_MTOK.get(call.model, (0.0, 0.0))
+    return (call.input_tokens * in_price + call.output_tokens * out_price
+            + call.cache_read_tokens * in_price * CACHE_READ_SHARE.get(call.model, 0.1)
+            + call.cache_creation_tokens * in_price * 1.25) / 1_000_000
+
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -162,6 +176,7 @@ def _record_openai_usage(
             output_tokens=usage.completion_tokens,
             cache_read_tokens=cached,
             wall_seconds=wall_seconds,
+            finished_at=time.time(),
         )
     )
 
@@ -340,6 +355,7 @@ def _record_usage(
             cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
             cache_creation_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
             wall_seconds=wall_seconds,
+            finished_at=time.time(),
         )
     )
 
