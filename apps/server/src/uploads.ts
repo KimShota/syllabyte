@@ -744,8 +744,10 @@ export class Uploads {
   /** One reviewed bank per KU of the upcoming/open lecture, shared by all its students. */
   private prepareQuestionBanks(courseId: string, lecture: number): void {
     const fx = this.courses.fixtures(courseId);
+    const gaveUp = new Set((fx.question_failures ?? []).map((f) => questionKey(f)));
     for (const ku of fx.course.kus.filter((k) => k.lecture_n === lecture)) {
-      if (TIERS.every((tier) => fx.items.some((i) => i.context === "assessment" && i.ku_id === ku.id && i.tier === tier))) continue;
+      // every tier saved, or given up after its bank's rewrites: nothing more to write
+      if (TIERS.every((tier) => gaveUp.has(questionKey({ ku_id: ku.id, tier })) || fx.items.some((i) => i.context === "assessment" && i.ku_id === ku.id && i.tier === tier))) continue;
       const job = this.db.prepare("SELECT 1 FROM jobs WHERE course_id = ? AND kind = 'question_bank' AND target_id = ? AND status IN ('queued', 'claimed', 'failed')").get(courseId, ku.id);
       if (!job) this.enqueue("question_bank", ku.id, courseId);
     }
@@ -827,15 +829,28 @@ export class Uploads {
     };
   }
 
-  private questionBankResult(j: JobRow, r: { items?: Item[]; flags?: unknown[] }): void {
+  /**
+   * A reviewed bank: a question for each tier the review approved, and the tiers given up after their rewrites
+   * (`given_up`, each with the review's issue). Approved tiers are published; each given-up tier is recorded as a failed
+   * question job for its KU and tier, so the check counts the KU as ready without it (core questionsReady) and asks
+   * the KU's saved tiers instead, and "Try again" can still ask for it once more (retryQuestion).
+   */
+  private questionBankResult(j: JobRow, r: { items?: Item[]; flags?: unknown[]; given_up?: { tier?: unknown; issue?: unknown }[] }): void {
     if (!Array.isArray(r.flags) || r.flags.length) throw new UploadError("Questions must pass review before publication.");
-    if (!Array.isArray(r.items) || r.items.length !== 3 || r.items.some((i) => !i || typeof i !== "object")) throw new UploadError("A bank needs exactly three tier questions.");
-    if (new Set(r.items.map((i) => typeof i.stem === "string" ? i.stem.trim().toLowerCase().replace(/\s+/g, " ") : "")).size !== 3) throw new UploadError("A bank needs three different questions.");
+    if (!Array.isArray(r.items) || r.items.length < 1 || r.items.length > 3 || r.items.some((i) => !i || typeof i !== "object")) throw new UploadError("A bank needs one to three tier questions.");
+    if (new Set(r.items.map((i) => typeof i.stem === "string" ? i.stem.trim().toLowerCase().replace(/\s+/g, " ") : "")).size !== r.items.length) throw new UploadError("A bank needs different questions.");
+    const givenUp = Array.isArray(r.given_up) ? r.given_up : [];
+    const present = new Set(r.items.map((i) => i.tier));
+    const missing = TIERS.filter((t) => !present.has(t));
+    if (givenUp.length !== missing.length || givenUp.some((g) => !g || typeof g.issue !== "string" || !missing.includes(g.tier as ItemTier)) ||
+      new Set(givenUp.map((g) => g.tier)).size !== givenUp.length) {
+      throw new UploadError("A bank names every tier it has no question for, with the review's issue, and no other.");
+    }
     const found = this.kuOf(j.course_id!, j.target_id);
     if (!found) throw new UploadError("No such knowledge unit.", 404);
     const fx = this.courses.fixtures(j.course_id!);
     const betas = tierDifficulty(fx.course.kus.find((k) => k.id === j.target_id)!, fx.items);
-    for (const tier of TIERS) {
+    for (const tier of TIERS.filter((t) => present.has(t))) {
       const items = r.items.filter((i) => i.tier === tier);
       const item = items[0];
       if (items.length !== 1 || item.id !== `as-${j.course_id}-${j.target_id}-${tier}-bank-${j.id}` || item.ku_id !== j.target_id ||
@@ -857,12 +872,28 @@ export class Uploads {
         // Satisfy queued cold-start requests without running a duplicate model call.
         this.db.prepare("UPDATE jobs SET status = 'done', finished_at = ?, error = NULL WHERE course_id = ? AND kind = 'question' AND target_id = ? AND status IN ('queued', 'failed')").run(this.now(), j.course_id, questionKey({ ku_id: j.target_id, tier: item.tier! }));
       }
+      for (const g of givenUp) this.giveUpTier(j.course_id!, { ku_id: j.target_id, tier: g.tier as ItemTier }, `given up in its bank: ${g.issue as string}`);
       this.db.exec("RELEASE publish_question_bank");
     } catch (error) {
       this.db.exec("ROLLBACK TO publish_question_bank; RELEASE publish_question_bank");
       this.courses.touched(j.course_id!);
       throw error;
     }
+  }
+
+  /** One KU tier no question could be written for: a failed question job (one per KU and tier), which no worker claims. */
+  private giveUpTier(courseId: string, need: QuestionNeed, error: string): void {
+    const key = questionKey(need);
+    const now = this.now();
+    const updated = this.db
+      .prepare("UPDATE jobs SET status = 'failed', finished_at = ?, error = ? WHERE course_id = ? AND kind = 'question' AND target_id = ? AND status IN ('queued', 'failed')")
+      .run(now, error, courseId, key).changes;
+    if (!updated) {
+      this.db
+        .prepare("INSERT INTO jobs (id, kind, target_id, course_id, status, priority, attempts, created_at, finished_at, error) VALUES (?, 'question', ?, ?, 'failed', ?, 0, ?, ?, ?)")
+        .run(randomUUID(), key, courseId, PRIORITY.question, now, now, error);
+    }
+    this.courses.touched(courseId);
   }
 
   // ------------------------------------------------------------------ the job queue

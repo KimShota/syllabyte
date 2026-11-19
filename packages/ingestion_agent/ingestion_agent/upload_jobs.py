@@ -93,19 +93,30 @@ def run_question_bank_job(
     payload: dict, deck: SlideDeck, *, model: str = DEFAULT_MODEL, critic_model: str | None = None,
     manifest: RunManifest | None = None, log: Log = print,
 ) -> dict:
-    """One generation and joint review for a KU's three tiers; no questions are published if any remain flagged."""
+    """One generation and joint review for a KU's three tiers. The tiers the review approved are published; a tier still
+    flagged after its rewrites is given up on its own (`given_up`, with the review's issues), so one question that can't
+    pass doesn't throw away the ones that did (in the 2026-11-19 pilot test, 3 of the 4 refused banks had two approved
+    tiers). Only a bank with no approved tier fails, as before."""
     ku = UploadKU.model_validate(payload["ku"])
     manifest = manifest or RunManifest(run_id=f"question-bank-{ku.id}")
     by_n = {slide.slide_number: slide for slide in deck.slides}
     slides = [by_n[n] for n in sorted({r.slide_number for r in ku.source_refs}) if n in by_n] or deck.slides[:3]
     gen, flags = write_ku_bank(ku, payload.get("prereq_titles", []), slides_material(slides), model=model,
         critic_model=critic_model or model, manifest=manifest, log=log, strict=True, avoid=payload.get("avoid", []))
-    require_approved(flags)
+    issues: dict[str, list[str]] = {}
+    for f in flags:
+        issues.setdefault(str(f.get("id", "")).rsplit("-", 1)[-1], []).append(str(f.get("issue", "unresolved issue")))
+    approved = [q for q in payload["questions"] if q["tier"] not in issues]
+    if not approved or set(issues) - {q["tier"] for q in payload["questions"]}:
+        require_approved(flags)  # nothing passed (or a flag names no tier of this bank): the bank fails
     if not gen.slides or any(n not in by_n for n in gen.slides):
         raise ValueError("The question bank must cite pages from its own deck.")
     items = [question_item(q["item_id"], ku.id, q["tier"], QuestionGen(question=getattr(gen, q["tier"]), slides=gen.slides),
-        beta=q["beta"], target_index=q["target_index"], deck_name=deck.name).model_dump(mode="json") for q in payload["questions"]]
-    return {"items": items, "flags": [], "cost_usd": round(manifest.total_cost_usd(PRICE_PER_MTOK, CACHE_READ_SHARE), 4)}
+        beta=q["beta"], target_index=q["target_index"], deck_name=deck.name).model_dump(mode="json") for q in approved]
+    given_up = [{"tier": q["tier"], "issue": "; ".join(issues[q["tier"]])} for q in payload["questions"] if q["tier"] in issues]
+    for g in given_up:
+        log(f"  {ku.id}: {g['tier']} given up after its rewrites; the other tiers are published ({g['issue'][:200]})")
+    return {"items": items, "given_up": given_up, "flags": [], "cost_usd": round(manifest.total_cost_usd(PRICE_PER_MTOK, CACHE_READ_SHARE), 4)}
 
 
 def deck_bank(
