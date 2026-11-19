@@ -117,6 +117,38 @@ describe("background pre-check banks", () => {
     expect(s.courses.questions(courseId)).toEqual([]);
   });
 
+  it("publishes the approved tiers of a bank, gives up the rest alone, and opens the check with the topic still in it", async () => {
+    const { s, ann, courseId } = await readyCourse();
+    await ann.rpc("getSitting", "lecture-1");
+    const first = await claimBank(s);
+    const second = await claimBank(s);
+    const partial = questionBankOf(first.payload);
+    const kept = partial.items.filter((i) => i.tier !== "advanced");
+    // a bank that leaves a tier out without naming it is refused
+    expect((await s.worker.post(`/api/worker/jobs/${first.id}/result`, { result: { ...partial, items: kept } })).status).toBe(400);
+    expect((await s.worker.post(`/api/worker/jobs/${first.id}/result`, {
+      result: { ...partial, items: kept, given_up: [{ tier: "advanced", issue: "The key is longer than the other options." }] },
+    })).status).toBe(200);
+    const ku = first.payload.ku.id;
+    expect(s.courses.questions(courseId).filter((q) => q.item.ku_id === ku).map((q) => q.item.tier).sort()).toEqual(["applied", "basic"]);
+    expect(s.db.prepare("SELECT status, error FROM jobs WHERE course_id = ? AND kind = 'question' AND target_id = ?").get(courseId, `${ku}|advanced`))
+      .toEqual({ status: "failed", error: "given up in its bank: The key is longer than the other options." });
+    expect((await ann.rpc<Sitting & { questions_ready: unknown }>("getSitting", "lecture-1")).questions_ready).toEqual({ ready: 1, total: 2 });
+
+    expect((await s.worker.post(`/api/worker/jobs/${second.id}/result`, { result: questionBankOf(second.payload) })).status).toBe(200);
+    const open = await ann.rpc<Sitting & { questions_ready: unknown }>("getSitting", "lecture-1");
+    expect(open.questions_ready).toBeNull();
+    expect(open.current).not.toBeNull();
+    // nothing is written again for the topic: its missing tier was given up, not forgotten
+    expect(await work(s, { kinds: ["question_bank", "question"] })).toEqual([]);
+    expect(s.db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE course_id = ? AND kind = 'question_bank' AND target_id = ?").get(courseId, ku)).toEqual({ n: 1 });
+
+    // "Try again" still asks for the given-up tier once more
+    expect((await ann.post("/api/questions/retry", { ku_id: ku, tier: "advanced" })).status).toBe(200);
+    expect((await work(s, { kinds: ["question_bank", "question"] })).map((j) => j.kind)).toEqual(["question"]);
+    expect(s.courses.questions(courseId).filter((q) => q.item.ku_id === ku).map((q) => q.item.tier).sort()).toEqual(["advanced", "applied", "basic"]);
+  });
+
   it("does not serve previously flagged questions, and exposes failed banks with a working retry", async () => {
     const { s, ann, courseId } = await readyCourse();
     await ann.rpc("getSitting", "lecture-1");

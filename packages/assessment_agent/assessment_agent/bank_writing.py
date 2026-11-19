@@ -13,7 +13,7 @@ from syllabyte_common.models import KnowledgeUnit, RunManifest
 
 from assessment_agent.bank import MAX_STEM_WORDS, TIER_BLOOM, TIERS, BankMCQ, KuBankGen, stem_problems
 from assessment_agent.item_writing import ITEM_SYSTEM, critic_pass, generate_with_critic, mcq_text
-from assessment_agent.precheck_quality import precheck_bank_problems, precheck_problems, require_approved
+from assessment_agent.precheck_quality import precheck_bank_problems, precheck_problems
 
 _STEM_RULE = "- The stem is concise and self-contained; include the data and assumptions needed to answer."
 assert _STEM_RULE in ITEM_SYSTEM, "item_writing.ITEM_SYSTEM changed; update the stem rule here"
@@ -209,7 +209,7 @@ def _write_strict_bank(
     """A pre-check bank where a flagged question is rewritten on its own: approved questions are kept, never regenerated
     (regenerating all three gave the good ones a fresh chance to fail). The reviewer sees the whole bank, so it can still
     catch one question giving another away, but judges only the questions still under review. A question still flagged
-    after MAX_TIER_REWRITES rewrites refuses the bank."""
+    after MAX_TIER_REWRITES rewrites comes back with its flags."""
     ids = {t: f"as-{ku.id}-{t}" for t in TIERS}
     tier_of = {v: k for k, v in ids.items()}
     previous = "\nAlready saved questions; ask independently and avoid repeating their stems:\n" + "\n".join(avoid) if avoid else ""
@@ -257,6 +257,6 @@ def _write_strict_bank(
         for tier, issues in flagged.items():
             gen = rewrite(gen, tier, issues)
         flagged = review(gen, list(flagged), f"critic{n + 1}")
-    flags = [{"id": ids[t], "issue": i} for t, issues in flagged.items() for i in issues]
-    require_approved(flags)
-    return gen, flags
+    # the caller decides: the app's bank job publishes the approved tiers and gives up the flagged ones alone
+    # (ingestion_agent/upload_jobs.py run_question_bank_job)
+    return gen, [{"id": ids[t], "issue": i} for t, issues in flagged.items() for i in issues]

@@ -351,7 +351,7 @@ const BANK_TIERS: readonly ItemTier[] = ["basic", "applied", "advanced"];
 
 /**
  * An uploaded lecture's check, before its first answer: how many of the lecture's topics have their questions written
- * (a reviewed bank of all three tiers, or one the system gave up on), or null when all have and the check can open.
+ * (each of the three tiers saved, or given up after its bank's rewrites), or null when all have and the check can open.
  * Every question is written before the check starts, so the student never waits between questions.
  */
 function questionsReady(id: string): QuestionsReady | null {
@@ -359,10 +359,12 @@ function questionsReady(id: string): QuestionsReady | null {
   if ((S().sittings[id]?.answered_ids.length ?? 0) > 0) return null;
   const n = sittingLecture(id);
   const kus = fixtures().course.kus.filter((k) => k.lecture_n === n);
-  const gaveUp = new Set((fixtures().question_failures ?? []).map((f) => f.ku_id));
+  // a tier is settled when its question is saved or it was given up (a whole bank that failed gives up all three)
+  const gaveUp = new Set((fixtures().question_failures ?? []).map((f) => `${f.ku_id}|${f.tier}`));
   const items = fixtures().items;
-  const written = (kuId: string) => BANK_TIERS.every((t) => items.some((i) => i.context === "assessment" && i.ku_id === kuId && i.tier === t));
-  const ready = kus.filter((k) => gaveUp.has(k.id) || written(k.id)).length;
+  const settled = (kuId: string) => BANK_TIERS.every((t) =>
+    gaveUp.has(`${kuId}|${t}`) || items.some((i) => i.context === "assessment" && i.ku_id === kuId && i.tier === t));
+  const ready = kus.filter((k) => settled(k.id)).length;
   return ready < kus.length ? { ready, total: kus.length } : null;
 }
 

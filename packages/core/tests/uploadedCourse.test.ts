@@ -211,6 +211,21 @@ describe("an uploaded course through the API", () => {
     expect(s.current?.item.ku_id).toBe("ku-a-1");
   });
 
+  it("counts a topic ready only when each tier is saved or was given up, and asks its saved tiers", async () => {
+    const input = { decks: [{ lecture_n: 1, result: deck("a", 2) }] };
+    const others = TIERS.map((tier) => question({ ku_id: "ku-a-1", tier }));
+    // ku-a-0: one tier given up, the others not written yet: not ready
+    fxMod.setFixtures(course({ ...input, questions: others, question_failures: [{ ku_id: "ku-a-0", tier: "advanced" }] }));
+    expect((await api.getSitting("lecture-1")).questions_ready).toEqual({ ready: 1, total: 2 });
+    // its basic and applied saved, advanced given up: ready, and the check asks a saved tier of it
+    const partial = (["basic", "applied"] as const).map((tier) => question({ ku_id: "ku-a-0", tier }));
+    fxMod.setFixtures(course({ ...input, questions: [...others, ...partial], question_failures: [{ ku_id: "ku-a-0", tier: "advanced" }] }));
+    const s = await api.getSitting("lecture-1");
+    expect(s.questions_ready).toBeNull();
+    expect(s.current?.item.ku_id).toBe("ku-a-0");
+    expect(["basic", "applied"]).toContain(s.current?.item.tier);
+  });
+
   it("reuses saved questions for a classmate, and never asks a student the same one twice", async () => {
     const input = { decks: [{ lecture_n: 1, result: deck("a", 2) }] };
     fxMod.setFixtures(course(input));

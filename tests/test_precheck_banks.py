@@ -73,11 +73,18 @@ def test_writes_three_tiers_in_one_generation_and_one_joint_review(monkeypatch):
     item_writing.Verdicts(verdicts=[item_writing.Verdict(id="as-ku-stacks-basic", ok=True)]),
     item_writing.Verdicts(verdicts=[item_writing.Verdict(id=f"as-ku-stacks-{t}", ok=True) for t in TIERS] + [item_writing.Verdict(id="as-ku-stacks-basic", ok=True)]),
 ])
-def test_incomplete_or_duplicate_reviews_cannot_publish_a_bank(monkeypatch, review):
+def test_a_question_the_review_did_not_judge_exactly_once_is_never_published(monkeypatch, review):
     monkeypatch.setattr(bank_writing, "structured", lambda **kw: for_schema(kw, generated()))
     monkeypatch.setattr(item_writing, "structured", lambda **kw: review)
-    with pytest.raises(QuestionQualityError, match="exactly one verdict"):
-        run_question_bank_job(payload(), DECK, log=lambda _: None)
+    judged_once = [t for t in TIERS if sum(v.id == f"as-ku-stacks-{t}" for v in review.verdicts) == 1]
+    if not judged_once:  # nothing approved: the bank fails
+        with pytest.raises(QuestionQualityError, match="exactly one verdict"):
+            run_question_bank_job(payload(), DECK, log=lambda _: None)
+        return
+    out = run_question_bank_job(payload(), DECK, log=lambda _: None)
+    assert [q["tier"] for q in out["items"]] == judged_once
+    assert [g["tier"] for g in out["given_up"]] == [t for t in TIERS if t not in judged_once]
+    assert all("exactly one verdict" in g["issue"] for g in out["given_up"])
 
 
 def test_reviewer_can_reject_answer_giveaways_and_demand_a_rewrite(monkeypatch):
@@ -113,8 +120,10 @@ def test_unresolved_flags_or_hints_are_never_published(monkeypatch):
 
     monkeypatch.setattr(bank_writing, "structured", write)
     monkeypatch.setattr(item_writing, "structured", verdicts)
-    with pytest.raises(QuestionQualityError, match="hint=null"):
-        run_question_bank_job(payload(), DECK, log=lambda _: None)
+    out = run_question_bank_job(payload(), DECK, log=lambda _: None)
+    # the question with a hint is given up; the clean ones are published
+    assert [q["tier"] for q in out["items"]] == ["applied", "advanced"] and all(q["hint"] is None for q in out["items"])
+    assert [g["tier"] for g in out["given_up"]] == ["basic"] and "hint=null" in out["given_up"][0]["issue"]
     # retries remain bounded: the bank and its rule-check retry, then each rewrite round and its rule-check retry
     assert len(generated_count) <= 2 + 2 * bank_writing.MAX_TIER_REWRITES
 
@@ -139,8 +148,10 @@ def test_three_tiers_cannot_reuse_the_same_question(monkeypatch):
 
     monkeypatch.setattr(bank_writing, "structured", write)
     monkeypatch.setattr(item_writing, "structured", verdicts)
-    with pytest.raises(QuestionQualityError, match="distinct stems"):
-        run_question_bank_job(payload(), DECK, log=lambda _: None)
+    out = run_question_bank_job(payload(), DECK, log=lambda _: None)
+    stems = [q["stem"] for q in out["items"]]
+    assert len(set(stems)) == len(stems)  # the repeated question is never published
+    assert out["given_up"] and all("distinct stems" in g["issue"] for g in out["given_up"])
 
 
 def test_the_one_question_fallback_also_requires_complete_review(monkeypatch):
@@ -182,8 +193,9 @@ def test_symbolic_questions_still_require_semantic_review(monkeypatch):
 
     monkeypatch.setattr(bank_writing, "structured", write)
     monkeypatch.setattr(item_writing, "structured", reject)
-    with pytest.raises(QuestionQualityError, match="equivalent"):
-        run_question_bank_job(payload(), DECK, log=lambda _: None)
+    out = run_question_bank_job(payload(), DECK, log=lambda _: None)
+    assert "basic" not in [q["tier"] for q in out["items"]]
+    assert [g["tier"] for g in out["given_up"]] == ["basic"] and "equivalent" in out["given_up"][0]["issue"]
 
 
 def test_a_flagged_question_is_rewritten_alone_and_the_approved_ones_are_kept(monkeypatch):
@@ -216,7 +228,7 @@ def test_a_flagged_question_is_rewritten_alone_and_the_approved_ones_are_kept(mo
     assert reviews[1].count("[already approved; context only, do not judge]") == 2
 
 
-def test_a_question_still_flagged_after_its_rewrites_refuses_the_bank(monkeypatch):
+def test_a_question_still_flagged_after_its_rewrites_is_given_up_alone(monkeypatch):
     writes = []
 
     def write(**kw):
@@ -231,6 +243,21 @@ def test_a_question_still_flagged_after_its_rewrites_refuses_the_bank(monkeypatc
 
     monkeypatch.setattr(bank_writing, "structured", write)
     monkeypatch.setattr(item_writing, "structured", review)
-    with pytest.raises(QuestionQualityError, match="tier mismatch"):
-        run_question_bank_job(payload(), DECK, log=lambda _: None)
+    out = run_question_bank_job(payload(), DECK, log=lambda _: None)
     assert writes == ["KuBankGen"] + ["BankMCQ"] * bank_writing.MAX_TIER_REWRITES
+    # the approved basic and applied questions are kept; only the advanced one is given up, with the review's reason
+    assert [q["tier"] for q in out["items"]] == ["basic", "applied"]
+    assert out["given_up"] == [{"tier": "advanced", "issue": "The advanced question is a tier mismatch."}]
+
+
+def test_a_bank_with_no_approved_question_still_fails(monkeypatch):
+    def review(**kw):
+        result = verdicts()
+        for v in result.verdicts:
+            v.ok, v.issue = False, "The key is wrong."
+        return result
+
+    monkeypatch.setattr(bank_writing, "structured", lambda **kw: for_schema(kw, generated()))
+    monkeypatch.setattr(item_writing, "structured", review)
+    with pytest.raises(QuestionQualityError, match="The key is wrong"):
+        run_question_bank_job(payload(), DECK, log=lambda _: None)
