@@ -116,6 +116,14 @@ class Worker:
                 self.spent_usd += cost
                 total = self.spent_usd
             log(f"{kind} {job_id}: {'done' if succeeded else 'failed'} ({len(manifest.llm_calls)} LLM calls, ${cost:.3f}; ${total:.2f} this session)")
+            # every call's tokens, kept after the work folder goes: where a job's money went, by stage
+            if manifest.llm_calls:
+                try:
+                    kept = self.work_dir / "manifests"
+                    kept.mkdir(parents=True, exist_ok=True)
+                    (kept / f"{kind}-{job_id}.json").write_text(manifest.model_dump_json(indent=2))
+                except OSError as e:
+                    log(f"{kind} {job_id}: its usage record could not be kept: {e!r}")
             shutil.rmtree(work, ignore_errors=True)
         return True
 
