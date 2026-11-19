@@ -86,9 +86,12 @@ def run_video_job(
     early: list[Future] = []
     log(f"video {ku.id} at level {level}: making it")
     try:
+        # skip_critic: the storyboard's critique changes nothing in the video (it is only recorded), and here its record
+        # would land in a work folder the worker deletes, so it was about a seventh of each video's cost for nothing.
+        # The benchmarks (scripts/visual_benchmark.py) judge videos with their own judge.
         final = make_video(
             ku, corpus, ku_dir, manifest=manifest, level=level, prereq_titles=[p["title"] for p in prereqs], style="dialogue",
-            visuals="templates", on_script=lambda path: early.append(pool.submit(write_gen, path)),
+            visuals="templates", skip_critic=True, on_script=lambda path: early.append(pool.submit(write_gen, path)),
             **({"focus": focus} if focus else {}),
         )
         if final is None:
