@@ -37,6 +37,22 @@ export function precheckHref(check: PrecheckView): Href {
  */
 export function PrecheckCard({ check }: { check: PrecheckView }) {
   const started = check.answered > 0;
+  // every question is written before the check opens, so the student never waits between questions
+  const getting = check.questions_ready ?? null;
+  if (getting) {
+    return (
+      <TaskCard
+        icon="hourglass-empty"
+        tone="secondary"
+        eyebrow={`Before Lecture ${lectureNumber(check.lecture_n)}`}
+        title="Getting your quick test ready"
+        body={`We're writing the questions from your slides: ${getting.ready} of ${getting.total} topics ready. You can start once they all are.`}
+        action="Start"
+        disabled
+        onPress={() => {}}
+      />
+    );
+  }
   return (
     <TaskCard
       icon="fact-check"
@@ -74,6 +90,7 @@ function TaskCard({
   action,
   onPress,
   onLater,
+  disabled = false,
 }: {
   icon: IconName;
   tone?: "primary" | "secondary";
@@ -83,6 +100,7 @@ function TaskCard({
   action: string;
   onPress: () => void;
   onLater?: () => void;
+  disabled?: boolean;
 }) {
   const fg = tone === "secondary" ? colors.secondary : colors.primary;
   return (
@@ -112,8 +130,10 @@ function TaskCard({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`${action}: ${title}`}
+          accessibilityState={{ disabled }}
+          disabled={disabled}
           onPress={onPress}
-          style={({ pressed }) => [styles.go, { backgroundColor: pressed ? colors.primaryPressed : fg }]}
+          style={({ pressed }) => [styles.go, { backgroundColor: disabled ? colors.outline : pressed ? colors.primaryPressed : fg }]}
         >
           <T variant="caption" color={colors.onPrimary} style={{ fontFamily: fonts.semibold }}>
             {action}

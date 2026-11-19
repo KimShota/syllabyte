@@ -699,6 +699,17 @@ export interface SittingView {
   preparing?: "writing" | "failed" | null;
   /** the question it is waiting for, to ask for it again when it failed */
   waiting_for?: QuestionNeed | null;
+  /**
+   * An uploaded lecture's check opens only once every one of its topics has its questions written (or was given up on),
+   * so the student never waits between questions. Until then: how many topics are ready, with `current` null and
+   * `preparing` "writing". Null once the check is open.
+   */
+  questions_ready?: QuestionsReady | null;
+}
+
+export interface QuestionsReady {
+  ready: number;
+  total: number;
 }
 
 /** The check before the upcoming lecture's videos, shown at the top of the playlist when it is due. */
@@ -708,6 +719,8 @@ export interface PrecheckView {
   title: string;
   total: number;
   answered: number;
+  /** set while the check's questions are still being written: it can't be started yet (SittingView.questions_ready) */
+  questions_ready?: QuestionsReady | null;
 }
 
 /** The "What changed and why" card (plan D11). */

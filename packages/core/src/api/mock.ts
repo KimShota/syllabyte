@@ -25,7 +25,7 @@ import { changesCount, tailoringRows } from "../logic/receipt";
 import { weekOf } from "../logic/time";
 import { getState, isOnboarded, mutate, now } from "../store";
 import type {
-  Choice, ClaimView, Item, KuLevel, KuLevelRow, Level, LectureLevels, PlaylistEntry, PrecheckView, QuestionNeed,
+  Choice, ClaimView, Item, ItemTier, KuLevel, KuLevelRow, Level, LectureLevels, PlaylistEntry, PrecheckView, QuestionNeed, QuestionsReady,
   ReportRecord, ResponseRecord, ReviewStatus, SittingState, Video, VideoCardView, VariantView,
 } from "../types";
 import { uid } from "../util";
@@ -347,6 +347,25 @@ function currentOf(id: string) {
 
 const failed = (need: QuestionNeed) => (fixtures().question_failures ?? []).some((f) => f.ku_id === need.ku_id && f.tier === need.tier);
 
+const BANK_TIERS: readonly ItemTier[] = ["basic", "applied", "advanced"];
+
+/**
+ * An uploaded lecture's check, before its first answer: how many of the lecture's topics have their questions written
+ * (a reviewed bank of all three tiers, or one the system gave up on), or null when all have and the check can open.
+ * Every question is written before the check starts, so the student never waits between questions.
+ */
+function questionsReady(id: string): QuestionsReady | null {
+  if (!cfg().questions_on_demand || sittingKind(id) !== "lecture") return null;
+  if ((S().sittings[id]?.answered_ids.length ?? 0) > 0) return null;
+  const n = sittingLecture(id);
+  const kus = fixtures().course.kus.filter((k) => k.lecture_n === n);
+  const gaveUp = new Set((fixtures().question_failures ?? []).map((f) => f.ku_id));
+  const items = fixtures().items;
+  const written = (kuId: string) => BANK_TIERS.every((t) => items.some((i) => i.context === "assessment" && i.ku_id === kuId && i.tier === t));
+  const ready = kus.filter((k) => gaveUp.has(k.id) || written(k.id)).length;
+  return ready < kus.length ? { ready, total: kus.length } : null;
+}
+
 /**
  * The questions to write now for this student (V4): for the check that is due and any check they are in the middle
  * of, the one it waits for and nothing ahead of it. The server queues them after each of the student's requests.
@@ -389,8 +408,9 @@ function precheck(): PrecheckView | null {
   // the baseline just covered this lecture, in this lecture week: no second check yet
   const w0 = s.sittings.week0;
   if (w0?.finished_at && w0.week === week() && baselineLectures().includes(n)) return null;
-  if (!currentOf(id)) return null;
-  return { sitting_id: id, lecture_n: n, title: lectureTitle(n), total: planOf(id).slots.length, answered: st?.answered_ids.length ?? 0 };
+  const gate = questionsReady(id);
+  if (!gate && !currentOf(id)) return null;
+  return { sitting_id: id, lecture_n: n, title: lectureTitle(n), total: planOf(id).slots.length, answered: st?.answered_ids.length ?? 0, questions_ready: gate };
 }
 
 // --------------------------------------------------------------------- api
@@ -439,6 +459,13 @@ export const mockApi: Api = {
   async getSitting(id) {
     const plan = planOf(id);
     const st = S().sittings[id];
+    const gate = questionsReady(id);
+    if (gate) {
+      return {
+        id, kind: sittingKind(id), lecture_n: sittingLecture(id), label: sittingLabel(id), total: plan.slots.length,
+        answered: 0, done: false, current: null, preparing: "writing", waiting_for: null, questions_ready: gate,
+      };
+    }
     const next = currentOf(id);
     return {
       id, kind: sittingKind(id), lecture_n: sittingLecture(id), label: sittingLabel(id), total: plan.slots.length,
@@ -446,10 +473,12 @@ export const mockApi: Api = {
       current: next?.item ? { item: next.item, lecture_n: next.lecture_n, lecture_title: lectureTitle(next.lecture_n), role: next.role } : null,
       preparing: next?.need ? (failed(next.need) ? "failed" : "writing") : null,
       waiting_for: next?.need ?? null,
+      questions_ready: null,
     };
   },
 
   async answerSitting(id, itemId, choice, latencyMs) {
+    if (questionsReady(id)) throw new Error(`sitting ${id} opens once its questions are written`);
     const next = currentOf(id);
     if (!next?.item || next.item.id !== itemId) throw new Error(`"${itemId}" is not the question sitting ${id} is on`);
     ensureSitting(id);

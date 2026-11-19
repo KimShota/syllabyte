@@ -63,7 +63,7 @@ export default function QuizQuestion() {
   }, [over, sittingId]);
 
   if (sitting && !item && sitting.preparing) {
-    return <Preparing failed={sitting.preparing === "failed"} onRetry={async () => {
+    return <Preparing failed={sitting.preparing === "failed"} ready={sitting.questions_ready ?? null} onRetry={async () => {
       if (sitting.waiting_for && courseCalls) await courseCalls.retryQuestion(sitting.waiting_for).catch(() => {});
       setTick((t) => t + 1);
     }} onFinish={() => {
@@ -153,7 +153,14 @@ export default function QuizQuestion() {
  * last one; when their answer moved the level, this shows for a few seconds. If it can't be written, they can ask
  * again or finish the check with the answers they gave.
  */
-function Preparing({ failed, answered, onRetry, onFinish }: { failed: boolean; answered: number; onRetry: () => void; onFinish: () => void }) {
+function Preparing({ failed, ready, answered, onRetry, onFinish }: {
+  failed: boolean;
+  /** set while the check's questions are still being written, before it opens */
+  ready: { ready: number; total: number } | null;
+  answered: number;
+  onRetry: () => void;
+  onFinish: () => void;
+}) {
   const insets = useSafeAreaInsets();
   return (
     <View style={[styles.screen, styles.preparing, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 16 }]}>
@@ -166,12 +173,14 @@ function Preparing({ failed, answered, onRetry, onFinish }: { failed: boolean; a
           </Spin>
         )}
         <T variant="cardTitle" style={{ textAlign: "center" }} accessibilityRole="header">
-          {failed ? "We couldn't write the next question" : "Writing your next question…"}
+          {failed ? "We couldn't write the next question" : ready ? "Getting your questions ready…" : "Writing your next question…"}
         </T>
         <T variant="body" color={colors.onSurfaceVariant} style={{ textAlign: "center" }}>
           {failed
             ? "Try again, or finish the check with the answers you've given."
-            : "It's made from your slides, at the level your answers so far point to. This takes a few seconds."}
+            : ready
+              ? `We write every question from your slides before the check starts, so you won't wait between questions. ${ready.ready} of ${ready.total} topics ready.`
+              : "It's made from your slides, at the level your answers so far point to. This takes a few seconds."}
         </T>
       </View>
       {failed ? (

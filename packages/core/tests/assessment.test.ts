@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nextAssessmentItem, prelecturePlan, week0Plan } from "../src/logic/assessment";
+import { nextAssessmentItem, nextAssessmentStep, prelecturePlan, week0Plan } from "../src/logic/assessment";
 import { answer, bank, course, items, lectureOfItem } from "./kuHelpers";
 import type { ResponseRecord } from "../src/types";
 
@@ -134,5 +134,34 @@ describe("review items", () => {
   it("are skipped, and the sitting ends, when nothing at all is left to ask", () => {
     const all = bank.map((i) => answer(i.id, "right"));
     expect(nextAssessmentItem(prelecturePlan(course, 2), 0, { course, items, responses: all })).toBeNull();
+  });
+});
+
+describe("on-demand check: only saved questions, never one written mid-check", () => {
+  const c = withConfig({ questions_on_demand: true });
+  const plan = prelecturePlan(c, 2);
+  const lecture2 = c.kus.filter((k) => k.lecture_n === 2).map((k) => k.id);
+
+  it("asks only saved questions for the whole check, so the student never waits", () => {
+    const responses: ResponseRecord[] = [];
+    for (let k = 0; k < plan.slots.length; k++) {
+      const step = nextAssessmentStep(plan, k, { course: c, items, responses });
+      if (!step) break;
+      expect(step.need).toBeNull();
+      responses.push(answer(step.item!.id, "wrong"));
+    }
+    expect(responses.length).toBeGreaterThan(0);
+  });
+
+  it("leaves out a topic that has no saved questions", () => {
+    const first = nextAssessmentStep(plan, 0, { course: c, items, responses: [] })!.item!.ku_id!;
+    const step = nextAssessmentStep(plan, 0, { course: c, items: items.filter((i) => i.ku_id !== first), responses: [] })!;
+    expect(step.need).toBeNull();
+    expect(step.item!.ku_id).not.toBe(first);
+  });
+
+  it("ends the check when none of the lecture's topics has a saved question", () => {
+    const none = items.filter((i) => !lecture2.includes(i.ku_id ?? ""));
+    expect(nextAssessmentStep(plan, 0, { course: c, items: none, responses: [] })).toBeNull();
   });
 });

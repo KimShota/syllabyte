@@ -164,30 +164,44 @@ function notSureCap(ctx: Ctx, lectureN: number): ItemTier | null {
 /** The KU and tier to ask next on one lecture (V5), and a saved question for it the student has not seen, if any. */
 function pickOnDemand(ctx: Ctx, lectureN: number, seen: Set<string>): Ask | null {
   const settled = new Set(ctx.settled_ku_ids);
-  const kus = ctx.course.kus.filter((k) => k.lecture_n === lectureN && !settled.has(k.id));
-  if (!kus.length) return null;
+  const left = ctx.course.kus.filter((k) => k.lecture_n === lectureN && !settled.has(k.id));
+  if (!left.length) return null;
   const answered = new Map<string, number>();
   for (const it of ctx.items) {
     if (it.ku_id === null || !EVIDENCE_CONTEXTS.includes(it.context) || !seen.has(it.id)) continue;
     answered.set(it.ku_id, (answered.get(it.ku_id) ?? 0) + 1);
   }
   const deps = dependentCounts(ctx.course.kus);
-  let ku = kus[0];
-  for (const k of kus.slice(1)) {
-    const da = answered.get(k.id) ?? 0;
-    const db = answered.get(ku.id) ?? 0;
-    if (da < db || (da === db && (deps.get(k.id) ?? 0) > (deps.get(ku.id) ?? 0))) ku = k;
-  }
   const theta = lectureEstimate(ctx, lectureN).theta;
-  const betas = tierDifficulty(ku, ctx.items);
-  let tier: ItemTier = TIERS[0];
-  for (const t of TIERS.slice(1)) {
-    if (information(theta, 1, betas[t]) > information(theta, 1, betas[tier]) + TIE_TOLERANCE) tier = t;
-  }
   const cap = notSureCap(ctx, lectureN);
-  if (cap && TIERS.indexOf(tier) > TIERS.indexOf(cap)) tier = cap;
-  const item = ctx.items.find((i) => i.context === "assessment" && i.ku_id === ku.id && i.tier === tier && !seen.has(i.id));
-  return item ? { item, need: null } : { item: null, need: { ku_id: ku.id, tier } };
+  const unseen = (kuId: string, t: ItemTier) => ctx.items.find((i) => i.context === "assessment" && i.ku_id === kuId && i.tier === t && !seen.has(i.id));
+  const skipped = new Set<string>();
+  for (;;) {
+    const kus = left.filter((k) => !skipped.has(k.id));
+    if (!kus.length) return null;
+    let ku = kus[0];
+    for (const k of kus.slice(1)) {
+      const da = answered.get(k.id) ?? 0;
+      const db = answered.get(ku.id) ?? 0;
+      if (da < db || (da === db && (deps.get(k.id) ?? 0) > (deps.get(ku.id) ?? 0))) ku = k;
+    }
+    const betas = tierDifficulty(ku, ctx.items);
+    let tier: ItemTier = TIERS[0];
+    for (const t of TIERS.slice(1)) {
+      if (information(theta, 1, betas[t]) > information(theta, 1, betas[tier]) + TIE_TOLERANCE) tier = t;
+    }
+    if (cap && TIERS.indexOf(tier) > TIERS.indexOf(cap)) tier = cap;
+    const item = unseen(ku.id, tier);
+    if (item) return { item, need: null };
+    // Only saved questions are asked: a check's questions are all written before it opens, never while it runs. Without
+    // one at this tier, the nearest saved tier (not above a "Not sure" cap); without any, the KU is done for this check
+    // (all its questions were asked, or they could not be written).
+    const near = TIERS.filter((t) => !cap || TIERS.indexOf(t) <= TIERS.indexOf(cap))
+      .sort((a, b) => Math.abs(TIERS.indexOf(a) - TIERS.indexOf(tier)) - Math.abs(TIERS.indexOf(b) - TIERS.indexOf(tier)));
+    const other = near.map((t) => unseen(ku.id, t)).find((i) => i !== undefined);
+    if (other) return { item: other, need: null };
+    skipped.add(ku.id);
+  }
 }
 
 /** An earlier lecture can still be asked about: it has unseen bank items, or (on demand) any KU. */

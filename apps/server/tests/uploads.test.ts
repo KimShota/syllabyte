@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SCHEDULE, work, type Job } from "./fakeWorker";
+import { questionBankOf, SCHEDULE, work, type Job } from "./fakeWorker";
 import { NO_COURSE, StateStore } from "../src/state";
 import { makeServer } from "./helpers";
 
@@ -364,7 +364,7 @@ async function sitCheck(s: Server, who: Student, sitting: string, finish = true)
   for (let guard = 0; guard < 40; guard++) {
     const v = await who.rpc<{ current: { item: { id: string; correct_index: number } } | null; preparing: string | null }>("getSitting", sitting);
     if (v.preparing === "writing") {
-      await work(s, { kinds: ["question"] });
+      await work(s, { kinds: ["question_bank", "question"] });
       continue;
     }
     if (!v.current) break;
@@ -459,30 +459,29 @@ describe("questions written as checks need them (V4-V6)", () => {
     expect(first).toMatchObject({ current: null, preparing: "writing", total: 2 });
   });
 
-  it("writes the question a check waits for before anything else, and none ahead of it", async () => {
-    const { s, ann, sitting } = await readyCourse();
+  it("writes the check's banks before anything else, and never a single question while it runs", async () => {
+    const { s, ann, courseId, sitting } = await readyCourse();
     await ann.rpc("getSitting", sitting);
-    // a deck upload waiting in the queue does not hold the question back
-    await multipart(ann, `/api/courses/${(await ann.json("/api/courses/mine")).course.id}/slides`, "files", [DECKS[1]]);
-    const { job } = (await (await s.worker.post("/api/worker/claim", {})).json()) as { job: Job };
-    expect(job.kind).toBe("question");
-    expect(job.payload).toMatchObject({ item_id: "as-ku-potential-outcomes-intro-a-applied-1", tier: "applied", beta: 0, avoid: [] });
-    expect(job.file_name).toBe("slides.pdf");
-    const text = await (await s.worker.get(`/api/worker/jobs/${job.id}/file`)).text();
-    expect(text).toBe(DECKS[0].text);
+    // a deck upload waiting in the queue does not hold the banks back
+    await multipart(ann, `/api/courses/${courseId}/slides`, "files", [DECKS[1]]);
+    const { job } = (await (await s.worker.post("/api/worker/claim", { kinds: ["question_bank", "question", "syllabus", "deck_read", "placement", "deck"] })).json()) as { job: Job };
+    expect(job.kind).toBe("question_bank");
     await s.worker.post(`/api/worker/jobs/${job.id}/fail`, { error: "retry later" });
-    await work(s, { kinds: ["question"] });
+    await work(s, { kinds: ["question_bank", "question"] });
 
     const ready = await ann.rpc<Sitting>("getSitting", sitting);
-    expect(ready.current?.item.id).toBe("as-ku-potential-outcomes-intro-a-applied-1");
-    // the next question is written only once the student has answered and it is the one the check waits for
-    expect(await work(s, { kinds: ["question"] })).toEqual([]);
+    expect(ready.current).not.toBeNull();
+    await ann.rpc("answerSitting", sitting, ready.current!.item.id, ready.current!.item.correct_index, 1000);
+    expect((await ann.rpc<Sitting>("getSitting", sitting)).current).not.toBeNull();
+    // everything the check asks was written before it opened
+    expect(await work(s, { kinds: ["question_bank", "question"] })).toEqual([]);
+    expect(s.db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE kind = 'question'").get()).toEqual({ n: 0 });
   });
 
   it("asks a classmate the saved questions, so nothing is written twice", async () => {
     const { s, ann, sitting } = await readyCourse();
     await sitCheck(s, ann, sitting, false);
-    await work(s, { kinds: ["question"] });
+    await work(s, { kinds: ["question_bank", "question"] });
     expect(store(s, "ann@nyu.edu").sittings[sitting].answered_ids).toHaveLength(2);
     const written = (s.db.prepare("SELECT COUNT(*) AS n FROM questions").get() as { n: number }).n;
 
@@ -490,29 +489,38 @@ describe("questions written as checks need them (V4-V6)", () => {
     await multipart(bob, "/api/courses", "syllabus", [{ name: "s.pdf", text: "Syllabus of CS-UH 2219E" }]);
     await work(s);
     const v = await bob.rpc<Sitting>("getSitting", sitting);
-    expect(v.current?.item.id).toBe("as-ku-potential-outcomes-intro-a-applied-1");
+    expect(v.current?.item.id).toBe(store(s, "ann@nyu.edu").sittings[sitting].answered_ids[0]);
     expect((s.db.prepare("SELECT COUNT(*) AS n FROM questions").get() as { n: number }).n).toBe(written);
   });
 
-  it("says when a question could not be written, and writes it again on Try again", async () => {
+  it("opens without a topic whose bank was given up on, and brings it back after Try again", async () => {
     const { s, ann, sitting } = await readyCourse();
     await ann.rpc("getSitting", sitting);
-    for (let i = 0; i < 2; i++) {
-      const { job } = (await (await s.worker.post("/api/worker/claim", {})).json()) as { job: Job };
-      await s.worker.post(`/api/worker/jobs/${job.id}/fail`, { error: "overloaded" });
+    // the first topic's bank fails for good (it is retried once); the other one is written
+    let given: string | null = null;
+    for (let guard = 0; guard < 10; guard++) {
+      const { job } = (await (await s.worker.post("/api/worker/claim", { kinds: ["question_bank"] })).json()) as { job: Job | null };
+      if (!job) break;
+      given ??= job.payload.ku.id as string;
+      if (job.payload.ku.id === given) await s.worker.post(`/api/worker/jobs/${job.id}/fail`, { error: "overloaded" });
+      else await s.worker.post(`/api/worker/jobs/${job.id}/result`, { result: questionBankOf(job.payload) });
     }
-    expect((await ann.rpc<Sitting>("getSitting", sitting)).preparing).toBe("failed");
-    expect((await ann.post("/api/questions/retry", { ku_id: "ku-potential-outcomes-intro-a", tier: "applied" })).status).toBe(200);
-    expect((await ann.rpc<Sitting>("getSitting", sitting)).preparing).toBe("writing");
-    await work(s, { kinds: ["question"] });
+    const open = await ann.rpc<any>("getSitting", sitting);
+    expect(open.questions_ready).toBeNull();
+    expect(open.current.item.ku_id).not.toBe(given);
+    expect((await ann.post("/api/questions/retry", { ku_id: given, tier: "applied" })).status).toBe(200);
+    // nothing answered yet: the check waits for the topic again
+    expect((await ann.rpc<any>("getSitting", sitting)).questions_ready).toEqual({ ready: 1, total: 2 });
+    await work(s, { kinds: ["question_bank", "question"] });
     expect((await ann.rpc<Sitting>("getSitting", sitting)).current).not.toBeNull();
   });
 
-  it("refuses a question result that is not for the job's KU and tier", async () => {
+  it("refuses a bank result that is not for the job's KU", async () => {
     const { s, ann, sitting } = await readyCourse();
     await ann.rpc("getSitting", sitting);
-    const { job } = (await (await s.worker.post("/api/worker/claim", {})).json()) as { job: Job };
-    const bad = { item: { id: "x", ku_id: "ku-other", tier: "basic", context: "assessment", options: ["a", "b", "c"], correct_index: 0 } };
+    const { job } = (await (await s.worker.post("/api/worker/claim", { kinds: ["question_bank"] })).json()) as { job: Job };
+    const bank = questionBankOf(job.payload) as { items: { ku_id: string }[]; flags: unknown[] };
+    const bad = { ...bank, items: bank.items.map((i) => ({ ...i, ku_id: "ku-other" })) };
     expect((await s.worker.post(`/api/worker/jobs/${job.id}/result`, { result: bad })).status).toBe(400);
   });
 });
@@ -525,7 +533,7 @@ describe("videos students need (U18)", () => {
     await work(s);
     const sitting = "lecture-1";
     await ann.rpc("getSitting", sitting);
-    await work(s, { kinds: ["question"] });
+    await work(s, { kinds: ["question_bank", "question"] });
     const first = (await ann.rpc<any>("getSitting", sitting)).current.item;
     await ann.rpc("answerSitting", sitting, first.id, first.correct_index, 1000);
     const requests = s.courses.videoRequests(courseId);

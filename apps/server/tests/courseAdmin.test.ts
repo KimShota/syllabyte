@@ -71,6 +71,9 @@ describe("the researcher's fixes", () => {
     await addSlides(s, a.st, a.courseId, [{ name: "lecture1.pdf", text: "Potential outcomes intro" }]);
     await a.st.rpc("getSitting", "lecture-1");
     await work(s);
+    // the check opens once its questions are written
+    await a.st.rpc("getSitting", "lecture-1");
+    await work(s, { kinds: ["question_bank", "question"] });
     const sitting = await a.st.rpc<{ current: { item: { id: string } } }>("getSitting", "lecture-1");
     await a.st.rpc("answerSitting", "lecture-1", sitting.current.item.id, 0, 1000);
     expect(() => moveStudent(s.db, s.courses, "ann@nyu.edu", b.courseId)).toThrow(/already answered/);
