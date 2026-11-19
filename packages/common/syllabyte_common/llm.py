@@ -22,6 +22,7 @@ Claude Sonnet"). Callers may still pass model="claude-opus-5" for a stage.
 from __future__ import annotations
 
 import base64
+import functools
 import os
 import sys
 import time
@@ -261,9 +262,48 @@ def pdf_block(path: str | Path, *, cache: bool = False) -> dict:
     return block
 
 
+# Slides render at 150 DPI (ingestion_agent/slide_parser.py), which on a wide page is 4000x2250 px. The API scales an
+# image down to at most 2576 px on its long edge (4,784 tokens) on Claude 4.7 and later models; a slide reads as well at
+# 1600 px (1,914 tokens; earlier models were capped at 1568 px), and slide images were most of each video's input cost.
+# So the model's copy is scaled here, in memory: the stored file, the deck hashes made from its bytes
+# (ingestion_agent/uploads.py) and the app's previews keep the full render. SYLLABYTE_LLM_IMAGE_EDGE=0 sends images as
+# they are.
+LLM_IMAGE_LONG_EDGE = int(os.environ.get("SYLLABYTE_LLM_IMAGE_EDGE", "1600"))
+_PIL_FORMATS = {"image/png": "PNG", "image/jpeg": "JPEG", "image/webp": "WEBP"}
+
+
+@functools.lru_cache(maxsize=64)
+def _image_bytes(path: str, mtime_ns: int, size: int, edge: int, media_type: str) -> bytes:
+    """The file's bytes, scaled so its long edge is at most `edge` px (aspect ratio kept). Cached per file version: a
+    video's calls send the same few slides."""
+    raw = Path(path).read_bytes()
+    fmt = _PIL_FORMATS.get(media_type)
+    if edge <= 0 or fmt is None:
+        return raw
+    from io import BytesIO
+
+    from PIL import Image
+
+    try:
+        with Image.open(BytesIO(raw)) as img:
+            if max(img.size) <= edge:
+                return raw
+            scale = edge / max(img.size)
+            small = img.resize((max(1, round(img.width * scale)), max(1, round(img.height * scale))), Image.Resampling.LANCZOS)
+    except (OSError, ValueError):  # not an image Pillow reads: sent as it is, as before
+        return raw
+    if fmt == "JPEG" and small.mode not in ("RGB", "L"):
+        small = small.convert("RGB")
+    out = BytesIO()
+    small.save(out, format=fmt)
+    return out.getvalue()
+
+
 def image_block(path: str | Path, *, media_type: str = "image/png") -> dict:
-    """An `image` content block from a local image file."""
-    data = base64.standard_b64encode(Path(path).read_bytes()).decode("utf-8")
+    """An `image` content block from a local image file, scaled to LLM_IMAGE_LONG_EDGE."""
+    p = Path(path)
+    st = p.stat()
+    data = base64.standard_b64encode(_image_bytes(str(p), st.st_mtime_ns, st.st_size, LLM_IMAGE_LONG_EDGE, media_type)).decode("utf-8")
     return {
         "type": "image",
         "source": {"type": "base64", "media_type": media_type, "data": data},
