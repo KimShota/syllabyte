@@ -34,21 +34,25 @@ import shutil
 import threading
 import time
 import traceback
+from contextlib import nullcontext
 from pathlib import Path
 
 import httpx
-from syllabyte_common.llm import DEFAULT_MODEL, PRICE_PER_MTOK
+from syllabyte_common.llm import CACHE_READ_SHARE, DEFAULT_MODEL, PRICE_PER_MTOK
 from syllabyte_common.models import RunManifest
 
 from ingestion_agent.upload_jobs import (
     run_deck_job, run_deck_read_job, run_link_pass_job, run_placement_job, run_question_job, run_question_bank_job, run_syllabus_job,
 )
 from ingestion_agent.uploads import UploadError, read_deck
+from ingestion_agent import job_record
 from ingestion_agent.video_job import run_misconception_job, run_video_job
 from ingestion_agent.material_previews import render_material
 from syllabyte_common.models import SlideDeck
 
 KINDS = ("syllabus", "deck_read", "placement", "deck", "question", "link_pass", "video", "preview", "question_bank", "misconception")
+# the jobs that keep a full record in <work-dir>/records (ingestion_agent/job_record.py)
+RECORDED_KINDS = ("video", "misconception")
 
 
 def log(msg: str) -> None:
@@ -78,46 +82,76 @@ class Worker:
 
     def _put_file(self, job_id: str, name: str, file: Path) -> None:
         """Sends one of a video job's files; the server keeps it until the job's result arrives."""
+        start = time.monotonic()
         r = self.client.put(f"/api/worker/jobs/{job_id}/files/{name}", content=file.read_bytes())
         r.raise_for_status()
+        if (rec := job_record.current()) is not None:
+            rec.upload(name, file, time.monotonic() - start)
 
     def run_once(self) -> bool:
         """Claims and runs one job; False when there was nothing to do."""
         job = self._post("/api/worker/claim", {"kinds": self.kinds or list(KINDS)})["job"]
         if not job:
             return False
+        # a video job keeps a record of everything it did (ingestion_agent/job_record.py)
+        recorder = (job_record.JobRecorder(self.work_dir / "records", job["kind"], job["id"], job["payload"])
+                    if job["kind"] in RECORDED_KINDS else None)
+        with recorder or nullcontext():
+            self._run_claimed(job, recorder)
+        return True
+
+    def _run_claimed(self, job: dict, recorder: job_record.JobRecorder | None) -> None:
         job_id, kind, payload = job["id"], job["kind"], job["payload"]
+        phase = recorder.phase if recorder else (lambda name: nullcontext())
         log(f"{kind} {job_id}")
         work = self.work_dir / job_id
         work.mkdir(parents=True, exist_ok=True)
         manifest = RunManifest(run_id=f"{kind}-{job_id}")
-        succeeded = False
+        succeeded, status = False, "failed"
         try:
             path = None
             if job.get("file_name") and not (kind in ("question", "question_bank", "video", "misconception") and payload["deck_id"] in self.decks):
-                r = self.client.get(f"/api/worker/jobs/{job_id}/file")
-                r.raise_for_status()
-                path = work / Path(job["file_name"]).name
-                path.write_bytes(r.content)
-            result = self._run(job_id, kind, payload, path, work, manifest)
+                with phase("download the slides"):
+                    r = self.client.get(f"/api/worker/jobs/{job_id}/file")
+                    r.raise_for_status()
+                    path = work / Path(job["file_name"]).name
+                    path.write_bytes(r.content)
+            with phase("run the job"):
+                result = self._run(job_id, kind, payload, path, work, manifest)
             if result is not None:
                 endpoint = "preview" if kind == "preview" else "result"
-                self._post(f"/api/worker/jobs/{job_id}/{endpoint}", {"result": result})
-            succeeded = True
+                with phase("send the result"):
+                    self._post(f"/api/worker/jobs/{job_id}/{endpoint}", {"result": result})
+            succeeded, status = True, "done"
         except UploadError as e:
+            status = "file unusable"
+            if recorder:
+                recorder.error("the job's file", e)
             log(f"{kind} {job_id}: the file can't be used: {e}")
             self._post(f"/api/worker/jobs/{job_id}/fail", {"error": str(e), "user_message": str(e)})
         except Exception as e:  # reported; the server retries once
+            if recorder:
+                recorder.error("the job", e)
             log(f"{kind} {job_id}: failed: {e!r}")
             self._post(f"/api/worker/jobs/{job_id}/fail", {"error": "".join(traceback.format_exception(e))[-2000:]})
         finally:
-            cost = manifest.total_cost_usd(PRICE_PER_MTOK)
+            cost = manifest.total_cost_usd(PRICE_PER_MTOK, CACHE_READ_SHARE)
             with self._lock:
                 self.spent_usd += cost
                 total = self.spent_usd
             log(f"{kind} {job_id}: {'done' if succeeded else 'failed'} ({len(manifest.llm_calls)} LLM calls, ${cost:.3f}; ${total:.2f} this session)")
+            if recorder:
+                if (folder := recorder.finish(status=status, manifest=manifest, work=work, total_cost=cost)) is not None:
+                    log(f"{kind} {job_id}: recorded in {folder}")
+            # every call's tokens, kept after the work folder goes: where a job's money went, by stage
+            if manifest.llm_calls:
+                try:
+                    kept = self.work_dir / "manifests"
+                    kept.mkdir(parents=True, exist_ok=True)
+                    (kept / f"{kind}-{job_id}.json").write_text(manifest.model_dump_json(indent=2))
+                except OSError as e:
+                    log(f"{kind} {job_id}: its usage record could not be kept: {e!r}")
             shutil.rmtree(work, ignore_errors=True)
-        return True
 
     def _run(self, job_id: str, kind: str, payload: dict, path: Path | None, work: Path, manifest: RunManifest) -> dict | None:
         if kind == "preview":
@@ -165,11 +199,13 @@ class Worker:
         with self._lock:
             lock = self._deck_locks.setdefault(deck_id, threading.Lock())
         # two questions on one deck at once: the second waits for the first to render it
+        rec = job_record.current()
         with lock:
             if deck_id not in self.decks:
                 if path is None:
                     raise RuntimeError("a question job's deck was not sent")
-                _, deck = read_deck(path, self.work_dir / "decks" / deck_id, deck_id)
+                with rec.phase("render the deck") if rec else nullcontext():
+                    _, deck = read_deck(path, self.work_dir / "decks" / deck_id, deck_id)
                 self.decks[deck_id] = deck
             return self.decks[deck_id]
 
@@ -237,6 +273,10 @@ def main() -> None:
         if concurrency < 1:
             parser.error("--concurrency must be at least 1")
         worker = Worker(client, args.work_dir, model=args.model, critic_model=args.critic_model, kinds=kinds)
+        if kinds is None or set(kinds) & set(RECORDED_KINDS):
+            # every picture-program attempt is saved, and a video's record moves its own into its folder
+            os.environ.setdefault("SYLLABYTE_PLAN_DUMP", str(Path(args.work_dir) / "plans"))
+            log(f"video jobs are recorded in {Path(args.work_dir) / 'records'}")
         log(f"polling {args.server} with {concurrency} jobs at once")
         worker.serve(concurrency=concurrency, poll=args.poll, once=args.once, max_jobs=args.max_jobs, budget_usd=args.budget_usd)
 

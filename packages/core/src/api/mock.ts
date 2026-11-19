@@ -1,6 +1,7 @@
 import { learningApi, validateLearningContext } from "./learning";
 import { misconceptionApi, requestMisconceptionClip, wantsMisconceptionClip } from "./misconception";
 import { INSTRUMENTS_VERSION } from "../content/instruments";
+import { REPORT_CATEGORIES, REPORT_NOTE_MAX, REPORT_TARGETS, reportNeedsNote } from "../content/reports";
 import { track } from "../events";
 import { fixtures, itemById, lectureByN, slideText, slideUrl, topicById, videoById } from "../fixtures";
 import { nextAssessmentStep, prelecturePlan, questionNeeds, week0Lectures, week0Plan, type AssessmentPlan } from "../logic/assessment";
@@ -24,11 +25,11 @@ import { changesCount, tailoringRows } from "../logic/receipt";
 import { weekOf } from "../logic/time";
 import { getState, isOnboarded, mutate, now } from "../store";
 import type {
-  Choice, ClaimView, Item, KuLevel, KuLevelRow, Level, LectureLevels, PlaylistEntry, PrecheckView, QuestionNeed,
-  ResponseRecord, ReviewStatus, SittingState, Video, VideoCardView, VariantView,
+  Choice, ClaimView, Item, ItemTier, KuLevel, KuLevelRow, Level, LectureLevels, PlaylistEntry, PrecheckView, QuestionNeed, QuestionsReady,
+  ReportRecord, ResponseRecord, ReviewStatus, SittingState, Video, VideoCardView, VariantView,
 } from "../types";
 import { uid } from "../util";
-import type { Api, BatteryView, StudyTaskView } from "./types";
+import type { Api, BatteryView, ProblemReportInput, StudyTaskView } from "./types";
 
 // ----------------------------------------------------------------- helpers
 
@@ -107,6 +108,55 @@ function effectiveReview(videoId: string): ReviewStatus {
   const mismatch = Object.values(s.claims).some((c) => c.video_id === videoId && c.verdict === "mismatch");
   const open = s.reports.some((r) => r.video_id === videoId && r.status === "open");
   return mismatch || open ? "flagged" : base;
+}
+
+/** The longest question stem a report keeps as its `about`. */
+const REPORT_ABOUT_MAX = 800;
+
+/** How many answered questions the report form offers. */
+const REPORT_QUESTIONS_SHOWN = 30;
+
+function findItem(id: string): Item | null {
+  try {
+    return itemById(id);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A report as it is stored, from what a student sent. The server runs this for any request, so nothing is trusted:
+ * the video or question must be in the student's course, the category one the form offers, the note a bounded string.
+ */
+function checkReport(input: ProblemReportInput): Omit<ReportRecord, "id" | "status" | "at"> {
+  if (!input || typeof input !== "object") throw new Error("a report is required");
+  const target = input.target;
+  if (!REPORT_TARGETS.some((t) => t.id === target)) throw new Error("unknown report target");
+  if (!REPORT_CATEGORIES[target].some((c) => c.id === input.category)) throw new Error("unknown report category");
+  if (typeof input.note !== "string") throw new Error("note must be text");
+  const note = input.note.trim().slice(0, REPORT_NOTE_MAX);
+  if (!note && reportNeedsNote(target, input.category)) throw new Error("say what happened");
+  if (input.target === "video") {
+    const video = videoById(String(input.video_id));
+    const t = input.video_t;
+    if (t !== null && !(typeof t === "number" && Number.isFinite(t) && t >= 0)) throw new Error("video_t must be a time in seconds");
+    return {
+      target, video_id: video.id, category: input.category, video_t: t === null ? null : Math.min(Math.round(t), Math.ceil(video.duration_s)), note,
+      about: video.title, lecture_n: video.lecture_n,
+    };
+  }
+  if (input.target === "question") {
+    const item = itemById(String(input.item_id));
+    let lecture: number | null = null;
+    try {
+      lecture = topicById(item.topic_id).first_lecture;
+    } catch {
+      // a question outside the course's lectures (none today): no lecture
+    }
+    return { target, video_id: "", item_id: item.id, category: input.category, video_t: null, note, about: item.stem.slice(0, REPORT_ABOUT_MAX), lecture_n: lecture };
+  }
+  const screen = typeof input.screen === "string" ? input.screen.slice(0, 200) : undefined;
+  return { target, video_id: "", category: input.category, video_t: null, note, ...(screen ? { screen } : {}) };
 }
 
 function reviewMap(): Record<string, ReviewStatus> {
@@ -297,6 +347,25 @@ function currentOf(id: string) {
 
 const failed = (need: QuestionNeed) => (fixtures().question_failures ?? []).some((f) => f.ku_id === need.ku_id && f.tier === need.tier);
 
+const BANK_TIERS: readonly ItemTier[] = ["basic", "applied", "advanced"];
+
+/**
+ * An uploaded lecture's check, before its first answer: how many of the lecture's topics have their questions written
+ * (a reviewed bank of all three tiers, or one the system gave up on), or null when all have and the check can open.
+ * Every question is written before the check starts, so the student never waits between questions.
+ */
+function questionsReady(id: string): QuestionsReady | null {
+  if (!cfg().questions_on_demand || sittingKind(id) !== "lecture") return null;
+  if ((S().sittings[id]?.answered_ids.length ?? 0) > 0) return null;
+  const n = sittingLecture(id);
+  const kus = fixtures().course.kus.filter((k) => k.lecture_n === n);
+  const gaveUp = new Set((fixtures().question_failures ?? []).map((f) => f.ku_id));
+  const items = fixtures().items;
+  const written = (kuId: string) => BANK_TIERS.every((t) => items.some((i) => i.context === "assessment" && i.ku_id === kuId && i.tier === t));
+  const ready = kus.filter((k) => gaveUp.has(k.id) || written(k.id)).length;
+  return ready < kus.length ? { ready, total: kus.length } : null;
+}
+
 /**
  * The questions to write now for this student (V4): for the check that is due and any check they are in the middle
  * of, the one it waits for and nothing ahead of it. The server queues them after each of the student's requests.
@@ -339,8 +408,9 @@ function precheck(): PrecheckView | null {
   // the baseline just covered this lecture, in this lecture week: no second check yet
   const w0 = s.sittings.week0;
   if (w0?.finished_at && w0.week === week() && baselineLectures().includes(n)) return null;
-  if (!currentOf(id)) return null;
-  return { sitting_id: id, lecture_n: n, title: lectureTitle(n), total: planOf(id).slots.length, answered: st?.answered_ids.length ?? 0 };
+  const gate = questionsReady(id);
+  if (!gate && !currentOf(id)) return null;
+  return { sitting_id: id, lecture_n: n, title: lectureTitle(n), total: planOf(id).slots.length, answered: st?.answered_ids.length ?? 0, questions_ready: gate };
 }
 
 // --------------------------------------------------------------------- api
@@ -389,6 +459,13 @@ export const mockApi: Api = {
   async getSitting(id) {
     const plan = planOf(id);
     const st = S().sittings[id];
+    const gate = questionsReady(id);
+    if (gate) {
+      return {
+        id, kind: sittingKind(id), lecture_n: sittingLecture(id), label: sittingLabel(id), total: plan.slots.length,
+        answered: 0, done: false, current: null, preparing: "writing", waiting_for: null, questions_ready: gate,
+      };
+    }
     const next = currentOf(id);
     return {
       id, kind: sittingKind(id), lecture_n: sittingLecture(id), label: sittingLabel(id), total: plan.slots.length,
@@ -396,10 +473,12 @@ export const mockApi: Api = {
       current: next?.item ? { item: next.item, lecture_n: next.lecture_n, lecture_title: lectureTitle(next.lecture_n), role: next.role } : null,
       preparing: next?.need ? (failed(next.need) ? "failed" : "writing") : null,
       waiting_for: next?.need ?? null,
+      questions_ready: null,
     };
   },
 
   async answerSitting(id, itemId, choice, latencyMs) {
+    if (questionsReady(id)) throw new Error(`sitting ${id} opens once its questions are written`);
     const next = currentOf(id);
     if (!next?.item || next.item.id !== itemId) throw new Error(`"${itemId}" is not the question sitting ${id} is on`);
     ensureSitting(id);
@@ -892,10 +971,36 @@ export const mockApi: Api = {
   },
 
   async postReport(videoId, category, videoT, note) {
+    await mockApi.reportProblem({ target: "video", video_id: videoId, category, video_t: videoT, note });
+  },
+
+  async reportProblem(report) {
+    const r = checkReport(report);
+    const id = uid("rep");
     mutate((s) => {
-      s.reports.push({ id: uid("rep"), video_id: videoId, category, video_t: videoT, note, status: "open", at: now() });
+      s.reports.push({ id, ...r, status: "open", at: now() });
     });
-    track("error_reported", { type: "video", id: videoId }, { category, video_t: videoT });
+    const object = r.target === "video" ? { type: "video", id: r.video_id } : r.target === "question" ? { type: "item", id: r.item_id } : { type: "app" };
+    track("error_reported", object, { target: r.target, category: r.category, video_t: r.video_t, report_id: id });
+    return { id };
+  },
+
+  async getReportTargets() {
+    const s = S();
+    const seen = (id: string) => Math.max(s.progress[id]?.last_at ?? 0, s.watched[id]?.last_at ?? 0) || null;
+    const videos = fixtures().videos
+      .map((v) => ({ video_id: v.id, title: v.short_title || v.title, lecture_n: v.lecture_n, duration_s: v.duration_s, last_seen_at: seen(v.id) }))
+      .sort((a, b) => (b.last_seen_at ?? 0) - (a.last_seen_at ?? 0) || a.lecture_n - b.lecture_n);
+    const answered = new Map<string, number>();
+    for (const r of s.responses) answered.set(r.item_id, Math.max(answered.get(r.item_id) ?? 0, r.at));
+    const questions = [...answered]
+      .sort((a, b) => b[1] - a[1])
+      .flatMap(([item_id, at]) => {
+        const item = findItem(item_id);
+        return item ? [{ item_id, stem: item.stem, answered_at: at }] : [];
+      })
+      .slice(0, REPORT_QUESTIONS_SHOWN);
+    return { videos, questions };
   },
 
   // ---- study questionnaires

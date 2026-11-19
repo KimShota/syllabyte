@@ -114,6 +114,7 @@ export class StateRunner {
     const part = (d: Partial<DemoState>): Omit<CourseExport, "course_id" | "code" | "name" | "active"> => ({
       profile: { levels: d.levels ?? {}, made: d.made ?? {}, sittings: d.sittings ?? {} },
       learning_sessions: d.learning_sessions ?? {}, misconception_requests: d.misconception_requests ?? [], responses: d.responses ?? [], notes: d.notes ?? [], self_explanations: d.self_explanations ?? [],
+      reports: d.reports ?? [],
     });
     const out: CourseExport[] = courseIds.flatMap((id) => {
       const named = describe(id);
@@ -145,6 +146,8 @@ export interface CourseExport {
   self_explanations: DemoState["self_explanations"];
   learning_sessions: DemoState["learning_sessions"];
   misconception_requests: DemoState["misconception_requests"];
+  /** the errors they reported in this course */
+  reports: DemoState["reports"];
 }
 
 /** Methods a student may call: the whole `Api` except the ones that read across students. */

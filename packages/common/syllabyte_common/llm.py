@@ -22,6 +22,7 @@ Claude Sonnet"). Callers may still pass model="claude-opus-5" for a stage.
 from __future__ import annotations
 
 import base64
+import functools
 import os
 import sys
 import time
@@ -61,9 +62,23 @@ PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
     "claude-sonnet-5": (2.00, 10.00),
     "claude-sonnet-5-5": (2.00, 10.00),
     "claude-haiku-4-5": (1.00, 5.00),
+    "claude-haiku-5-5": (0.10, 0.50),  # prompts up to 100k tokens
     # OpenAI prices are not filled in: cost for gpt-* calls reports as $0.
     # Add (input, output) $/Mtok here to include them in the report.
 }
+
+# Cache reads as a share of the model's input price (pricing page, read 2026-11-19): a twentieth on Opus 5.5 and Sonnet
+# 5.5, a tenth on the others. A 5-minute cache write is 1.25x input on every model.
+CACHE_READ_SHARE: dict[str, float] = {"claude-opus-5-5": 0.05, "claude-sonnet-5-5": 0.05}
+
+
+def call_cost_usd(call) -> float:
+    """One recorded call's cost (an LLMCallRecord): input, output, cache reads and cache writes, each at its price."""
+    in_price, out_price = PRICE_PER_MTOK.get(call.model, (0.0, 0.0))
+    return (call.input_tokens * in_price + call.output_tokens * out_price
+            + call.cache_read_tokens * in_price * CACHE_READ_SHARE.get(call.model, 0.1)
+            + call.cache_creation_tokens * in_price * 1.25) / 1_000_000
+
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -161,6 +176,7 @@ def _record_openai_usage(
             output_tokens=usage.completion_tokens,
             cache_read_tokens=cached,
             wall_seconds=wall_seconds,
+            finished_at=time.time(),
         )
     )
 
@@ -261,9 +277,48 @@ def pdf_block(path: str | Path, *, cache: bool = False) -> dict:
     return block
 
 
+# Slides render at 150 DPI (ingestion_agent/slide_parser.py), which on a wide page is 4000x2250 px. The API scales an
+# image down to at most 2576 px on its long edge (4,784 tokens) on Claude 4.7 and later models; a slide reads as well at
+# 1600 px (1,914 tokens; earlier models were capped at 1568 px), and slide images were most of each video's input cost.
+# So the model's copy is scaled here, in memory: the stored file, the deck hashes made from its bytes
+# (ingestion_agent/uploads.py) and the app's previews keep the full render. SYLLABYTE_LLM_IMAGE_EDGE=0 sends images as
+# they are.
+LLM_IMAGE_LONG_EDGE = int(os.environ.get("SYLLABYTE_LLM_IMAGE_EDGE", "1600"))
+_PIL_FORMATS = {"image/png": "PNG", "image/jpeg": "JPEG", "image/webp": "WEBP"}
+
+
+@functools.lru_cache(maxsize=64)
+def _image_bytes(path: str, mtime_ns: int, size: int, edge: int, media_type: str) -> bytes:
+    """The file's bytes, scaled so its long edge is at most `edge` px (aspect ratio kept). Cached per file version: a
+    video's calls send the same few slides."""
+    raw = Path(path).read_bytes()
+    fmt = _PIL_FORMATS.get(media_type)
+    if edge <= 0 or fmt is None:
+        return raw
+    from io import BytesIO
+
+    from PIL import Image
+
+    try:
+        with Image.open(BytesIO(raw)) as img:
+            if max(img.size) <= edge:
+                return raw
+            scale = edge / max(img.size)
+            small = img.resize((max(1, round(img.width * scale)), max(1, round(img.height * scale))), Image.Resampling.LANCZOS)
+    except (OSError, ValueError):  # not an image Pillow reads: sent as it is, as before
+        return raw
+    if fmt == "JPEG" and small.mode not in ("RGB", "L"):
+        small = small.convert("RGB")
+    out = BytesIO()
+    small.save(out, format=fmt)
+    return out.getvalue()
+
+
 def image_block(path: str | Path, *, media_type: str = "image/png") -> dict:
-    """An `image` content block from a local image file."""
-    data = base64.standard_b64encode(Path(path).read_bytes()).decode("utf-8")
+    """An `image` content block from a local image file, scaled to LLM_IMAGE_LONG_EDGE."""
+    p = Path(path)
+    st = p.stat()
+    data = base64.standard_b64encode(_image_bytes(str(p), st.st_mtime_ns, st.st_size, LLM_IMAGE_LONG_EDGE, media_type)).decode("utf-8")
     return {
         "type": "image",
         "source": {"type": "base64", "media_type": media_type, "data": data},
@@ -300,6 +355,7 @@ def _record_usage(
             cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
             cache_creation_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
             wall_seconds=wall_seconds,
+            finished_at=time.time(),
         )
     )
 

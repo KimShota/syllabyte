@@ -9,5 +9,7 @@ export default defineConfig({
       "expo-constants": fileURLToPath(new URL("./test/expo-constants.ts", import.meta.url)),
     },
   },
+  // React Native's global: tests run as a development session (an installed build is tested through backendBase's `dev`)
+  define: { __DEV__: "true" },
   test: { include: ["src/**/*.test.ts"] },
 });

@@ -348,6 +348,7 @@ class LLMCallRecord(BaseModel):
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
     wall_seconds: float = 0.0
+    finished_at: float = 0.0  # unix time the response arrived (0: recorded before this field)
 
 
 class RunManifest(BaseModel):
@@ -355,14 +356,14 @@ class RunManifest(BaseModel):
     course_name: str | None = None
     llm_calls: list[LLMCallRecord] = Field(default_factory=list)
 
-    def total_cost_usd(self, price_per_mtok: dict[str, tuple[float, float]]) -> float:
-        """price_per_mtok maps model -> (input_$_per_mtok, output_$_per_mtok)."""
+    def total_cost_usd(self, price_per_mtok: dict[str, tuple[float, float]], cache_read_share: dict[str, float] | None = None) -> float:
+        """price_per_mtok maps model -> (input_$_per_mtok, output_$_per_mtok); cache_read_share maps model -> its cache
+        reads' share of the input price (0.1 for a model it doesn't name). Cache writes are 1.25x input."""
         total = 0.0
         for call in self.llm_calls:
             in_price, out_price = price_per_mtok.get(call.model, (0.0, 0.0))
             total += (call.input_tokens / 1_000_000) * in_price
             total += (call.output_tokens / 1_000_000) * out_price
-            # Cache reads are ~10% of input price; cache writes ~1.25x.
-            total += (call.cache_read_tokens / 1_000_000) * in_price * 0.1
+            total += (call.cache_read_tokens / 1_000_000) * in_price * (cache_read_share or {}).get(call.model, 0.1)
             total += (call.cache_creation_tokens / 1_000_000) * in_price * 1.25
         return total

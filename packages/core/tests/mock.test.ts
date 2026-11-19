@@ -375,6 +375,74 @@ describe.skipIf(!haveFixtures)("mock API with the real fixtures", () => {
     expect((await api.getVariant(FIX.videos[1].id)).checkpoint_answered).toBe(false);
   });
 
+  describe("error reports", () => {
+    const reports = () => store.getState().reports;
+    const reportEvents = () => store.getState().events.filter((e) => e.verb === "error_reported");
+
+    it("stores a video report, flags the video, and logs the report without the note", async () => {
+      await api.postConsent(true);
+      const vid = FIX.videos[0];
+      const { id } = await api.reportProblem({ target: "video", video_id: vid.id, category: "fact", video_t: 12.4, note: "  says 3, slide says 4 " });
+      expect(reports()).toEqual([expect.objectContaining({ id, target: "video", video_id: vid.id, category: "fact", video_t: 12, note: "says 3, slide says 4", status: "open" })]);
+      expect((await api.getVariant(vid.id)).review_status).toBe("flagged");
+      const [ev] = reportEvents();
+      expect(ev.object).toEqual({ type: "video", id: vid.id });
+      expect(ev.result).toMatchObject({ target: "video", category: "fact", report_id: id });
+      expect(JSON.stringify(ev)).not.toContain("slide says 4");
+    });
+
+    it("keeps the old postReport working as a video report", async () => {
+      await api.postReport(FIX.videos[1].id, "layout", 30, "");
+      expect(reports()[0]).toMatchObject({ target: "video", video_id: FIX.videos[1].id, category: "layout", video_t: 30 });
+    });
+
+    it("stores a question report and an app report, which flag no video", async () => {
+      const item = FIX.items[0];
+      await api.reportProblem({ target: "question", item_id: item.id, category: "answer_wrong", note: "" });
+      await api.reportProblem({ target: "app", category: "bug", note: "The upload spinner never stops", screen: "/profile" });
+      expect(reports()).toEqual([
+        expect.objectContaining({ target: "question", item_id: item.id, video_id: "", video_t: null }),
+        expect.objectContaining({ target: "app", category: "bug", note: "The upload spinner never stops", screen: "/profile" }),
+      ]);
+      for (const v of FIX.videos) expect((await api.getVariant(v.id)).review_status).not.toBe("flagged");
+    });
+
+    it("refuses what the form could not have sent", async () => {
+      const vid = FIX.videos[0].id;
+      await expect(api.reportProblem({ target: "video", video_id: "nope", category: "fact", video_t: null, note: "" })).rejects.toThrow(/unknown video/);
+      await expect(api.reportProblem({ target: "question", item_id: "nope", category: "unclear", note: "" })).rejects.toThrow(/unknown item/);
+      await expect(api.reportProblem({ target: "video", video_id: vid, category: "bug" as never, video_t: null, note: "" })).rejects.toThrow(/category/);
+      await expect(api.reportProblem({ target: "video", video_id: vid, category: "fact", video_t: -1, note: "" })).rejects.toThrow(/video_t/);
+      await expect(api.reportProblem({ target: "app", category: "bug", note: "   " })).rejects.toThrow(/say what happened/);
+      await expect(api.reportProblem({ target: "video", video_id: vid, category: "other", video_t: null, note: "" })).rejects.toThrow(/say what happened/);
+      await expect(api.reportProblem({ target: "elsewhere", category: "bug", note: "x" } as never)).rejects.toThrow(/target/);
+      expect(reports()).toEqual([]);
+    });
+
+    it("cuts a long note and clamps the time to the video", async () => {
+      const vid = FIX.videos[0];
+      await api.reportProblem({ target: "video", video_id: vid.id, category: "fact", video_t: 1e6, note: "x".repeat(5000) });
+      expect(reports()[0].note).toHaveLength(1000);
+      expect(reports()[0].video_t).toBe(Math.ceil(vid.duration_s));
+    });
+
+    it("offers the videos the student opened first, then the rest, and the questions they answered", async () => {
+      const [a, b] = FIX.videos;
+      await api.recordProgress(b.id, 10, b.duration_s);
+      const t = await api.getReportTargets();
+      expect(t.videos).toHaveLength(FIX.videos.length);
+      expect(t.videos[0]).toMatchObject({ video_id: b.id });
+      expect(t.videos[0].last_seen_at).not.toBeNull();
+      expect(t.videos.find((v) => v.video_id === a.id)?.last_seen_at).toBeNull();
+      expect(t.questions).toEqual([]);
+      await onboardWith("not_sure");
+      const after = await api.getReportTargets();
+      expect(after.questions.length).toBeGreaterThan(0);
+      expect(after.questions[0]).toMatchObject({ stem: expect.any(String), answered_at: expect.any(Number) });
+      expect(new Set(after.questions.map((q) => q.item_id)).size).toBe(after.questions.length);
+    });
+  });
+
   it("edits and deletes a note", async () => {
     const id = FIX.videos[0].id;
     await api.addNote(id, 12, "first");

@@ -40,7 +40,7 @@ export async function annNeedingVideos(opts: Parameters<typeof makeServer>[0] = 
   for (let guard = 0; guard < 40; guard++) {
     const v = await ann.rpc<{ current: { item: { id: string; correct_index: number } } | null; preparing: string | null }>("getSitting", first);
     if (v.preparing === "writing") {
-      await work(s, { kinds: ["question"] });
+      await work(s, { kinds: ["question_bank", "question"] });
       continue;
     }
     if (!v.current) break;

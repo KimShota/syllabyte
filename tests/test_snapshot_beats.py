@@ -190,11 +190,17 @@ def _board(program: list[str]):
         "program": program, "source_refs": REFS})
 
 
+# every request's stage and full content, for the tests that check what a redraw sends
+REQUESTS: list[tuple[str, list[dict]]] = []
+
+
 def _run(monkeypatch, programs: list[list[str]], *, lines_prefix: str = ""):
     seen = []
+    REQUESTS.clear()
 
     def fake(**kw):
-        seen.append((kw["stage"], kw["content"][0]["text"], kw["system"]))
+        REQUESTS.append((kw["stage"], kw["content"]))
+        seen.append((kw["stage"], "\n\n".join(b["text"] for b in kw["content"] if b["type"] == "text"), kw["system"]))
         stage = kw["stage"]
         if stage.startswith("storyboard_program"):
             return _board(programs.pop(0))
@@ -282,3 +288,14 @@ def test_a_program_that_cant_be_drawn_gets_one_more_redraw_but_one_outside_the_b
     script, seen = _run(monkeypatch, [thin, thin])
     programs = [text for stage, text, _ in seen if stage.startswith("storyboard_program")]
     assert len(programs) == 2 and "Make the drawing smaller" not in programs[1]  # built as it is after one
+
+
+def test_a_redraw_repeats_the_first_request_then_adds_the_feedback_so_it_reads_from_the_cache(monkeypatch):
+    thin = [line for line in PROGRAM if "part='deliver_2'" not in line]
+    _run(monkeypatch, [thin, PROGRAM])
+    first, redraw = [content for stage, content in REQUESTS if stage.startswith("storyboard_program")]
+    # the first request is the prompt and the slides, its last block marked for the cache
+    assert first[-1]["cache_control"] == {"type": "ephemeral"} and "Write the picture program" in first[0]["text"]
+    # the redraw sends the same blocks first, so they are a cache hit, and the checker's feedback after them
+    assert redraw[:len(first)] == first and len(redraw) == len(first) + 1
+    assert redraw[-1]["text"].startswith("Your previous program:") and "cache_control" not in redraw[-1]

@@ -321,7 +321,7 @@ describe("the student's data download", () => {
     await addSyllabus(ann, OTHER);
     await work(s);
     const data = await ann.rpc<Download>("exportMyData");
-    for (const c of data.courses) expect(Object.keys(c).sort()).toEqual(["active", "code", "course_id", "learning_sessions", "misconception_requests", "name", "notes", "profile", "responses", "self_explanations"]);
+    for (const c of data.courses) expect(Object.keys(c).sort()).toEqual(["active", "code", "course_id", "learning_sessions", "misconception_requests", "name", "notes", "profile", "reports", "responses", "self_explanations"]);
     const text = JSON.stringify(data);
     expect(text).not.toContain("syllabus_text");
     expect(text).not.toContain("syllabus_path");

@@ -24,6 +24,8 @@ void startApp();
 /** Uploaded-course browsing stays open; the quick check still comes before learning. */
 const OPEN_BEFORE_BASELINE = (pathname: string) =>
   (REMOTE && canExploreBeforeBaseline(pathname)) || isAuthPage(pathname) || pathname === "/welcome" || pathname === "/analyzing" || pathname.startsWith("/quiz") ||
+  // a student can always report a problem, a broken question in the check most of all
+  pathname === "/report" ||
   // adding slides is how an uploaded course gets its first questions
   /^\/course\/[^/]+\/review$/.test(pathname);
 
@@ -114,6 +116,7 @@ export default function RootLayout() {
         <Stack.Screen name="quiz/done" options={{ animation: "fade", gestureEnabled: false }} />
         <Stack.Screen name="quiz/checked" options={{ animation: "fade", gestureEnabled: false }} />
         <Stack.Screen name="study/[id]" options={{ animation: "slide_from_bottom" }} />
+        <Stack.Screen name="report" options={{ animation: "slide_from_bottom" }} />
         <Stack.Screen name="player/[kuId]" options={{ animation: "slide_from_bottom", contentStyle: { backgroundColor: "#000" } }} />
         <Stack.Screen name="course/[courseId]/feed" options={{ animation: "slide_from_bottom", contentStyle: { backgroundColor: "#000" } }} />
         <Stack.Screen name="course/[courseId]/lecture/[n]/mistakes-player" options={{ animation: "slide_from_bottom", contentStyle: { backgroundColor: "#000" } }} />

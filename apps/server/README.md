@@ -27,7 +27,8 @@ Environment (all optional in development):
 
 Endpoints (all under `/api`): `POST auth/request-code`, `POST auth/verify`, `GET session`, `POST session/logout`,
 `POST rpc/<method>` (`{ "args": [...] }`; any method of the core's `Api`), `POST events`, `GET research/study.csv`
-(researchers), `GET health`. Send `Authorization: Bearer <token>`, and `X-Visit: <id of this app launch>` so the
+(researchers), `GET research/reports` (researchers; students' error reports by study code, `?format=csv` for a
+spreadsheet), `GET health`. Send `Authorization: Bearer <token>`, and `X-Visit: <id of this app launch>` so the
 "next session" cap counts per visit.
 
 ## Email-link sign-in

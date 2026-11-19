@@ -6,9 +6,10 @@ import type { Fixtures, Item, QuestionNeed } from "../src/types";
 import { item } from "./helpers";
 
 // An uploaded course (plan/slide-uploads-plan.md V1-V6) whose slides arrive over time and whose questions are
-// written when a check needs them, through the real mock API.
+// written as whole banks before a check opens, through the real mock API.
 
 const BETAS = { basic: -1, applied: 0, advanced: 1 };
+const TIERS = ["basic", "applied", "advanced"] as const;
 
 /** `n` KUs, each building on the one before, with tier difficulties and no questions yet. */
 function deck(prefix: string, n: number): DeckResult {
@@ -87,20 +88,25 @@ describe("an uploaded course through the API", () => {
     fxMod.setFixtures(course({ decks: [{ lecture_n: 1, result: deck("a", 2) }, { lecture_n: 2, result: deck("b", 2) }] }));
     expect(mock.questionBankLectures()).toEqual([1]);
     expect(mock.questionBankLectures("lecture-2").sort()).toEqual([1, 2]);
-    expect(mock.questionNeedsNow("lecture-2").map((need) => need.ku_id).sort()).toEqual(["ku-a-0", "ku-b-0"]);
+    // questions come as whole banks, written before a check opens: none is written one at a time
+    expect(mock.questionNeedsNow("lecture-2")).toEqual([]);
     expect(store.getState().sittings).toEqual({}); // viewing the check does not record an answer or start it
   });
 
-  /** Writes whatever the student's checks need, as the server's worker would, and returns what was written. */
-  function writeNeeds(input: Parameters<typeof course>[0], saved: Item[]): Item[] {
-    for (const need of mock.questionNeedsNow()) saved.push(question(need));
+  /** Writes a bank (one question per tier) for every KU of the lectures whose checks are due or open, as the server's
+   *  workers would before a check opens, and returns everything written. */
+  function writeBanks(input: Parameters<typeof course>[0], saved: Item[], opened?: string): Item[] {
+    const lectures = mock.questionBankLectures(opened);
+    for (const k of course(input).course.kus.filter((k) => lectures.includes(k.lecture_n))) {
+      for (const tier of TIERS) if (!saved.some((i) => i.ku_id === k.id && i.tier === tier)) saved.push(question({ ku_id: k.id, tier }));
+    }
     fxMod.setFixtures(course({ ...input, questions: [...saved] }));
     return saved;
   }
 
   async function answerAll(id: string, how: "right" | "wrong", input: Parameters<typeof course>[0], saved: Item[] = []) {
     for (let guard = 0; guard < 50; guard++) {
-      writeNeeds(input, saved);
+      writeBanks(input, saved, id);
       const s = await api.getSitting(id);
       if (!s.current) break;
       const it = s.current.item;
@@ -121,26 +127,35 @@ describe("an uploaded course through the API", () => {
     expect((await api.getPlaylist()).precheck?.lecture_n).toBe(1);
   });
 
-  it("waits while a question is written, then asks it (V4)", async () => {
+  it("opens the check only once every topic's questions are written, so no question is ever waited for", async () => {
     const input = { decks: [{ lecture_n: 1, result: deck("a", 3) }] };
     fxMod.setFixtures(course(input));
     const before = await api.getSitting("lecture-1");
     expect(before.current).toBeNull();
     expect(before.preparing).toBe("writing");
     expect(before.done).toBe(false);
-    // the most depended-on KU first, at the tier nearest a starting ability of 0
-    expect(mock.questionNeedsNow()).toEqual([{ ku_id: "ku-a-0", tier: "applied" }]);
+    expect(before.questions_ready).toEqual({ ready: 0, total: 3 });
+    expect((await api.getPlaylist()).precheck?.questions_ready).toEqual({ ready: 0, total: 3 });
+    await expect(api.answerSitting("lecture-1", "anything", 0, 1000)).rejects.toThrow();
 
-    writeNeeds(input, []);
+    // one topic's bank is not enough
+    fxMod.setFixtures(course({ ...input, questions: TIERS.map((tier) => question({ ku_id: "ku-a-0", tier })) }));
+    expect((await api.getSitting("lecture-1")).questions_ready).toEqual({ ready: 1, total: 3 });
+
+    writeBanks(input, []);
     const after = await api.getSitting("lecture-1");
+    // the most depended-on KU first, at the tier nearest a starting ability of 0
     expect(after.current?.item.ku_id).toBe("ku-a-0");
+    expect(after.current?.item.tier).toBe("applied");
+    expect(after.questions_ready).toBeNull();
     expect(after.preparing).toBeNull();
+    expect((await api.getPlaylist()).precheck?.questions_ready).toBeNull();
   });
 
-  it("writes nothing ahead while the current question is saved: each question is written when it is next", async () => {
+  it("writes no single question while a check runs: it asks only the banks written before it opened", async () => {
     const input = { decks: [{ lecture_n: 1, result: deck("a", 3) }] };
     fxMod.setFixtures(course(input));
-    writeNeeds(input, []);
+    writeBanks(input, []);
     expect((await api.getSitting("lecture-1")).current?.item.ku_id).toBe("ku-a-0");
     expect(mock.questionNeedsNow()).toEqual([]);
   });
@@ -161,12 +176,12 @@ describe("an uploaded course through the API", () => {
     const saved: Item[] = [];
     const tiers: string[] = [];
     for (const how of ["right", "right", "not_sure", "not_sure", "not_sure", "right"] as const) {
-      writeNeeds(input, saved);
+      writeBanks(input, saved);
       const it = (await api.getSitting("lecture-1")).current!.item;
       tiers.push(it.tier!);
       await api.answerSitting("lecture-1", it.id, how === "right" ? it.correct_index : "not_sure", 1000);
     }
-    writeNeeds(input, saved);
+    writeBanks(input, saved);
     tiers.push((await api.getSitting("lecture-1")).current!.item.tier!);
     // two right answers reach advanced; each Not sure steps down one and counts as wrong, so after three of them a
     // right answer lets the estimate choose again, from lower down
@@ -187,10 +202,13 @@ describe("an uploaded course through the API", () => {
     }
   });
 
-  it("says when a question could not be written", async () => {
-    const input = { decks: [{ lecture_n: 1, result: deck("a", 1) }] };
-    fxMod.setFixtures(course({ ...input, question_failures: [{ ku_id: "ku-a-0", tier: "applied" }] }));
-    expect((await api.getSitting("lecture-1")).preparing).toBe("failed");
+  it("leaves out a topic whose questions could not be written: the check opens and asks the others", async () => {
+    const input = { decks: [{ lecture_n: 1, result: deck("a", 2) }] };
+    const other = TIERS.map((tier) => question({ ku_id: "ku-a-1", tier }));
+    fxMod.setFixtures(course({ ...input, questions: other, question_failures: TIERS.map((tier) => ({ ku_id: "ku-a-0", tier })) }));
+    const s = await api.getSitting("lecture-1");
+    expect(s.questions_ready).toBeNull();
+    expect(s.current?.item.ku_id).toBe("ku-a-1");
   });
 
   it("reuses saved questions for a classmate, and never asks a student the same one twice", async () => {
@@ -228,14 +246,14 @@ describe("an uploaded course through the API", () => {
     expect(want()).toEqual([]);
     const saved: Item[] = [];
     await api.getSitting("lecture-1");
-    writeNeeds(input, saved);
+    writeBanks(input, saved);
     const first = (await api.getSitting("lecture-1")).current!.item;
     await api.answerSitting("lecture-1", first.id, first.correct_index, 1000);
     const early = want();
     expect(early).toEqual([{ ku_id: first.ku_id, lecture_n: 1, level: store.getState().levels[first.ku_id!].level }]);
     expect(store.getState().sittings["lecture-1"].finished_at).toBeNull();
 
-    writeNeeds(input, saved);
+    writeBanks(input, saved);
     const second = (await api.getSitting("lecture-1")).current!.item;
     expect(second.ku_id).not.toBe(first.ku_id);
     await api.answerSitting("lecture-1", second.id, "not_sure", 1000);

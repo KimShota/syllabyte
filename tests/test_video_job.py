@@ -92,7 +92,9 @@ def job(monkeypatch, tmp_path):
 
 def test_the_job_runs_the_pipeline_on_the_kus_slides_at_its_level(job):
     _, _, calls = job()
-    assert calls == [{"ku": "ku-bst-insert", "deck": ["deck-1"], "level": 2, "prereq_titles": ["Binary search trees"], "style": "dialogue", "visuals": "templates"}]
+    # skip_critic: the critique would only be recorded, in a work folder the worker deletes
+    assert calls == [{"ku": "ku-bst-insert", "deck": ["deck-1"], "level": 2, "prereq_titles": ["Binary search trees"], "style": "dialogue",
+                      "visuals": "templates", "skip_critic": True}]
 
 
 def test_it_sends_the_three_files_the_server_keeps(job):

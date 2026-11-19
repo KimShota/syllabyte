@@ -420,9 +420,16 @@ def plan_by_snapshots(ku, *, head: str, image_blocks: list, text_context: str, l
     print(f"[storyboard] {ku.id}: picture brief for {area or 'every area'}", file=sys.stderr, flush=True)
     system = program_system_prompt(level, prereq_titles, explainer=explainer, peer=peer, area=area)
     prompt = head + "Write the picture program for this Knowledge Unit now: the whole video's steps, each tagged."
+    # What a redraw shares with the first request: the prompt and the slides, marked for the prompt cache, with the
+    # checker's feedback after them. Most programs get a redraw (293 redraws to 301 first programs in runs/ to
+    # 2026-11-19), and it now reads the prompt and slides from the cache at a twentieth of the input price instead of
+    # sending them again. The first request is what it was, plus the cache mark.
+    shared = [text_block(prompt), *image_blocks]
+    shared[-1] = {**shared[-1], "cache_control": {"type": "ephemeral"}}
     feedback, board, snaps, problems = "", None, [], []
     for attempt in range(MAX_PROGRAMS):
-        board = structured(schema=program_model(), content=[text_block(prompt + feedback), *image_blocks],
+        content = shared + ([text_block(feedback.lstrip())] if feedback else [])
+        board = structured(schema=program_model(), content=content,
                            system=system, stage=f"{stage}_l{level}", ku_id=ku.id, model=model,
                            effort=STORYBOARD_EFFORT, max_tokens=10000, manifest=manifest)
         if dump := os.environ.get("SYLLABYTE_PLAN_DUMP"):

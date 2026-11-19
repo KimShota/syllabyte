@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -20,6 +20,8 @@ import { useProgress } from "@/state/progress";
 import { useLectureMisconceptionVideos } from "@/state/misconceptions";
 import { colors, fonts, radius, shadow, space } from "@/theme/tokens";
 
+/** how often the lecture page looks again while its check's questions are being written */
+const READY_POLL_MS = 4000;
 const NODE = 56;
 const NEXT_NODE = 64;
 /** horizontal node positions, from the bottom of a section up */
@@ -30,7 +32,15 @@ export default function LectureRoadmap() {
   const { n } = useLocalSearchParams<{ courseId: string; n: string }>();
   useCourseVersion();
   const p = useProgress();
-  const check = useQuery(() => api.getPlaylist())?.precheck ?? null;
+  // while the check's questions are being written, look again every few seconds so Start unlocks by itself
+  const [tick, setTick] = useState(0);
+  const check = useQuery(() => api.getPlaylist(), [tick])?.precheck ?? null;
+  const gettingReady = Boolean(check?.questions_ready);
+  useEffect(() => {
+    if (!gettingReady) return;
+    const id = setTimeout(() => setTick((t) => t + 1), READY_POLL_MS);
+    return () => clearTimeout(id);
+  }, [gettingReady, tick]);
   const insets = useSafeAreaInsets();
   const [preview, setPreview] = useState<Ku | null>(null);
   const saved = useLectureMisconceptionVideos(COURSE.id, Number(n));

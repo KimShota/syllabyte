@@ -27,7 +27,7 @@ from assessment_agent.video_app_data import (
     video_record,
 )
 from curriculum_alignment_agent.deck_kus import UploadKU
-from syllabyte_common.llm import DEFAULT_MODEL, PRICE_PER_MTOK
+from syllabyte_common.llm import CACHE_READ_SHARE, DEFAULT_MODEL, PRICE_PER_MTOK
 from syllabyte_common.models import CourseCorpus, RunManifest, SlideDeck, SlideRef
 
 Log = Callable[[str], None]
@@ -86,9 +86,12 @@ def run_video_job(
     early: list[Future] = []
     log(f"video {ku.id} at level {level}: making it")
     try:
+        # skip_critic: the storyboard's critique changes nothing in the video (it is only recorded), and here its record
+        # would land in a work folder the worker deletes, so it was about a seventh of each video's cost for nothing.
+        # The benchmarks (scripts/visual_benchmark.py) judge videos with their own judge.
         final = make_video(
             ku, corpus, ku_dir, manifest=manifest, level=level, prereq_titles=[p["title"] for p in prereqs], style="dialogue",
-            visuals="templates", on_script=lambda path: early.append(pool.submit(write_gen, path)),
+            visuals="templates", skip_critic=True, on_script=lambda path: early.append(pool.submit(write_gen, path)),
             **({"focus": focus} if focus else {}),
         )
         if final is None:
@@ -115,7 +118,7 @@ def run_video_job(
         "video": record,
         "items": [i.model_dump(mode="json") for i in items],
         "flags": flags,
-        "cost_usd": round(manifest.total_cost_usd(PRICE_PER_MTOK), 4),
+        "cost_usd": round(manifest.total_cost_usd(PRICE_PER_MTOK, CACHE_READ_SHARE), 4),
     }
 
 

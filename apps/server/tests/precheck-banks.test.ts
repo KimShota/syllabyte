@@ -61,18 +61,21 @@ describe("background pre-check banks", () => {
     expect(await work(s, { kinds: ["question_bank", "question"] })).toEqual([]);
   });
 
-  it("promotes the waiting KU's bank and prevents a duplicate one-question job while that bank is running", async () => {
+  it("opens the check only once every topic's bank is published, and writes no single question", async () => {
     const { s, ann, courseId } = await readyCourse();
-    expect((await ann.rpc<Sitting>("getSitting", "lecture-1")).preparing).toBe("writing");
+    expect((await ann.rpc<Sitting & { questions_ready: unknown }>("getSitting", "lecture-1")).questions_ready).toEqual({ ready: 0, total: 2 });
     const first = await claimBank(s);
     expect(first.payload.ku.id).toBe("ku-stacks-a");
     const second = await claimBank(s);
     expect(second.payload.ku.id).toBe("ku-stacks-b");
     expect((await (await s.worker.post("/api/worker/claim", { kinds: ["question_bank", "question"] })).json() as { job: Job | null }).job).toBeNull();
-    expect((await (await s.worker.post("/api/worker/claim", { kinds: ["question"] })).json() as { job: Job | null }).job).toBeNull();
     expect((await s.worker.post(`/api/worker/jobs/${first.id}/result`, { result: questionBankOf(first.payload) })).status).toBe(200);
+    const half = await ann.rpc<Sitting & { questions_ready: unknown }>("getSitting", "lecture-1");
+    expect(half.current).toBeNull();
+    expect(half.questions_ready).toEqual({ ready: 1, total: 2 });
+    expect((await s.worker.post(`/api/worker/jobs/${second.id}/result`, { result: questionBankOf(second.payload) })).status).toBe(200);
     expect((await ann.rpc<Sitting>("getSitting", "lecture-1")).current).not.toBeNull();
-    expect(s.db.prepare("SELECT status FROM jobs WHERE course_id = ? AND kind = 'question'").get(courseId)).toEqual({ status: "done" });
+    expect(s.db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE course_id = ? AND kind = 'question'").get(courseId)).toEqual({ n: 0 });
   });
 
   it("warms a later lecture when its check is opened and deduplicates repeated requests", async () => {
@@ -123,7 +126,10 @@ describe("background pre-check banks", () => {
     s.courses.addQuestion(courseId, job.payload.deck_id, old, [{ issue: "Answer giveaway" }]);
     expect(s.courses.questions(courseId)).toEqual([]);
     await s.worker.post(`/api/worker/jobs/${job.id}/fail`, { error: "Review failed", user_message: "Review failed" });
-    expect((await ann.rpc<Sitting>("getSitting", "lecture-1")).preparing).toBe("failed");
+    // the failed bank's topic is left out: the check moves on to another topic and is not stuck on "failed"
+    const after = await ann.rpc<any>("getSitting", "lecture-1");
+    expect(after.preparing).not.toBe("failed");
+    expect(after.waiting_for?.ku_id).not.toBe(job.payload.ku.id);
     expect((await ann.post("/api/questions/retry", { ku_id: job.payload.ku.id, tier: "applied" })).status).toBe(200);
     expect((await ann.rpc<Sitting>("getSitting", "lecture-1")).preparing).toBe("writing");
     await work(s, { kinds: ["question_bank", "question"] });
@@ -140,6 +146,8 @@ describe("background pre-check banks", () => {
     bank.items[1].options = ["X", "x", "y"];
     bank.items[1].correct_index = 0;
     expect((await s.worker.post(`/api/worker/jobs/${job.id}/result`, { result: bank })).status).toBe(200);
+    // the other topic's bank too: the check opens once both are written
+    await work(s, { kinds: ["question_bank"] });
     const sitting = await ann.rpc<Sitting>("getSitting", "lecture-1");
     expect(sitting.current!.item.stem).toBe(bank.items[1].stem);
     expect(sitting.current!.item.options).toEqual(["X", "x", "y"]);

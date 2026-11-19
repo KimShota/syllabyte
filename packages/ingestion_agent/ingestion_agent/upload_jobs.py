@@ -25,7 +25,7 @@ from assessment_agent.question_writing import QuestionGen, question_item, write_
 from assessment_agent.precheck_quality import require_approved
 from curriculum_alignment_agent.deck_kus import EarlierKu, UploadKU, extract_deck_kus, find_links
 from syllabyte_common.learner import Item
-from syllabyte_common.llm import DEFAULT_MODEL, PRICE_PER_MTOK
+from syllabyte_common.llm import CACHE_READ_SHARE, DEFAULT_MODEL, PRICE_PER_MTOK
 from syllabyte_common.models import RunManifest, SlideDeck
 
 from ingestion_agent.placement import place_decks, read_deck_content
@@ -86,7 +86,7 @@ def run_question_job(
     if not gen.slides or any(n not in by_n for n in gen.slides):
         raise ValueError("The question must cite pages from its own deck.")
     item = question_item(payload["item_id"], ku.id, payload["tier"], gen, beta=payload["beta"], target_index=payload.get("target_index", 0), deck_name=deck.name)
-    return {"item": item.model_dump(mode="json"), "flags": flags, "cost_usd": round(manifest.total_cost_usd(PRICE_PER_MTOK), 4)}
+    return {"item": item.model_dump(mode="json"), "flags": flags, "cost_usd": round(manifest.total_cost_usd(PRICE_PER_MTOK, CACHE_READ_SHARE), 4)}
 
 
 def run_question_bank_job(
@@ -105,7 +105,7 @@ def run_question_bank_job(
         raise ValueError("The question bank must cite pages from its own deck.")
     items = [question_item(q["item_id"], ku.id, q["tier"], QuestionGen(question=getattr(gen, q["tier"]), slides=gen.slides),
         beta=q["beta"], target_index=q["target_index"], deck_name=deck.name).model_dump(mode="json") for q in payload["questions"]]
-    return {"items": items, "flags": [], "cost_usd": round(manifest.total_cost_usd(PRICE_PER_MTOK), 4)}
+    return {"items": items, "flags": [], "cost_usd": round(manifest.total_cost_usd(PRICE_PER_MTOK, CACHE_READ_SHARE), 4)}
 
 
 def deck_bank(
@@ -155,7 +155,7 @@ def run_deck_job(
         "kus": [k.model_dump(mode="json") | {"tier_difficulty": tier_difficulties(k.difficulty)} for k in kus],
         "items": [i.model_dump(mode="json") for i in items],
         "flags": flags,
-        "cost_usd": round(manifest.total_cost_usd(PRICE_PER_MTOK), 4),
+        "cost_usd": round(manifest.total_cost_usd(PRICE_PER_MTOK, CACHE_READ_SHARE), 4),
     }
 
 
